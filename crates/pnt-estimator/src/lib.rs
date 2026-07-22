@@ -474,6 +474,10 @@ fn wrap_angle(angle: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pnt_types::{
+        ArmAction, ArmCommand, Frame, GnssFix, Provenance, QualityFlags, SourceId, TimeTag,
+        TrackerDoppler,
+    };
 
     const FD_STEP: f64 = 1.0e-6;
     const JACOBIAN_TOLERANCE: f64 = 2.0e-6;
@@ -499,8 +503,9 @@ mod tests {
 
     #[test]
     fn transition_jacobian_matches_central_difference() {
-        let filter = FilterStub::default();
+        let filter = augmented_filter();
         let dt = 0.01;
+        let x = filter.x.clone();
         let numeric = central_difference(
             |x| {
                 let mut y = x.clone();
@@ -508,9 +513,12 @@ mod tests {
                     y[POS + axis] += x[VEL + axis] * dt;
                 }
                 y[CLOCK_BIAS] += x[CLOCK_DRIFT] * dt;
+                for slot in filter.receiver_clocks.values() {
+                    y[slot.bias_index] += x[slot.drift_index] * dt;
+                }
                 y
             },
-            &DVector::from_column_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]),
+            &x,
         );
         assert!((numeric - filter.transition_matrix(dt)).amax() < JACOBIAN_TOLERANCE);
     }
@@ -544,12 +552,23 @@ mod tests {
 
     #[test]
     fn dead_reckoning_grows_position_variance_by_magnitude() {
-        let mut filter = FilterStub::default();
-        let before = filter.covariance()[(0, 0)];
+        let mut with_q = FilterStub::default();
+        let mut without_q = FilterStub::new(
+            0.01,
+            ProcessNoise {
+                acceleration_variance: 0.0,
+                turn_rate_variance: 0.0,
+                clock_drift_variance: 0.0,
+                nuisance_random_walk_variance: 0.0,
+            },
+        );
+        with_q.covariance.fill(0.0);
+        without_q.covariance.fill(0.0);
         for _ in 0..100 {
-            filter.propagate(ImuSample::default());
+            with_q.propagate(ImuSample::default());
+            without_q.propagate(ImuSample::default());
         }
-        assert!(filter.covariance()[(0, 0)] > before + 0.9);
+        assert!(with_q.covariance()[(0, 0)] > without_q.covariance()[(0, 0)] + 0.01);
     }
 
     #[test]
@@ -588,5 +607,178 @@ mod tests {
             Some(slot)
         );
         assert_ne!(slot.bias_index, CLOCK_BIAS);
+    }
+
+    fn augmented_filter() -> FilterStub {
+        let mut filter = FilterStub::default();
+        filter.x.rows_mut(0, 6).copy_from(&DVector::from_column_slice(&[
+            3_492.09,
+            742.235,
+            5_283.455,
+            2.0,
+            -3.0,
+            4.0,
+        ]));
+        filter.reserve_receiver_clock(ReceiverClockId("orbcomm".into()));
+        filter.augment_satellite_bias("SV-A", 11.0);
+        filter.augment_satellite_bias("SV-B", 22.0);
+        filter.augment_satellite_bias("SV-C", 33.0);
+        assert!(filter.retire_satellite_bias("SV-B"));
+        filter
+    }
+
+    fn envelope(payload: MeasurementPayload) -> MeasurementEnvelope {
+        MeasurementEnvelope {
+            schema_version: 2,
+            source_id: SourceId("test".into()),
+            sequence: 1,
+            sample_time: TimeTag::DeviceNanoseconds(1),
+            host_receive_monotonic_ns: 1,
+            utc: None,
+            payload,
+            frame: Frame::FrameIndependent,
+            covariance: vec![0.25],
+            quality: QualityFlags::VALID,
+            calibration_id: "test".into(),
+            provenance: Provenance::DerivedRecord("test".into()),
+        }
+    }
+
+    #[test]
+    fn real_update_paths_have_finite_difference_jacobians_on_augmented_filter() {
+        let base = augmented_filter().x;
+        let numeric = |update: fn(&mut FilterStub) -> f64| {
+            central_difference(
+                |x| {
+                    let mut filter = augmented_filter();
+                    filter.x.copy_from(x);
+                    DVector::from_element(1, update(&mut filter))
+                },
+                &base,
+            )
+        };
+
+        let heading = numeric(|filter| {
+            filter.update_heading(Heading { radians: 0.7 }, 1.0, None).innovation
+        });
+        assert!((heading[(0, HEADING)] + 1.0).abs() < JACOBIAN_TOLERANCE);
+        assert_eq!(heading.ncols(), base.len());
+
+        let gnss = numeric(|filter| {
+            filter.update_gnss(GnssUpdate {
+                position_ecef_m: [1.0, 2.0, 3.0],
+                velocity_ecef_mps: [4.0, 5.0, 6.0],
+                position_variance_m2: [1.0; 3],
+                velocity_variance_mps2: [1.0; 3],
+                aided_mode: true,
+                chi_square_threshold: Some(0.0),
+            })[4]
+                .innovation
+        });
+        assert!((gnss[(0, VEL + 1)] + 1.0).abs() < JACOBIAN_TOLERANCE);
+
+        let msl = numeric(|filter| {
+            filter
+                .update_msl_altitude(MslAltitudeUpdate {
+                    altitude_m: 0.0,
+                    up_ecef: [0.2, -0.3, 0.932_737_905],
+                    variance_m2: 1.0,
+                    chi_square_threshold: Some(0.0),
+                })
+                .innovation
+        });
+        for (axis, expected) in [0.2, -0.3, 0.932_737_905].iter().enumerate() {
+            assert!((msl[(0, POS + axis)] + expected).abs() < JACOBIAN_TOLERANCE);
+        }
+
+        let receiver_doppler = numeric(|filter| {
+            filter
+                .update_doppler_for_receiver(
+                    &DopplerRangeRateUpdate {
+                        satellite_id: "SV-A".into(),
+                        measured_range_rate_mps: 2.0,
+                        predicted_range_rate_mps: 1.0,
+                        core_jacobian: [0.0, 0.0, 0.0, 0.2, -0.3, 0.4, 0.0, 0.0, 1.0],
+                        variance_mps2: 1.0,
+                        chi_square_threshold: Some(0.0),
+                    },
+                    ReceiverClockId("orbcomm".into()),
+                )
+                .innovation
+        });
+        let slot = augmented_filter()
+            .receiver_clock_slot(&ReceiverClockId("orbcomm".into()))
+            .unwrap();
+        assert!(receiver_doppler[(0, CLOCK_DRIFT)].abs() < JACOBIAN_TOLERANCE);
+        assert!((receiver_doppler[(0, slot.drift_index)] + 1.0).abs() < JACOBIAN_TOLERANCE);
+    }
+
+    #[test]
+    fn speed_update_jacobian_uses_local_horizontal_velocity() {
+        let base = augmented_filter().x;
+        let numeric = central_difference(
+            |x| {
+                let mut filter = augmented_filter();
+                filter.x.copy_from(x);
+                DVector::from_element(
+                    1,
+                    filter
+                        .update_speed_through_water(
+                            SpeedThroughWater { metres_per_second: 5.0 },
+                            1.0,
+                            Some(0.0),
+                        )
+                        .innovation,
+                )
+            },
+            &base,
+        );
+        assert!(numeric[(0, VEL + 2)].abs() > 1.0e-3);
+    }
+
+    #[test]
+    fn estimator_update_dispatches_every_payload_type() {
+        let cases = [
+            (MeasurementPayload::Imu(ImuSample::default()), 0),
+            (MeasurementPayload::Heading(Heading { radians: 0.2 }), 1),
+            (
+                MeasurementPayload::SpeedThroughWater(SpeedThroughWater {
+                    metres_per_second: 2.0,
+                }),
+                1,
+            ),
+            (MeasurementPayload::Gnss(GnssFix::default()), 6),
+            (
+                MeasurementPayload::TrackerDoppler(TrackerDoppler {
+                    constellation: pnt_types::Constellation::Starlink,
+                    correlation_peak_hz: 1.0,
+                    nominal_carrier_hz: 2.0,
+                }),
+                0,
+            ),
+            (
+                MeasurementPayload::ArmCommand(ArmCommand {
+                    action: ArmAction::Arm,
+                    host_monotonic_ns: 1,
+                    source_id: SourceId("helm".into()),
+                }),
+                0,
+            ),
+        ];
+        for (payload, expected_updates) in cases {
+            let mut filter = augmented_filter();
+            filter.update(&envelope(payload));
+            assert_eq!(filter.measurement_updates(), expected_updates);
+        }
+    }
+
+    #[test]
+    fn retire_middle_preserves_two_nuisances_and_receiver_slot_indices() {
+        let filter = augmented_filter();
+        assert_eq!(filter.nuisance_slots.len(), 2);
+        assert!(filter.nuisance_slots["SV-A"] < filter.nuisance_slots["SV-C"]);
+        let receiver = filter.receiver_clock_slot(&ReceiverClockId("orbcomm".into())).unwrap();
+        assert!(receiver.drift_index < filter.nuisance_slots["SV-A"]);
+        assert_eq!(filter.covariance.nrows(), CORE_DIM + 2 + 2);
     }
 }

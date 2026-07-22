@@ -123,3 +123,57 @@ time, and GNSS must never silently discipline runtime time or the SDR reference.
 Measurement arrival is never the propagation trigger: accepted IMU ticks are. A dead-
 reckoning timeout affects steering authority only and must not stop propagation, updates,
 journalling or convergence.
+
+## v3 (2026-07-22)
+
+v3 retains v1 and v2 and resolves D10, D13, and review findings F3/F4.
+
+### Estimator state and epoch uncertainty
+
+`FilterState` carries ECEF position and velocity, heading, primary receiver-clock bias and
+drift, and the estimator's complete row-major covariance together with its dimension. The
+nine core slots are ordered position ECEF (0--2), velocity ECEF (3--5), heading (6), clock
+bias metres (7), and clock drift metres/second (8). Dynamically registered states follow.
+`SolutionEpoch` exposes horizontal-position, horizontal-speed, and vertical one-sigma
+accuracies in SI units, derived from that epoch's covariance. For source compatibility with
+the v2 executive these are accessors rather than additional stored fields; U-I2 shall move
+epoch creation to a constructor before any wire schema represents them as stored fields.
+Position covariance is rotated from ECEF into ENU at the epoch position. Horizontal
+accuracy is 2-D DRMS, `sqrt(P_ENU[E,E] + P_ENU[N,N])`; because the complete rotation is
+applied, ECEF cross-covariances contribute. Vertical accuracy is the ENU up-axis one-sigma,
+`sqrt(P_ENU[U,U])`. Speed accuracy applies the same 2-D DRMS convention to the ECEF
+velocity covariance. `horizontal_velocity_ned_mps` is the north/east projection of ECEF
+velocity at the epoch position, and the speed-through-water model is its horizontal norm.
+
+The primary clock-bias state is retained for future pseudorange/STL observability and to
+preserve the baseline's required state surface. Doppler currently observes drift, not bias,
+so propagation applies the standard two-state integrated drift-noise covariance and caps
+clock-bias variance at `1e8 m^2` for the primary and registered receiver clocks. That cap and
+the process-noise coefficient are engineering bounds pending replay tuning `[UNVERIFIED]`.
+
+GNSS aiding uses six sequential scalar, one-degree-of-freedom updates (three ECEF position,
+then three ECEF velocity). A supplied chi-square threshold is therefore a per-component
+1-DOF NIS threshold, not a joint 6-DOF gate. Acceptance or rejection is independent for each
+component. Callers requiring a joint gate must perform it before invoking this API.
+
+In GNSS-denied operation, ECEF vertical velocity is only weakly observable through the
+local-MSL and horizontal-speed constraints. U-M1 must publish `vd = 0` with a consistent
+nonzero vertical-accuracy bound as required by the baseline; stronger vertical dynamics and
+noise tuning remain `[UNVERIFIED]`.
+
+### Helm arm command (resolves D13)
+
+`ArmCommand` is a measurement-bus payload with `action: Arm | Disarm`, the clock-service
+stamped `host_monotonic_ns: u64`, and `source_id: SourceId`. Receipt is not itself an
+authority grant: the executive must journal and route it to the authority supervisor, which
+applies freshness, source, health, and revocation policy. U-I2 owns that routing.
+
+### Independent receiver-clock registry (resolves D10)
+
+The estimator owns a registry from opaque `ReceiverClockId` to `ReceiverClockSlot {
+bias_index, drift_index }`. Reserving a receiver dynamically augments the state and full
+covariance with bias (metres) and drift (metres/second); propagation couples its bias to its
+drift, and receiver-specific Doppler updates linearise against that slot instead of the
+primary clock. Retirement/reindexing must preserve registry validity. Orbcomm remains
+rejected at ingress until U-I2 explicitly provisions its receiver clock and routes accepted
+predictor output through this receiver-specific update path.

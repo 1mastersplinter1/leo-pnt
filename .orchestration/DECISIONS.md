@@ -5,3 +5,4 @@
 - D3 (2026-07-22, Fable): Wave-1 units are docs-only with disjoint file ownership; they share the main worktree and do NOT commit (Fable commits post-review). Per-unit worktrees begin with code units (U-C1 onward).
 - D4 (2026-07-22, Fable): Repo lives at /home/od/work/leo-pnt, branch main. Superpowers plan location overridden by header: unit plan in .orchestration/PLAN.md, task-level TDD detail lives in each brief.
 - D5 (2026-07-22, Fable): Research units (U-R1/U-R2) run on Grok for web-search + cost; every factual claim needs URL + access date and VERIFIED/ASSUMED split; a non-Grok reviewer must confirm before any claim becomes load-bearing in the BOM or design.
+- D6 (2026-07-22, Fable): Headless grok (`-p`) invokes no tools under `--permission-mode acceptEdits` (exits 0 with narration only, no files — verified by streaming-json diagnostic); all headless grok units run with `--permission-mode auto`. First U-R1/U-R2 runs discarded as no-ops, relaunched.

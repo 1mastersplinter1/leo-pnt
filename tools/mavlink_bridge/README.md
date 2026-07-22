@@ -8,8 +8,8 @@ MSL-constrained `msl_alt_m` value. Velocity is NED and `vd` is always zero.
 
 The [MAVLink common message specification](https://mavlink.io/en/messages/common.html#GPS_INPUT)
 defines `yaw` as clockwise from Earth north in centidegrees: zero means unavailable and
-36000 must represent north. This bridge uses 65535 when a configured heading is temporarily
-unavailable, as prescribed by the current extension-field definition. ArduPilot documents
+36000 must represent north. This bridge therefore uses zero whenever heading is unavailable;
+65535 is a `GPS_RAW_INT` yaw sentinel and is not valid for `GPS_INPUT.yaw`. ArduPilot documents
 that [GPS1_TYPE must be 14](https://ardupilot.org/mavproxy/docs/modules/GPSInput.html).
 
 ## Input schema
@@ -45,9 +45,16 @@ fill degrades to fix type 2; after 3 seconds it reports no fix, ignores horizont
 and marks yaw unavailable. A revoked `steering_authorised` value reports no fix immediately.
 Horizontal and vertical position accuracy grow by 2 m/s of age and speed accuracy by
 0.25 m/s per second of age. Publication itself continues, preventing transport silence;
-the default 5 Hz interval is far inside the baseline's estimated 4-second timeout.
-HDOP/VDOP are ignored. Vertical velocity is supplied as zero, exactly as required by the
-baseline. `ODOMETRY` is never emitted.
+the default 5 Hz interval is far inside ArduPilot's source-defined 4-second GPS timeout.
+HDOP is supplied using the documented operational proxy `HDOP = horiz_accuracy_m / 1 m`
+(including stale inflation), which lets ArduPilot populate `state.hdop`; VDOP remains ignored.
+Vertical velocity is supplied as zero, exactly as required by the baseline. `ODOMETRY` is
+never emitted.
+
+`monotonic_ns` must be captured in the same host monotonic clock domain as the bridge. The
+bridge anchors the measurement age to host UTC and sends real GPS week/time-of-week, using
+the current GPS−UTC offset of 18 seconds. This avoids presenting delayed fill as a fresh
+measurement; operators must update the constant if a future leap second is announced.
 
 ## Run and test
 

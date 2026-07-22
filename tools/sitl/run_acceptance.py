@@ -75,6 +75,7 @@ def run(binary: Path, evidence: Path, duration: float, tolerance_m: float, speed
         latest_global = None
         ekf_flags = 0
         raw_accuracy_seen = False
+        tracking_errors = []
         started = time.monotonic()
         final_epoch = None
         for index, epoch_dict in enumerate(epochs):
@@ -98,6 +99,15 @@ def run(binary: Path, evidence: Path, duration: float, tolerance_m: float, speed
                     h_acc = getattr(message, "h_acc", 0)
                     raw_accuracy_seen |= message.fix_type == 3 and 700 <= h_acc <= 900
                     records.append({"type": kind, "fix_type": message.fix_type, "h_acc": h_acc})
+            if (
+                latest_global is not None
+                and ekf_flags & EKF_POS_HORIZ_ABS
+                and not ekf_flags & EKF_CONST_POS_MODE
+            ):
+                expected_now = map_epoch(final_epoch, final_epoch.monotonic_ns)
+                tracking_errors.append(
+                    distance_m(expected_now.lat / 1e7, expected_now.lon / 1e7, *latest_global)
+                )
         if final_epoch is None or latest_global is None:
             raise AssertionError("no injected epoch or GLOBAL_POSITION_INT observed")
         expected = map_epoch(final_epoch, final_epoch.monotonic_ns)
@@ -112,7 +122,22 @@ def run(binary: Path, evidence: Path, duration: float, tolerance_m: float, speed
             raise AssertionError(f"EKF did not report absolute horizontal position: flags={ekf_flags}")
         if not raw_accuracy_seen:
             raise AssertionError("GPS_RAW_INT did not expose injected fix_type=3 and h_acc=800 mm")
-        records.append({"type": "ACCEPTANCE", "position_error_m": error, "ekf_flags": ekf_flags})
+        if not tracking_errors:
+            raise AssertionError("no post-aiding continuous position samples observed")
+        max_tracking_error = max(tracking_errors)
+        if max_tracking_error > tolerance_m:
+            raise AssertionError(
+                f"continuous position error {max_tracking_error:.2f} m exceeds {tolerance_m:.2f} m"
+            )
+        records.append(
+            {
+                "type": "ACCEPTANCE",
+                "position_error_m": error,
+                "ekf_flags": ekf_flags,
+                "continuous_samples": len(tracking_errors),
+                "max_tracking_error_m": max_tracking_error,
+            }
+        )
         (evidence / "mavlink.jsonl").write_text(
             "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
         )

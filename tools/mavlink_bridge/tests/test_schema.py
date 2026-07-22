@@ -25,9 +25,11 @@ def test_schema_accepts_solution_epoch_shape():
     assert SolutionEpoch.from_dict(valid_dict()).horizontal_velocity_ned_mps == (4.0, 5.0)
 
 
-def test_schema_requires_accuracy():
+@pytest.mark.parametrize(
+    "field", ["horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m", "msl_alt_m"]
+)
+def test_schema_requires_each_bridge_field(field):
     value = valid_dict()
-    del value["horiz_accuracy_m"]
+    del value[field]
     with pytest.raises(KeyError):
         SolutionEpoch.from_dict(value)
-

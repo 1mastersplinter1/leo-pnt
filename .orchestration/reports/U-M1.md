@@ -1,86 +1,114 @@
 # U-M1 report — MAVLink GPS_INPUT publisher and Rover SITL
 
-Contract: v2 (2026-07-22). Unit branch: `unit/U-M1`.
+Contract: v2 (2026-07-22). Unit branch: `unit/U-M1`. Fix round: U-M1.1.
 
-## VERIFIED
+## Finding dispositions
 
-### Bridge
+1. **Yaw sentinel (Sonnet F1 / Opus F1): FIXED, VERIFIED.** Corrected both red-first
+   oracles and implementation: `encode_yaw(None)` and expired fill now send 0. Tests still
+   preserve 36000 for north. README now follows common.xml `GPS_INPUT.yaw`; the unrelated
+   `GPS_RAW_INT` 65535 sentinel is explicitly excluded.
+2. **Required schema tests (Sonnet F2): FIXED, VERIFIED.** Parameterised missing-field tests
+   cover `horiz_accuracy_m`, `speed_accuracy_mps`, `vert_accuracy_m`, and `msl_alt_m`.
+3. **Clock domain (Sonnet F3): FIXED, VERIFIED.** README states that producer and bridge
+   `monotonic_ns` must share the host monotonic clock domain.
+4. **Duration consistency (Sonnet F4): FIXED.** Removed the false 60-second/fixed-duration
+   narrative. The acceptance command defaults to 45 seconds; the latest successful run used
+   that default. The bridge's 4-second timeout statement is now tied to pinned
+   `AP_GPS.cpp:74`, not described as an estimate.
+5. **Endpoint-only acceptance (Sonnet F5): FIXED, VERIFIED.** The harness now checks every
+   sampled position after EKF aiding as well as the endpoint. Latest evidence contains 15
+   continuous samples, maximum error 0.07836 m.
+6. **HDOP root cause (Opus F2): FIXED, VERIFIED.** The bridge no longer ignores HDOP. It
+   supplies the finite operational mapping `HDOP = horiz_accuracy_m / 1 m`, including stale
+   inflation. `AP_GPS_MAV.cpp:77-79` writes it to `state.hdop`; the unchanged
+   `EK3_GPS_CHECK` gate in `AP_NavEKF3_VehicleStatus.cpp:170` then passed. A red-first unit
+   test asserts finite sent HDOP. No check was weakened in `params.parm`.
+7. **D17a absent (Opus F3): FIXED, VERIFIED with scoped exception.** Native silence and an
+   early companion-HOLD candidate were run in armed GUIDED mode; telemetry, timing, mode,
+   EKF, and actuation findings are below and in `tools/sitl/evidence/D17a.md`. Alternative
+   MANUAL/disarm candidates remain **[UNVERIFIED]** because they have different safety
+   consequences and no selected Case-A policy.
+8. **README false yaw claim (Opus F4): FIXED.** Removed the extension-field justification.
+9. **Wrong test oracle (Opus F5): FIXED red-first.** Both unavailable-heading oracles were
+   changed to 0 before implementation; the intentional red run was 3 failed / 16 passed,
+   followed by green.
+10. **Position prose (Opus F6): FIXED.** The 0.078 m result is described only as
+    driver/telemetry ingestion and tracking evidence. It is not fusion-performance evidence
+    for a dynamically representative moving vehicle.
+11. **Checksum caveat (Opus F7): FIXED.** `tools/sitl/README.md` states that the observed
+    binary SHA-256 is machine/build dependent, not a universal upstream checksum. The
+    immutable source commit remains the reproducibility identity.
+12. **GPS week/time (Opus F8): FIXED, VERIFIED.** The bridge anchors measurement age to host
+    UTC and emits real GPS week/TOW with the current 18-second GPS−UTC offset. A unit test
+    verifies delayed fill retains the measurement epoch rather than publication time. The
+    README records the future-leap-second maintenance requirement.
 
-- Added the Python package in `tools/mavlink_bridge`, using pure-Python `pymavlink==2.4.43`
-  (`DISABLE_MAVNATIVE=1`) and `pymap3d==3.2.0`. The datum is WGS 84: EPSG:4978 ECEF is
-  converted to EPSG:4979 latitude/longitude; ellipsoid altitude is discarded and the
-  required separate MSL-constrained altitude is published.
-- The README defines newline-delimited JSON mirroring all current v2 `SolutionEpoch` and
-  `FilterState` fields, plus required horizontal/speed/vertical accuracies and required MSL
-  altitude. Heading may be null. Accuracy inputs must be finite and positive.
-- The mapping publishes GPS_INPUT only (never ODOMETRY), NED `vn`/`ve`, valid `vd=0`, three
-  independent accuracies, and yaw. MAVLink's official common-message specification says
-  yaw zero means unavailable and 36000 represents north; tests cover positive and negative
-  north wraps, east, and unavailable yaw.
-- At age <=1 s an authorised epoch is fix type 3. It degrades to type 2 after 1 s and no-fix
-  after 3 s, with position/vertical accuracy growing 2 m per second of age and speed
-  accuracy growing 0.25 m/s per second. Publication remains at 5 Hz after stdin EOF when
-  configured with a grace period, far inside the estimated 4 s GPS timeout.
-- Commands run:
+## Acceptance — VERIFIED
 
-  ```text
-  tools/.venv/bin/pytest -q tools/mavlink_bridge
-  ...............  [100%]
-  15 passed in 0.03s
+Pinned official ArduPilot Rover-4.6.3 commit:
+`3fc7011a7d3dc047cbb17d8bd98ee94577d144c6`. The local GCC 15.2.0 artifact produced
+SHA-256 `abd0088642cb85d4fd2e7511acd225d5c4626f6ccd9298d38140b7bb2cb3f499`; this is only
+the observed machine/build checksum.
 
-  tools/.venv/bin/ruff check tools/mavlink_bridge tools/sitl
-  All checks passed!
-  ```
+The unchanged parameters load and confirm `FRAME_CLASS=2`, `GPS1_TYPE=14`, and
+`GPS2_TYPE=0`. The successful run wrote a real `ACCEPTANCE` record:
 
-### Pinned SITL build and partial live integration
+```json
+{"continuous_samples": 15, "ekf_flags": 831, "max_tracking_error_m": 0.07836298428997139, "position_error_m": 0.07836298428997139, "type": "ACCEPTANCE"}
+```
 
-- Resolved official ArduPilot `Rover-4.6.3` to immutable commit
-  `3fc7011a7d3dc047cbb17d8bd98ee94577d144c6`, cloned its submodules, configured `sitl`, and
-  successfully built `ardurover` with GCC 15.2.0. No sudo or system package install was
-  used; waf dependencies live in `tools/.venv` and are pinned in
-  `tools/sitl/requirements-build.txt`.
-- Built artifact SHA-256:
-  `abd0088642cb85d4fd2e7511acd225d5c4626f6ccd9298d38140b7bb2cb3f499`.
-- `tools/sitl/run_acceptance.py` loads and confirms `FRAME_CLASS=2`, `GPS1_TYPE=14`, and
-  `GPS2_TYPE=0`, injects the package's 5 Hz synthetic straight leg, and fails closed unless
-  all acceptance checks pass.
-- A strict 60-second live run showed repeated actual telemetry excerpts:
+Flags 831 contain absolute-horizontal-position and do not contain constant-position mode.
+The 15 post-aid position observations all met the 10 m gate. `GPS_RAW_INT` repeatedly exposed
+fix type 3 and injected horizontal accuracy 800 mm. These facts verify ingestion, EKF aiding
+state, and the static-SITL telemetry path; the 0.078 m value does not establish estimator
+fusion accuracy during realistic vehicle motion.
 
-  ```json
-  {"fix_type": 3, "h_acc": 800, "type": "GPS_RAW_INT"}
-  {"ekf_flags": 167, "position_error_m": 0.07783655661270385, "type": "OBSERVED"}
-  ```
+## D17a characterisation — VERIFIED excerpts
 
-  Thus ArduPilot consumed the injected fix, exposed the injected 0.8 m horizontal accuracy,
-  and its reported position tracked the final injected position to 0.08 m. This is real
-  evidence from `tools/sitl/evidence/mavlink.jsonl` (ignored as a run artifact), not a
-  fabricated acceptance record.
+The native run entered armed GUIDED (mode 15) after aiding, then stopped `GPS_INPUT` at
+44.443 s. Relative to stop:
 
-## ASSUMED / UNVERIFIED
+- +1.019 s: `GPS_RAW_INT.fix_type=1`;
+- +4.212 s: EKF flags changed from 831 to 39, losing absolute horizontal position;
+- +5.071 s: HEARTBEAT changed to armed HOLD (mode 4), with `EKF variance` and
+  `EKF failsafe` STATUSTEXT;
+- +12.141 s: both EKF lanes reported `stopped aiding`; later flags were 167.
 
-- **Overall SITL acceptance did not pass.** After 60 seconds the external GPS showed a 3D
-  fix, but `EKF_STATUS_REPORT.flags` remained 167: constant-position mode was set and the
-  absolute-horizontal-position bit was absent. The harness raised
-  `AssertionError: EKF did not report absolute horizontal position: flags=167`; therefore
-  no `ACCEPTANCE` record was written. The requested “EKF reaches a 3D-fix-equivalent state”
-  remains `[UNVERIFIED — run here but failed]`.
-- The configured 0.1 m/s straight leg is intentionally slow because SITL's simulated IMU
-  remains stationary. A 1 m/s attempt was correctly rejected by the 10 m tracking check
-  with 45.44 m error. The final run's 0.08 m position result does not establish performance
-  for dynamically consistent moving-vehicle simulation.
-- Accuracy inflation rates and 1 s/3 s degradation thresholds are explicit conservative
-  policy decisions because the normative design specifies honest inflation and continuous
-  fill but no numerical growth model. They require system integrity-owner review.
-- Current `SolutionEpoch` in Rust has no accuracy or MSL-altitude fields. The JSON additions
-  are the agreed U-M1 boundary pending the later estimator unit; no files under `crates/`
-  were changed.
+Throttle remained 0 and `SERVO_OUTPUT_RAW` channels 1/3 remained 1500/1500 throughout the
+observed transition. Rover remained armed. This timing matches pinned source: GPS timeout is
+4000 ms (`AP_GPS.cpp:74,888-894`); armed `ekf_position_ok()` rejects loss of absolute/relative
+position (`Rover/ekf_check.cpp:124-146`); ten 10 Hz failed checks debounce the event, and the
+default `FS_EKF_ACTION=HOLD` changes a position-requiring mode to HOLD
+(`Rover/ekf_check.cpp:150-180`).
 
-## Open uncertainties
+In the separate Case-A candidate run, the companion sent HOLD +1.531 s after silence while
+GUIDED. HEARTBEAT showed HOLD 51 ms later, approximately 3.49 s before native failsafe timing.
+Actuation stayed neutral. Full records: `tools/sitl/evidence/d17a-mavlink.jsonl` and
+`d17a-case-a-mavlink.jsonl`; concise evidence: `tools/sitl/evidence/D17a.md`.
 
-1. Determine why EKF3 remains in constant-position mode despite stable GPS_INPUT fix type 3,
-   valid zero vertical velocity, visible accuracy, and close global-position tracking. The
-   deterministic failing script and telemetry make this reproducible.
-2. Freeze system-owned stale thresholds and covariance/accuracy growth after integrity
-   policy is implemented.
-3. Decide whether estimator UTC/GPS-week information should extend the JSON boundary; this
-   bridge currently uses monotonic `time_usec` and zero GPS week fields.
+## Test evidence
+
+```text
+Red-first bridge run:
+3 failed, 16 passed
+
+tools/.venv/bin/pytest -q tools/mavlink_bridge
+....................                                                     [100%]
+20 passed in 0.03s
+
+tools/.venv/bin/ruff check tools/mavlink_bridge tools/sitl
+All checks passed!
+
+tools/sitl/run.sh
+{"continuous_samples": 15, "ekf_flags": 831, "max_tracking_error_m": 0.07836298428997139, "position_error_m": 0.07836298428997139, "type": "ACCEPTANCE"}
+```
+
+## Remaining ASSUMED / UNVERIFIED
+
+- Accuracy inflation rates and 1 s/3 s degradation thresholds remain explicit conservative
+  policy choices pending integrity-owner approval.
+- The HDOP proxy is an operational compatibility mapping, not a geometric DOP calculation;
+  system integrity review must approve it for sea trials.
+- Dynamically consistent moving-vehicle fusion performance and alternative Case-A actions
+  (MANUAL/disarm) are **[UNVERIFIED]**.

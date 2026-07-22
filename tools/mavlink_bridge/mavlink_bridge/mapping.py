@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import time
 from typing import Any
 
 import pymap3d as pm
@@ -14,6 +15,10 @@ FRESH_NS = NANOSECONDS
 NO_FIX_NS = 3 * NANOSECONDS
 ACCURACY_GROWTH_MPS = 2.0
 SPEED_ACCURACY_GROWTH_MPS2 = 0.25
+GPS_EPOCH_UNIX_S = 315_964_800
+GPS_WEEK_SECONDS = 7 * 24 * 60 * 60
+# GPS-UTC has been 18 seconds since 2017-01-01. Update when IERS announces a leap second.
+GPS_UTC_LEAP_SECONDS = 18
 
 
 @dataclass(frozen=True)
@@ -94,22 +99,24 @@ class GpsInput:
 def encode_yaw(heading_rad: float | None) -> int:
     """Encode radians clockwise from north as MAVLink centidegrees."""
     if heading_rad is None:
-        return 65535
+        return 0
     centidegrees = round(math.degrees(heading_rad) % 360.0 * 100.0)
     if centidegrees in (0, 36000):
         return 36000
     return centidegrees
 
 
-def map_epoch(epoch: SolutionEpoch, now_monotonic_ns: int, gps_id: int = 0) -> GpsInput:
+def map_epoch(
+    epoch: SolutionEpoch,
+    now_monotonic_ns: int,
+    gps_id: int = 0,
+    now_utc_s: float | None = None,
+) -> GpsInput:
     epoch.validate()
     age_ns = max(0, now_monotonic_ns - epoch.monotonic_ns)
     age_s = age_ns / NANOSECONDS
     lat_deg, lon_deg, _ellipsoid_alt_m = pm.ecef2geodetic(*epoch.position_ecef_m, deg=True)
-    ignore = (
-        mavlink2.GPS_INPUT_IGNORE_FLAG_HDOP
-        | mavlink2.GPS_INPUT_IGNORE_FLAG_VDOP
-    )
+    ignore = mavlink2.GPS_INPUT_IGNORE_FLAG_VDOP
     fix_type = 3 if epoch.steering_authorised else 1
     yaw = encode_yaw(epoch.heading_rad)
     if age_ns > FRESH_NS:
@@ -117,19 +124,32 @@ def map_epoch(epoch: SolutionEpoch, now_monotonic_ns: int, gps_id: int = 0) -> G
     if age_ns > NO_FIX_NS:
         fix_type = 1
         ignore |= mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
-        yaw = 65535
+        yaw = 0
+
+    # Anchor the same-host monotonic epoch age to wall-clock UTC at publication. GPS time
+    # leads UTC by the current leap-second offset; using the epoch age avoids timestamping
+    # repeated fill as a new measurement.
+    if now_utc_s is None:
+        now_utc_s = time.time()
+    gps_epoch_age_s = now_utc_s - age_s - GPS_EPOCH_UNIX_S + GPS_UTC_LEAP_SECONDS
+    time_week = math.floor(gps_epoch_age_s / GPS_WEEK_SECONDS)
+    time_week_ms = round((gps_epoch_age_s % GPS_WEEK_SECONDS) * 1000)
+    if time_week_ms == GPS_WEEK_SECONDS * 1000:
+        time_week += 1
+        time_week_ms = 0
 
     return GpsInput(
         time_usec=now_monotonic_ns // 1000,
         gps_id=gps_id,
         ignore_flags=ignore,
-        time_week_ms=0,
-        time_week=0,
+        time_week_ms=time_week_ms,
+        time_week=time_week,
         fix_type=fix_type,
         lat=round(lat_deg * 10_000_000),
         lon=round(lon_deg * 10_000_000),
         alt=epoch.msl_alt_m,
-        hdop=65535.0,
+        # Operational proxy: one metre of horizontal 1-sigma uncertainty maps to HDOP 1.
+        hdop=epoch.horiz_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
         vdop=65535.0,
         vn=epoch.horizontal_velocity_ned_mps[0],
         ve=epoch.horizontal_velocity_ned_mps[1],

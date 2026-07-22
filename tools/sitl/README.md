@@ -22,14 +22,15 @@ The runner wipes SITL state, loads and confirms `FRAME_CLASS=2`, `GPS1_TYPE=14`,
 the same mapping/send code used by the stdin bridge. It fails unless:
 
 - EKF_STATUS_REPORT has the absolute-horizontal-position bit and not constant-position mode;
-- GLOBAL_POSITION_INT finishes within 10 m of the injected position; and
+- every sampled GLOBAL_POSITION_INT after aiding, including the endpoint, is within 10 m of
+  the contemporaneous injected position; and
 - GPS_RAW_INT exposes injected fix type 3 and the injected 0.8 m horizontal accuracy as 800 mm.
 
 Evidence is written to ignored `tools/sitl/evidence/sitl.log` and `mavlink.jsonl`. The
 expected final stdout is one JSON `ACCEPTANCE` record. Until a run succeeds, these outputs
 must be labelled `[UNVERIFIED — not run here]`; the runner never synthesises a passing log.
 
-On 2026-07-22 this environment built and ran SITL. GPS ingestion and position/accuracy
-visibility passed, but the overall acceptance remained **unverified/failed** because
-`EKF_STATUS_REPORT.flags` stayed 167 (constant-position mode, no absolute-horizontal-position
-bit) after 60 seconds. The observed non-passing evidence is described in the unit report.
+On 2026-07-22 this environment built and ran SITL successfully. The acceptance record had
+EKF flags 831, 15 post-aiding continuous samples, maximum tracking error 0.0784 m, and final
+tracking error 0.0784 m. This is driver/telemetry-path evidence, not a claim about estimator
+fusion accuracy under dynamically representative motion.

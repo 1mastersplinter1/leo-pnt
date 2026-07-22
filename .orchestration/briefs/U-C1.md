@@ -1,9 +1,15 @@
 # Brief U-C1 — Contracts v2 + Rust workspace + fusion executive skeleton
 
-Contract version built against: v1 → you produce v2. Read first, in order:
-`.orchestration/CONTRACTS.md`, `docs/design/DESIGN_BASELINE.md`, `docs/design/ARCHITECTURE.md`,
-and the review findings in `.orchestration/reports/U-D1-review-opus.md` and `U-D1-review-sonnet.md`
-(address anything marked blocker/major that touches contracts or the executive).
+Contract version built against: v1 → you produce v2.
+
+**Workspace: you are already inside a dedicated git worktree on branch `unit/U-C1`. Work here;
+do not create branches, do not switch branches, do not touch main.**
+
+Read first, in order: `.orchestration/CONTRACTS.md`, `docs/design/DESIGN_BASELINE.md`,
+`docs/design/ARCHITECTURE.md` (the approved baseline — reviews already resolved), and
+`.orchestration/DECISIONS.md`. Binding for you: **D10** — Orbcomm observations must not enter
+fusion until a second receiver-clock state or per-receiver nuisance term exists; contracts v2
+must state this, and the executive's routing must reject Orbcomm measurements by default.
 
 ## Goal
 1. **CONTRACTS.md v2**: append a `## v2` section fixing what v1 deferred: measurement-bus
@@ -27,9 +33,8 @@ and the review findings in `.orchestration/reports/U-D1-review-opus.md` and `U-D
 ## Method — TDD, strictly
 Red-green per behavior: write the failing test, run it, watch it fail, implement minimally,
 watch it pass. Loop `cargo test` and `cargo clippy --all-targets -- -D warnings` until both
-are clean. Commit frequently on your branch with conventional messages — you MAY commit
-(this supersedes wave-1's no-commit rule; you work on branch `unit/U-C1`, never on main).
-Create the branch yourself from main before touching files.
+are clean. Commit frequently on branch `unit/U-C1` with conventional messages — you MAY
+commit in this worktree (supersedes wave-1's no-commit rule); never merge to main.
 
 ## Files owned
 `Cargo.toml`, `crates/**`, the `## v2` section of `.orchestration/CONTRACTS.md`,

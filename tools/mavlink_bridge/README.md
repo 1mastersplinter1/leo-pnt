@@ -1,0 +1,67 @@
+# MAVLink GPS_INPUT bridge
+
+This Python 3 package consumes one JSON object per line on standard input and emits
+MAVLink 2 `GPS_INPUT` (message 232) at 5 Hz. It uses `pymavlink` 2.4.43 for transport and
+`pymap3d` 3.2.0 for WGS 84 (EPSG:4978 ECEF to EPSG:4979 geodetic) conversion. The ECEF
+ellipsoid height is deliberately discarded: `alt` is the estimator's separate
+MSL-constrained `msl_alt_m` value. Velocity is NED and `vd` is always zero.
+
+The [MAVLink common message specification](https://mavlink.io/en/messages/common.html#GPS_INPUT)
+defines `yaw` as clockwise from Earth north in centidegrees: zero means unavailable and
+36000 must represent north. This bridge therefore uses zero whenever heading is unavailable;
+65535 is a `GPS_RAW_INT` yaw sentinel and is not valid for `GPS_INPUT.yaw`. ArduPilot documents
+that [GPS1_TYPE must be 14](https://ardupilot.org/mavproxy/docs/modules/GPSInput.html).
+
+## Input schema
+
+Every line has this exact shape (JSON numbers must be finite):
+
+```json
+{
+  "monotonic_ns": 123456789000,
+  "state": {
+    "position_ecef_m": [-4479000.0, 2670000.0, -3660000.0],
+    "horizontal_velocity_ned_mps": [1.0, 0.0],
+    "heading_rad": 0.0,
+    "receiver_clock_bias_m": 0.0,
+    "receiver_clock_drift_mps": 0.0
+  },
+  "steering_authorised": true,
+  "horiz_accuracy_m": 0.8,
+  "speed_accuracy_mps": 0.1,
+  "vert_accuracy_m": 1.5,
+  "msl_alt_m": 584.0
+}
+```
+
+The first three fields mirror v2 `SolutionEpoch` and all five `FilterState` members are
+carried in the JSON contract (the bridge currently needs position, horizontal velocity and
+heading). `heading_rad` may be `null`. The three positive accuracy fields and MSL altitude
+extend the current Rust type pending the estimator unit; all are required. Accuracy means
+a one-standard-deviation bound in the units named by the field.
+
+Fresh authorised epochs claim fix type 3. After 1 second without a new epoch the repeated
+fill degrades to fix type 2; after 3 seconds it reports no fix, ignores horizontal velocity,
+and marks yaw unavailable. A revoked `steering_authorised` value reports no fix immediately.
+Horizontal and vertical position accuracy grow by 2 m/s of age and speed accuracy by
+0.25 m/s per second of age. Publication itself continues, preventing transport silence;
+the default 5 Hz interval is far inside ArduPilot's source-defined 4-second GPS timeout.
+HDOP is supplied using the documented operational proxy `HDOP = horiz_accuracy_m / 1 m`
+(including stale inflation), which lets ArduPilot populate `state.hdop`; VDOP remains ignored.
+Vertical velocity is supplied as zero, exactly as required by the baseline. `ODOMETRY` is
+never emitted.
+
+`monotonic_ns` must be captured in the same host monotonic clock domain as the bridge. The
+bridge anchors the measurement age to host UTC and sends real GPS week/time-of-week, using
+the current GPS−UTC offset of 18 seconds. This avoids presenting delayed fill as a fresh
+measurement; operators must update the constant if a future leap second is announced.
+
+## Run and test
+
+```sh
+DISABLE_MAVNATIVE=1 tools/.venv/bin/pip install -e tools/mavlink_bridge
+tools/.venv/bin/pytest tools/mavlink_bridge
+tools/.venv/bin/ruff check tools/mavlink_bridge
+tools/.venv/bin/python -m mavlink_bridge.synthetic --realtime --duration 30 |
+  tools/.venv/bin/python -m mavlink_bridge.cli --connect udpout:127.0.0.1:14550 --stop-after-eof 4
+```

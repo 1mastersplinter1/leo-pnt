@@ -143,7 +143,7 @@ Expected degradation is explicit:
 | Frequency reference degrades or sustained heel invalidates its model | Clock bias/drift states may absorb only modelled behaviour. Reject biased Doppler as integrity dictates and revoke authority when solution limits are exceeded. |
 | Sea-surface multipath biases a tracker | Correlation quality and innovation consistency shall drive rejection or uncertainty inflation; persistent constellation-correlated residuals revoke authority when protection limits are exceeded. |
 | Ephemeris missing or too old | Do not form or accept the affected Doppler prediction. Continue with other measurements; never bypass the age gate. |
-| Companion process stalls | Its independent monotonic watchdog shall make steering authority expire. Alarm escalation and the physical override remain available; software shall not autonomously select RTL, Loiter or disarm. |
+| Companion faults, by class (amended 2026-07-22 per D17) | Estimator-only stall or internal fault with the supervisor alive: the supervisor's monotonic watchdog shall expire the authority lease and stop steering output. Whole-process death, companion–autopilot link loss, or board/power loss: no in-process responder exists; the bounded backstop is the autopilot-side response to `GPS_INPUT` silence — whose exact behaviour at the pinned firmware is [UNVERIFIED] until characterised in SITL (U-M1) — plus alarm hardware and the physical helm override. In every class, software shall not autonomously select RTL, Loiter or disarm. |
 
 ## Acceptance profiles
 

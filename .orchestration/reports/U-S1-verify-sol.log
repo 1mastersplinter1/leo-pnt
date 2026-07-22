@@ -1,0 +1,1360 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.5
+--------
+workdir: /home/od/work/leo-pnt
+model: gpt-5.6-sol
+provider: openai
+approval: on-request
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 019f8b96-d826-7ad1-bd9f-b93dc64b3f41
+--------
+user
+You are verifying a fix pass on a safety-critical document you must judge skeptically. The original review (14 findings, verdict FAIL) is at .orchestration/reports/U-S1-review-sol.md. The author has since reworked docs/design/SAFETY_CASE.md and .orchestration/reports/U-S1.md (uncommitted working-tree changes; 'git diff -- docs/design/SAFETY_CASE.md' shows the rework vs the failed version). For each of the 14 findings: confirm from the actual document text (not the disposition table) that it is resolved soundly without introducing new inconsistencies. Scrutinize hardest: the reworked revocation model (Case A companion-alive handoff vs Case B dead-process/ArduPilot-timeout — is the claimed behavior of ArduPilot on GPS_INPUT silence with GPS_TIMEOUT_MS accurate and marked verifiable-in-SITL rather than asserted?), the fault-domain reclassification (are H6/H7 residuals now honestly uncontrolled, and is nothing else still citing same-domain components as independent mitigation?), and the hysteresis definition (distinct entry/clear thresholds + dwell). Output: per-finding verdict line (resolved/not-resolved/new-issue), any NEW findings with severity/confidence/file:line/how-to-verify, final line PASS or FAIL.
+codex
+I’ll independently inspect the original review, both reworked documents, and the exact diff, then trace every claimed resolution back to normative text and line numbers.
+exec
+/bin/bash -lc "sed -n '1,260p' .orchestration/reports/U-S1-review-sol.md && git diff -- docs/design/SAFETY_CASE.md && sed -n '1,320p' docs/design/SAFETY_CASE.md && sed -n '1,260p' .orchestration/reports/U-S1.md" in /home/od/work/leo-pnt
+ succeeded in 0ms:
+(Reviewer: Sol/codex, fresh context, deep seat. Verdict: FAIL.)
+
+## Findings
+
+1. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:164`  
+   **Claim:** The companion’s internal watchdog guarantees that “authority cannot outlive the solution,” including when the whole companion stalls.  
+   **Finding:** A watchdog implemented inside the companion cannot execute revocation, publish a state change, or raise alarms after the whole process stalls. ArduPilot will retain the last injected state until its own timeout or another independently executing mechanism intervenes. This contradicts lines 168–171 and H4/H5. The architecture likewise places the watchdog within the companion supervisor, not in an independent process/controller.  
+   **HOW TO VERIFY:** In SITL, grant authority, then `SIGSTOP` or power-cut the companion. Record actuator/mode behavior and `GPS_INPUT` state for at least 5 seconds. Demonstrate which independently executing component revokes control before ArduPilot’s timeout. If none does, add an ArduPilot-side heartbeat/lease, separate hardware/process watchdog, or narrow the guarantee.
+
+2. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:179`  
+   **Claim:** `t_lease < GPS_TIMEOUT_MS` ensures “the companion always revokes before ArduPilot’s own GPS timeout.”  
+   **Finding:** This timing inequality has no causal effect during companion failure or MAVLink link loss: the revocation cannot reach ArduPilot over a failed process/link. ArduPilot only observes missing `GPS_INPUT` and reacts after its own timeout. H5 itself concedes an unavoidable window of up to approximately four seconds at line 241, directly contradicting “always revokes before.” The baseline says continuous publication is motivated by the timeout; it does not require or establish that an internal companion lease must beat it.  
+   **HOW TO VERIFY:** Break the MAVLink connection while authority is granted and timestamp: last accepted `GPS_INPUT`, internal lease expiry, any message received by ArduPilot conveying revocation, ArduPilot timeout, mode transition, and actuator behavior. Unless ArduPilot receives an independent revocation before 4000 ms, remove the claim and treat its timeout/non-manoeuvre configuration as the actual boundary.
+
+3. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:113`  
+   **Claim:** On revocation, ArduPilot is commanded to or held in a manual/helm-controlled state without an autonomous manoeuvre.  
+   **Finding:** The document does not define a verified mechanism that performs this transition. `GPS_INPUT` supplies navigation data; it is not itself a steering-authority or manual-control handoff interface. The document’s own register admits that the mechanism remains unresolved at lines 262–264. Therefore “stop steering + hand to helm” is not presently a testable safety action, and the central revocation claim is unsubstantiated.  
+   **HOW TO VERIFY:** Specify the exact MAVLink command, ArduPilot mode, RC/actuator arbitration, timeout behavior, and required parameter set. Test integrity failure, lease expiry, process death, and link loss in pinned-firmware SITL plus hardware-in-the-loop. Confirm no commanded turn, loiter, RTL, disarm, throttle change, or actuator discontinuity occurs and that physical helm input immediately dominates.
+
+4. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:191`  
+   **Claim:** S2 is entered whenever any G1–G4 condition is false.  
+   **Finding:** G1 is false by default at process start and becomes false when the helm deliberately withdraws authorization. As written, normal startup and intentional disarming cause a loud warning, then maximal continuous escalation if unacknowledged. This conflates “not armed” with a fault-driven revocation and makes the escalation ladder internally inconsistent.  
+   **HOW TO VERIFY:** Execute the state machine from cold startup with no arm action, then arm and deliberately disarm. Confirm expected states and annunciation. Define a separate DISARMED state and reserve S2/S3 for loss of a previously granted lease or another hazardous fault.
+
+5. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:125`  
+   **Claim:** Two revocation trigger classes cover the full authority conjunction.  
+   **Finding:** The listed classes cover G2/G3 and G4 but omit G1 withdrawal, despite lines 59–61 saying any false term revokes. The escalation table does treat G1 false as S2, producing inconsistent revocation semantics.  
+   **HOW TO VERIFY:** Construct a transition table for every condition changing true→false and false→true. Include explicit-arm withdrawal, startup-unarmed, protection-limit breach, calibration/ephemeris fault, and lease expiry. Require exactly one defined authority and alarm outcome for each transition.
+
+6. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:166`  
+   **Claim:** The lease is renewed by a fresh solution satisfying “G2+G3+G4.”  
+   **Finding:** G4 is defined as the lease already being unexpired because it was renewed. Making G4 a prerequisite for renewal is circular and leaves initial lease acquisition and boundary-time behavior undefined. Depending on implementation, an expired lease could never become live again even after a fresh arm action, or the implementation could silently differ from the safety case.  
+   **HOW TO VERIFY:** Formalize renewal as an event predicate independent of current lease validity, such as `fresh && G2 && G3`, then separately define `G4 := monotonic_now < lease_deadline`. Test startup, exact-deadline arrival, expiry, recovery, and explicit re-arm.
+
+7. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:237`  
+   **Claim:** A few-hundred-millisecond lease renewed only by a “fresh” solution safely handles loss of all LEO observations.  
+   **Finding:** The baseline explicitly permits 5 Hz propagated dead-reckoned fill between absolute observations and expects LEO observations to be sparse. “Fresh solution” is not defined tightly enough to distinguish a newly propagated DR solution from a new absolute/integrity observation. If every propagated frame renews the lease, loss of all LEO can continue renewing indefinitely until G2 grows; if only absolute solutions renew it, normal operation may revoke within approximately one second. The degradation row’s “G2, then G4” behavior is therefore not testable.  
+   **HOW TO VERIFY:** Define which estimator events qualify for lease renewal and the independent maximum age of each safety-relevant source. Replay minutes-long gaps in LEO observations while IMU propagation continues and verify the precise revoke time against the intended DR authority policy.
+
+8. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:238`  
+   **Claim:** An “innovation-consistency / NEES-style” online monitor provides a covariance-realism check that does not itself trust covariance.  
+   **Finding:** NEES explicitly normalizes state error using the reported covariance and normally requires truth; it is not an online covariance-independent detector aboard a GNSS-denied vessel. Innovation consistency also uses predicted innovation covariance. The proposed mitigation is technically misstated and does not independently close optimistic-covariance faults.  
+   **HOW TO VERIFY:** Specify the exact statistic, inputs, reference truth or redundancy, thresholds, false-alarm probability, and independence assumptions. Demonstrate detection using injected Jacobian, missing-propagation, and process-noise faults in GNSS-withheld replay. Rename offline NEES evidence separately from any online monitor.
+
+9. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:210`  
+   **Claim:** The physical override and kill-cord form the final backstop when the human does not respond.  
+   **Finding:** The kill-cord only acts if its lanyard is physically pulled. It does nothing for a distracted or incapacitated helm who remains in position, which the document acknowledges at line 243. Thus the chain is real for displacement/overboard scenarios but not for the full mandated “human does not respond” case. The safety case labels that residual accepted without an acceptance authority, criterion, or required operational mitigation.  
+   **HOW TO VERIFY:** Perform a hazard analysis for at least distracted, unconscious-at-helm, overboard, disconnected-cord, and failed-manual-override cases. Identify who formally accepts each residual. Require and test a second helm, dead-man device, or equivalent if unattended continued propulsion is outside the trial risk envelope.
+
+10. **Major — medium confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:65`  
+    **Claim:** The four-condition conjunction is “precisely and testably” specified.  
+    **Finding:** Several predicates remain non-executable: protection-limit numbers are absent; “frequency-reference calibration … unexpired” has no baseline expiry rule; ephemeris validity is later assigned to G3 although G3’s predicate does not clearly include it; the stabilization dwell and all relevant timings are unset. Marking them `[UNVERIFIED]` is honest but does not satisfy the brief’s requirement for a precise, testable authority contract before steering.  
+    **HOW TO VERIFY:** Produce a requirements table containing units, numerical thresholds, comparison operators, age limits, evaluation rate, missing-data behavior, hysteresis, dwell, and test IDs for every G1–G4 subpredicate. Trace every item to baseline authority or explicitly mark it as a proposed baseline change.
+
+11. **Major — high confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:241`  
+    **Claim:** During MAVLink link loss, the companion “detects link loss and treats it as revocation.”  
+    **Finding:** Detection requirements are absent: no heartbeat/ACK source, deadline, directionality, or proof that a one-way companion→ArduPilot failure is observable by the companion. More importantly, internal revocation cannot alter the autopilot through the failed link. This mitigation therefore does not control the stated hazard.  
+    **HOW TO VERIFY:** Inject independent TX, RX, full-duplex, intermittent, and corrupt-frame faults. Establish detection latency for each and show the mechanism that changes actuator authority despite the failed channel.
+
+12. **Major — medium confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:242`  
+    **Claim:** A companion software fault or spoofed `GPS_INPUT` is mitigated by “the same integrity monitor + watchdog.”  
+    **Finding:** The integrity monitor, authority supervisor, watchdog, and publisher are all within the same companion fault domain. A process corruption capable of producing plausible false `GPS_INPUT` can also falsify integrity status or renew the lease. The hazard row recognizes the correlated residual but nevertheless describes the non-independent controls as mitigation. Physical kill-cord does not detect plausible wrong steering.  
+    **HOW TO VERIFY:** Define fault-containment boundaries and inject faults after the integrity decision, in the publisher, supervisor state, and outgoing MAVLink serialization. Demonstrate an independent consumer or monitor rejects unauthorized/wrong output, or explicitly classify the residual as uncontrolled and obtain risk acceptance.
+
+13. **Minor — high confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:194`  
+    **Claim:** The caution band supplies hysteresis.  
+    **Finding:** S1 returns to S0 when the metric “recovers past the caution threshold,” apparently using the same threshold for entry and exit. That is not hysteresis and permits S0/S1 alarm flapping, although latched S2 prevents steering-authority flapping after revocation.  
+    **HOW TO VERIFY:** Define distinct caution-entry and caution-clear thresholds with ordering and dwell, then run noisy boundary traces through the state machine.
+
+14. **Minor — high confidence**  
+    **File:** `.orchestration/reports/U-S1.md:32`  
+    **Claim:** `t_lease < 4000 ms` means the companion “always revokes before ArduPilot could fire its own failsafe.”  
+    **Finding:** The report repeats the invalid guarantee and omits the critical distinction between internal companion state and a revocation observable by ArduPilot.  
+    **HOW TO VERIFY:** Update the report after resolving findings 1–3 and cite the SITL/HIL evidence demonstrating the actual responder ordering.
+
+Coverage result: all four brief deliverables and all seven mandated hazard categories are present. The failure is in correctness, testability, and the claimed independence/effectiveness of the backstop chain—not omission or style.
+
+**FAIL**
+# Safety Case
+
+Status: **subordinate to [`DESIGN_BASELINE.md`](DESIGN_BASELINE.md)**
+Contract: v1 (2026-07-22)
+
+`DESIGN_BASELINE.md` is the single normative design document. This safety case implements
+and is bounded by it. Where the two differ, the baseline governs until the baseline is
+explicitly revised. This document adds no new sensor, estimator or acceptance requirement;
+it specifies **how steering authority is granted, revoked and backstopped**, deliverable 6
+of `docs/HANDOFF_PROMPT_BLADERF.md`, and it draws every degradation trigger from the
+baseline's degradation contract.
+
+Numbers the baseline and handoff do not supply — per-epoch protection limits, alarm and
+timer values, ArduPilot failsafe parameters, the MAVLink revocation command set — are marked
+**[UNVERIFIED]** and must be frozen before steering trials. Several safety claims in earlier
+drafts overreached by conflating *companion-internal state* with *behaviour observable to
+ArduPilot*; this revision states each boundary explicitly. Where the honest conclusion is
+that a hazard is **not controlled by present design**, this document says so and registers it
+(§5) rather than asserting a mitigation.
+
+---
+
+## 0. Terms, and the four things this case keeps separate
+
+- **Acceptance profile** (baseline §Acceptance profiles): system-level trial statistics
+  (e.g. ≤ 25 m aided, ≤ 200 m denied horizontal position) computed offline over declared test
+  segments against the truth journal. They grade the *campaign*. The baseline states they
+  **do not replace per-epoch integrity and authority checks**.
+- **Protection limit**: the per-epoch bound the authority supervisor tests each solution
+  against, derived by the solution integrity monitor (architecture module 10) from the filter
+  covariance and integrity state, *independently of ArduPilot*. The baseline supplies no
+  protection-limit numbers; they are **[UNVERIFIED]** and shall be no looser than the active
+  acceptance profile implies.
+- **Active profile**: which limit set applies, selected by `gnss_authority` — **aided** under
+  `production`, **denied** under `recorded_only` and `off`. Never changes code path.
+- **Fault domain**: the set of components that fail together under a single process-, board-
+  or link-level fault (§3.0). Distinguishing fault domains is essential and was the central
+  error of the previous draft: modules that share a fault domain cannot mitigate one another
+  against faults of that domain.
+
+Two roles:
+
+- **Authority** is the companion's assertion of autonomous steering — whether the fused
+  solution is permitted to steer via the MAVLink path. It is a *lease*, continuously
+  re-earned, never a latch.
+- **The helm** is the qualified person aboard with a physical, controller-independent manual
+  override (baseline). The helm is the primary safety actor; software is subordinate to it at
+  all times.
+
+**Vessel-speed caveat.** The baseline vessel is a **displacement-hull** vessel in the Danish
+straits (working assumption); handoff failure mode 9 frames the hazard as a *manned fast
+boat*. The revocation *principle* (revocation is never itself a manoeuvre) holds at any speed.
+The *timer* budgets are sized to the vessel's manoeuvre/collision time budget, which shrinks
+with speed; all timer values here are conservative displacement-hull estimates, **[UNVERIFIED]**,
+to be re-derived if the hull planes or slams.
+
+---
+
+## 1. What grants steering authority
+
+Steering authority is granted **only while the full conjunction G1–G4 holds** (logical AND;
+any false term drops authority — §2). The companion never self-grants; grant is opt-in by the
+helm (G1) and continuously re-earned by the solution (G2–G4).
+
+| # | Grant condition | Testable predicate | Evaluated in |
+|---|---|---|---|
+| G1 | **Human arm action** | The helm has raised an explicit arm command and not withdrawn it. Default at process start is **disarmed**. | Companion supervisor (module 11) — see arm-input gap below |
+| G2 | **Solution integrity within the active profile's protection limits** | Horizontal-position, horizontal-velocity and heading protection limits are each within the active-profile set, per epoch on the true (unclamped) covariance; **and** every observation contributing to the solution passed its integrity gate, including the SupGP **ephemeris-age** gate; **and** the age of the last absolute (LEO/aided-GNSS) position-constraining observation is within the DR-authority timeout. | Integrity monitor (module 10) + observation gate (module 8) → supervisor |
+| G3 | **Calibration/extrinsics validity** | Every measurement feeding the current solution carries a calibration ID that resolves and matches the surveyed antenna-phase-centre / IMU / vessel-reference extrinsics; none missing or mismatched. (Calibration/extrinsics only — ephemeris age now lives in G2.) | Bus ingress + integrity monitor |
+| G4 | **Lease liveness** | `monotonic_now < lease_deadline` on the clock service's monotonic domain — i.e. a fresh solution frame has renewed the lease within `t_lease`. G4 tests only *that a fresh, in-integrity frame is still being produced*; it does not re-test G2/G3 content. | Supervisor monotonic watchdog |
+
+**Ephemeris-age placement (fixes B1/C1).** Ephemeris age is an *observation-integrity* input,
+so it is tested inside G2 (via the observation gate), not in G3. G3 is calibration/extrinsics
+only. The degradation mapping (§2.4) and hazard table use this placement consistently.
+
+**Calibration validity window (fixes C2/D1).** The baseline and handoff define no *time-based
+expiry* for the pre-deployment frequency-reference/extrinsics calibration. G3 therefore tests
+only presence and identity match, not age. Any calibration-validity *window* would be a new
+parameter and a **proposed baseline change**, registered in §5; the word "unexpired" from the
+prior draft is dropped as unsupported.
+
+**G1 arm-input architecture gap (fixes B3; per D13).** `ARCHITECTURE.md`'s measurement bus
+defines no arm/disarm input or message, so G1 is **not yet realisable** against the approved
+architecture. Per decision **D13**, an arm-command bus message plus a helm arm input is a
+contracts requirement routed to U-C1 (contracts v3, executive routing). Until that lands, G1
+is a specified-but-unwired predicate; this document does not edit `ARCHITECTURE.md` (not
+owned). Registered in §5.
+
+### 1.1 Lease renewal, defined non-circularly (fixes findings 6, 7)
+
+The previous draft made G4 both a precondition for and a consequence of renewal. Corrected:
+
+- **Renewal event** `R := (solution_sequence advanced since last renewal) ∧ G2 ∧ G3`.
+  `R` is an event predicate over a *newly produced* solution frame; it does **not** depend on
+  the current lease being valid.
+- On `R`: `lease_deadline := monotonic_now + t_lease`.
+- **G4** `:= monotonic_now < lease_deadline` (pure comparison; deadline arrival = expiry).
+- **Initial acquisition / recovery:** at a G1 rising edge, the first fresh frame satisfying
+  `G2 ∧ G3` fires `R` and makes the lease live. An expired lease can therefore always be
+  re-acquired via a fresh in-integrity frame plus re-arm; expiry is never permanent.
+
+**Which frames renew (fixes finding 7).** The baseline permits 5 Hz dead-reckoned fill between
+sparse absolute fixes and makes the DR timeout govern *authority*. Accordingly, **every valid
+5 Hz solution frame — including DR-propagated fill — renews the lease provided it passes G2**.
+Lease liveness (G4) therefore proves only that the companion is *still producing integrity-
+passing output*; it is **not** the mechanism that ends dead-reckoning. Three independent timers
+do distinct jobs, and must not be conflated:
+
+| Timer | Measures age of | Bounds | Effect on expiry | Provisional value |
+|---|---|---|---|---|
+| `t_lease` (G4) | last produced solution frame | companion/estimator liveness | lease expiry → revoke | few×200 ms, `< GPS_TIMEOUT_MS` — [UNVERIFIED] |
+| `t_dr` (in G2) | last absolute position-constraining observation | dead-reckoning authority | revoke even if covariance still looks in-limit | [UNVERIFIED] |
+| per-source freshness | last IMU / magnetometer / speed-log / ephemeris sample | per-sensor staleness feeding integrity | feeds G2/G3 | [UNVERIFIED] |
+
+During all-LEO-loss, DR frames keep renewing the lease (G4 stays satisfied), and authority is
+ended by **G2** — either the growing protection limit breaches, or `t_dr` elapses — whichever
+comes first. This makes the "revoke time" testable against a replayed minutes-long LEO gap.
+
+### 1.2 Sub-predicate requirements (fixes finding 10)
+
+Structure is now executable and testable even where numbers remain deferred. Missing-data
+behaviour is fail-safe (absence ⇒ condition false) throughout.
+
+| ID | Sub-predicate | Metric / unit | Test | Eval rate | Missing-data | Trace / authority |
+|---|---|---|---|---|---|---|
+| G1 | armed | arm latch (bool) | `armed == true` | on-change + per cycle | ⇒ disarmed | brief; **arm message = proposed contracts v3 (D13)** |
+| G2p | horiz position PL | HPL (m) | `HPL ≤ PL_pos[profile]` **[UNVERIFIED]** | per epoch (5 Hz) | ⇒ false | baseline acceptance profiles; per-epoch number **proposed** |
+| G2v | horiz velocity PL | VPL (m/s) | `VPL ≤ PL_vel[profile]` **[UNVERIFIED]** | per epoch | ⇒ false | as above |
+| G2h | heading PL | (deg) | `HdgPL ≤ PL_hdg[profile]` **[UNVERIFIED]** | per epoch | ⇒ false | baseline 2°/5° (both **[UNVERIFIED]**) |
+| G2e | ephemeris age | max SV age (s) | `≤ t_eph` (provisional 6 h) | per observation | over-age ⇒ SV excluded | baseline SupGP 6 h gate **[UNVERIFIED]** |
+| G2d | DR-authority age | age of last absolute fix (s) | `≤ t_dr` **[UNVERIFIED]** | per epoch | ⇒ false | baseline "DR timeout governs authority only"; failure mode 3 |
+| G3 | calibration match | ID resolves & matches (bool) | all contributing meas. match | per epoch | ⇒ false (integrity fault) | baseline extrinsics rule |
+| G4 | lease live | `now − last_R` (s) | `< t_lease` **[UNVERIFIED]** | continuous | ⇒ expiry | this doc (**proposed**); baseline motivates continuous output via `GPS_TIMEOUT_MS` |
+
+Hysteresis/dwell for the caution band (`dwell_clear`) and the re-arm dwell (`dwell_rearm`) are
+defined in §2.2/§3.2; both are **[UNVERIFIED]**. Items traced
+to "proposed" require a baseline/contracts change and cannot be treated as baseline-authorised
+until made so.
+
+### 1.3 Why the authority gate cannot live in ArduPilot
+
+- **ArduPilot's covariance is censored.** It clamps reported horizontal accuracy at **100 m**;
+  its EKF variance cannot distinguish a 5 m solution from a 5 km divergence — the exact
+  discrimination G2 requires. The unclamped protection limit exists only upstream.
+- **ArduPilot cannot see the LEO integrity state** (calibration-ID match, ephemeris age,
+  per-pass transmit-bias health, cross-sensor residuals) that G2/G3 test.
+- **ArduPilot cannot see companion liveness** (G4): a stalled companion looks, from
+  ArduPilot's side, like a GPS gone quiet.
+- **`gnss_authority` / profile selection are companion concepts.**
+
+ArduPilot is therefore a downstream actuator that is **never relied on to judge navigation
+integrity**. Its own GPS/EKF failsafe actions are configured so that loss/degradation of
+`GPS_INPUT` **cannot itself command an autonomous manoeuvre** (RTL/Loiter/disarm) — because
+that manoeuvre is the hazard (§2). Exact failsafe parameter values are **[UNVERIFIED]** and are
+a SITL-validated deliverable pinned to a firmware commit + artifact checksum.
+
+---
+
+## 2. What revokes steering authority
+
+### 2.1 Revocation semantics, and the actual signal path to ArduPilot (fixes findings 2, 3, 11, 14)
+
+Revocation is never a manoeuvre:
+
+> **Revocation = stop steering + alarm + hand to helm.**
+
+Software shall **never** autonomously select RTL, Loiter or disarm (failure mode 9; baseline
+final degradation row). But "stop steering + hand to helm" is only a real safety action if
+the mechanism that delivers it to ArduPilot is defined. It is **not** delivered by `GPS_INPUT`
+— that message is navigation data, not a control-authority interface. Two physically distinct
+cases exist, and the previous draft wrongly treated them as one:
+
+**Case A — companion alive, link up** (integrity/limit breach, lease expiry while the process
+still runs, or a helm-commanded disarm). The companion performs an *active* revocation:
+
+1. It commands ArduPilot into a helm/manual control mode over MAVLink (candidate
+   `MAV_CMD_DO_SET_MODE` / `SET_MODE` to `MANUAL` or an equivalent helm-controlled mode; exact
+   command, mode enum and RC-arbitration parameters **[UNVERIFIED]**, SITL/HIL deliverable).
+2. It then ceases / invalidates the `GPS_INPUT` nav injection, consistent with that mode.
+3. It raises the alarm (§3.2).
+
+The ordering to be **verified in SITL/HIL**: the mode transition to manual precedes or is
+simultaneous with cessation of nav injection, so that no GPS-timeout failsafe is provoked and
+**no commanded turn, throttle change, loiter, RTL, disarm, or actuator discontinuity occurs**;
+physical helm input dominates immediately. Until that test passes on pinned firmware, the
+"hand to helm" action is **unproven** and is registered as such (§5).
+
+**Case B — companion process dead, or MAVLink link lost** (whole-process stall, thread death,
+cable/connector fault). The companion can send nothing; **its internal watchdog/lease cannot
+reach ArduPilot.** ArduPilot observes only the *absence* of `GPS_INPUT` and reacts on its own
+`GPS_TIMEOUT_MS` (4000 ms), taking the pre-configured non-manoeuvre action. In this case the
+actual responders are **(a) ArduPilot's pre-configured non-manoeuvre GPS-failsafe and (b) the
+physical helm / kill-cord — not the internal watchdog.** There is an unavoidable window of up
+to `GPS_TIMEOUT_MS` during which ArduPilot coasts on the last `GPS_INPUT`; the safety argument
+is only that this coast is *bounded*, that the action at its end is *configured non-manoeuvring*,
+and that the physical helm dominates throughout. A one-way companion→ArduPilot TX failure is
+**not observable to the companion** without a return heartbeat; the companion judges link
+health via the ArduPilot→companion MAVLink heartbeat with its own deadline, but even on
+detection it cannot correct ArduPilot over the failed channel — detection serves alarm and
+logging, not actuator control.
+
+**Consequently the corrected guarantee is:** *for faults in which the companion keeps
+executing, the live supervisor revokes within `t_lease` (Case A).* For companion death or link
+loss (Case B) the guarantee degrades to ArduPilot's bounded (~4 s) non-manoeuvre timeout plus
+the physical layer. The claim "the companion always revokes before ArduPilot's failsafe" is
+withdrawn; `t_lease < GPS_TIMEOUT_MS` matters only in Case A, where it bounds how long a
+degraded-but-alive companion may keep asserting before self-revoking.
+
+### 2.2 Authority state machine and full transition table (fixes findings 4, 5)
+
+Intended disarm and startup-unarmed are **not** faults and must not alarm. A distinct
+**DISARMED** state is introduced; the S2/S3 alarm ladder is reserved for loss of a
+*previously granted* lease due to a hazardous condition.
+
+States: **DISARMED** · **NOMINAL (S0)** · **CAUTION (S1)** · **WARNING (S2)** · **ESCALATED
+(S3)** · **LATCHED-SAFE (S4)**.
+
+| Transition (event) | From | To | Authority | Annunciation |
+|---|---|---|---|---|
+| process start (G1 false) | — | DISARMED | none | quiet status |
+| helm arms, `G2∧G3` on fresh frame (`R`) | DISARMED | NOMINAL | granted | quiet "armed" |
+| helm arms, `G2∧G3` not yet met | DISARMED | DISARMED | none | "cannot arm: solution not ready" |
+| protection metric ≥ `caution_enter` | NOMINAL | CAUTION | granted | soft pre-alert |
+| metric ≤ `caution_clear` for `dwell_clear` | CAUTION | NOMINAL | granted | clear |
+| **helm disarms** (G1 commanded false) | NOMINAL/CAUTION | DISARMED | revoked (intended) | quiet handoff confirm — **no alarm** |
+| **G2 or G3 false** (fault) | NOMINAL/CAUTION | WARNING | **revoked, latched** | loud alarm, demand ack |
+| **G4 lease expiry while alive** | NOMINAL/CAUTION | WARNING | **revoked, latched** | loud alarm, demand ack |
+| ack within `T_ack` | WARNING | LATCHED-SAFE | revoked | steady fault |
+| no ack for `T_ack` | WARNING | ESCALATED | revoked | max continuous alarm |
+| ack | ESCALATED | LATCHED-SAFE | revoked | steady fault |
+| re-arm (G1 edge, `G2∧G3`, after `dwell_rearm`) | LATCHED-SAFE / DISARMED | NOMINAL | granted | quiet "armed" |
+
+Every condition change true→false and false→true has exactly one authority + annunciation
+outcome above. Note the distinction the previous draft missed: **G1 falling by helm command is
+an intended, quiet disarm**, while **G2/G3 false or G4 expiry are fault revocations that
+alarm**. "Any false term drops authority" still holds; only the *annunciation* differs by
+cause. Whole-process death (Case B) cannot self-annunciate — it presents to the helm via the
+absence of the healthy indication plus any independent annunciator, and to ArduPilot via
+GPS timeout.
+
+### 2.3 Degradation-row mapping (baseline degradation contract)
+
+"Continue" = estimator keeps running (baseline: authority expiry never stops the estimator);
+authority persists only while G1–G4 hold.
+
+| Baseline degradation row | Supervisor response | Trigger |
+|---|---|---|
+| GNSS absent or forbidden | Normal denied operation; **denied** profile active; GNSS cannot re-enter fusion (bus ingress). | none (mode) |
+| One LEO constellation / RF front end lost | Continue if protection limits met; degrade honestly. | G2 if breached |
+| **All LEO observations lost** | DR frames keep renewing G4; authority ends on G2 — protection-limit breach **or** `t_dr` elapsed, whichever first. | G2 (`t_dr` or PL) |
+| One magnetometer lost/rejected | Continue on the other calibrated magnetometer, IMU turn dynamics and any selected non-magnetic heading sensor; inflate heading uncertainty. | G2 (heading) if breached |
+| **Both magnetometers lost/rejected** | Continue short-term attitude propagation and any selected non-magnetic heading measurement; not passage-capable by inertial integration alone; revoke when heading PL exceeded. | G2 (heading) |
+| Speed log lost | Continue; current separation unavailable. | G2 if breached |
+| **IMU stream stale** | Propagation untrustworthy → revoke; estimator stays running, fabricates no propagation samples, and journalling and recovery may continue. | G2 (per-source freshness) |
+| Frequency reference degrades / sustained heel | Reject biased Doppler per integrity; revoke when limits exceeded. | G2 |
+| Sea-surface multipath biases a tracker | Reject/inflate on correlation quality + residuals; persistent correlated residuals revoke. | G2 |
+| Ephemeris missing or too old | Do not form/accept affected Doppler (never bypass age gate); revoke only if the surviving solution breaches limits. | **G2 (ephemeris-age gate)** |
+| **Companion process stalls** | Live supervisor cannot act (it is the stalled process); responders are ArduPilot's non-manoeuvre timeout + physical layer (Case B, §2.1). Software never selects RTL/Loiter/disarm. | Case B |
+| Calibration ID missing/mismatched *(additional row — not one of the 11 literal baseline rows; sourced from the extrinsics rule, `DESIGN_BASELINE.md` §Estimator and degradation contract, "missing or mismatched calibration is an integrity fault that forbids steering authority")* | Authority-blocking integrity fault. | G3 |
+
+**Orbcomm fusion caveat (fixes B4; per D10).** Orbcomm arrives on an independent, non-coherent
+receiver introducing a **second, unmodelled receiver clock**. Per decision **D10**, Orbcomm
+observations shall **not enter fusion** until a second receiver-clock state or per-receiver
+nuisance term exists; until then they cannot corrupt the steering solution or its protection
+limits. This is a safety-relevant integrity constraint on which observations G2 may rest.
+
+The DR timeout `t_dr` **governs authority only** (baseline; failure mode 3) — it never stops
+propagation, observation processing, journalling, or the 10–20 min convergence.
+
+---
+
+## 3. The backstop when the human does not respond
+
+### 3.0 Fault domains and independence (fixes finding 12; coordinator point ii)
+
+Independence claims are only valid across fault-domain boundaries. The domains are:
+
+- **Companion process / board (one domain).** Clock service, estimator, integrity monitor
+  (module 10), authority supervisor + watchdog (module 11) and MAVLink publisher (module 12)
+  all execute here. A **process-level fault** (memory corruption, scheduler stall, a fault
+  that simultaneously produces a plausible-wrong solution *and* a passing integrity verdict)
+  takes them down **together**. Within this domain, separate modules with design-diverse code
+  contain **design faults** of one another (e.g. a finite-difference-checked integrity monitor
+  catches a wrong-Jacobian estimator bug), but they contain **no** process-level fault.
+- **ArduPilot (separate compute).** Independent of companion process faults, but blind to
+  navigation-integrity correctness (censored 100 m view) — it can react to *absence* of input,
+  not to plausible-wrong input.
+- **Physical helm override + kill-cord (no compute).** Independent of all software; but they
+  act on gross vessel behaviour and human presence, not on nav correctness (§3.3).
+- **The human.** The only element that can judge that steering "looks wrong". Single point.
+
+The consequence, stated plainly: **no in-companion module is an independent mitigation of a
+companion process-level fault.** Where the earlier draft cited "the same integrity monitor +
+watchdog" as mitigation for a companion producing plausible-wrong output (H6), that is
+withdrawn. That residual is **uncontrolled by present design** and requires an **out-of-
+companion-process independent monitor** which does not yet exist; registered in §5.
+
+### 3.1 Layer 1 — supervisor monotonic watchdog (bounded scope)
+
+The lease (§1.1) on the clock service's monotonic domain is renewed only by a fresh,
+integrity-passing frame. Its **genuine, defensible job**: while the companion process is still
+executing, stop it from continuing to assert steering on a **frozen or stale solution** (H4) —
+a frozen estimator does not advance the solution sequence, so `R` does not fire, the lease
+expires, and the *live* supervisor executes a Case-A revocation.
+
+Its **limits**, now stated (correcting the previous over-claim): the watchdog **cannot** act
+once its own process has died or the link is lost (Case B) — it is inside the failed domain.
+"Authority cannot outlive the solution" therefore holds *for the companion-alive fault class
+only*; for companion death/link loss the bound is ArduPilot's ~4 s non-manoeuvre timeout plus
+the physical layer, not the internal watchdog. Independence properties that do hold: the
+watchdog runs on the monotonic clock (a device/UTC reset or spoofed label cannot extend it),
+and its expiry cannot stop the estimator (baseline).
+
+`t_lease` shall be `< GPS_TIMEOUT_MS` (4000 ms) so that in Case A the companion self-revokes
+before its output would age out at ArduPilot. Provisional few×200 ms — **[UNVERIFIED]**.
+
+### 3.2 Layer 2 — un-acknowledged-alarm escalation ladder, with real hysteresis (fixes finding 13)
+
+The ladder exists to *summon the helm*, not to replace the helm; because software never
+manoeuvres, **the terminal state is not kinetic**. States and transitions are in §2.2. The
+# U-S1 report — safety case (fix round 1, after dual-seat FAIL)
+
+Contract: v1 (2026-07-22)
+
+Deliverable: `docs/design/SAFETY_CASE.md` (handoff deliverable 6). Documentation-only unit;
+no code, no git commit, no web research. Files owned/written: `docs/design/SAFETY_CASE.md`,
+`.orchestration/reports/U-S1.md`. Reviews addressed: `U-S1-review-sol.md` (codex deep seat,
+findings 1–14) and the coordinator-relayed Sonnet completeness findings B1–D2. Decisions
+consulted: D10, D12, D13, D14.
+
+## The one error that drove most blockers
+
+Findings 1, 2, 3, 11, 14 are the same mistake: the draft conflated **companion-internal
+state** (lease/watchdog) with **behaviour observable to ArduPilot**. Fix: §2.1 now splits
+revocation into **Case A** (companion alive/link up → active MAVLink mode-set to a helm mode,
+then cease nav injection, then alarm; ordering to be SITL/HIL-verified) and **Case B**
+(companion dead / link lost → the internal watchdog cannot reach ArduPilot; the real
+responders are ArduPilot's pre-configured non-manoeuvre GPS timeout + the physical helm/kill-
+cord). The "companion always revokes before ArduPilot's failsafe" guarantee is withdrawn;
+`t_lease < GPS_TIMEOUT_MS` is now scoped to Case A only. §3.1 narrows the watchdog guarantee
+to the companion-alive fault class. This propagated into H4/H5/H6 and the degradation table.
+
+## Codex (Sol) findings 1–14
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | Internal watchdog can't act after whole-process stall | **Fixed** — §2.1 Case B, §3.1 "limits", degradation "Companion process stalls" row now = Case B (ArduPilot timeout + physical layer, not internal watchdog). |
+| 2 | `t_lease < GPS_TIMEOUT_MS` gives no guarantee across a dead link | **Fixed** — claim withdrawn; scoped to Case A in §2.1 and §3.1; H5 rewritten. |
+| 3 | No defined mechanism for "stop steering + hand to helm" | **Fixed** — §2.1 Case A defines the MAVLink mode-set path (candidate command/mode + RC arbitration, all [UNVERIFIED] SITL/HIL), explicitly states `GPS_INPUT` is not a control interface, and marks "hand to helm" unproven until the SITL/HIL ordering test passes (§5). |
+| 4 | S2 entered on normal startup/intended disarm (G1 default-false) | **Fixed** — distinct **DISARMED** state added; §2.2 transition table makes helm-disarm a quiet handoff (no alarm); S2/S3 reserved for fault revocation. |
+| 5 | Trigger classes omit G1 withdrawal | **Fixed** — full transition table (§2.2) covers every condition true→false / false→true with one authority + annunciation outcome each; intended-disarm vs fault-revocation distinguished. |
+| 6 | G4 renewal circular (G4 prerequisite for its own renewal) | **Fixed** — §1.1 defines `R := seq-advanced ∧ G2 ∧ G3` (no lease-validity dependency) and `G4 := now < lease_deadline`; initial acquisition/recovery/boundary defined. |
+| 7 | "Fresh solution" undefined vs DR fill; revoke time untestable | **Fixed** — §1.1: every 5 Hz frame incl. DR fill renews G4; authority in all-LEO-loss ends via **G2** (`t_dr` or PL breach). Three-timer table separates `t_lease`, `t_dr`, per-source freshness. |
+| 8 | NEES mischaracterised as online covariance-independent monitor | **Fixed** — H2 rewritten: NEES-vs-truth is **offline** (replay); online is **NIS** (covariance-coupled, partial) plus **cross-sensor redundancy residuals** (covariance-independent, limited); prior claim explicitly withdrawn; residual "not closed online". |
+| 9 | Kill-cord doesn't cover incapacitated-at-helm; residual "accepted" without authority | **Fixed** — §3.3 sub-case coverage table; unconscious-at-helm marked **UNCONTROLLED**, not accepted (no risk-acceptance authority here); requires operational control (second crew / helm dead-man) with trial-authority acceptance; trial envelope should bar unattended propulsion until then. |
+| 10 | Predicates non-executable | **Fixed** — §1.2 sub-predicate requirements table (metric/unit, operator, eval rate, missing-data behaviour, test ID, trace); numbers remain [UNVERIFIED] but structure is testable and each item traced to baseline authority or marked "proposed". |
+| 11 | Link-loss "detects and treats as revocation" can't alter autopilot over failed link | **Fixed** — §2.1 Case B: one-way TX failure not observable without return heartbeat; detection serves alarm/log only; actuator control is via ArduPilot timeout + physical layer. H5 rewritten. |
+| 12 | Shared companion fault domain cited as independent mitigation | **Fixed** — new §3.0 fault-domain analysis; H6(a) mitigation-by-in-companion-modules withdrawn; correlated process-level fault classified **uncontrolled** pending an out-of-process monitor (registered §5). |
+| 13 | Single-threshold "hysteresis" | **Fixed** — §3.2 distinct `caution_enter`/`caution_clear` + `dwell_clear`, ordering stated; replaces vague "margin shrinking". |
+| 14 | Report repeats invalid guarantee | **Fixed** — this report; guarantee withdrawn and scoped (see header + finding 2). |
+
+## Sonnet completeness findings (coordinator-relayed)
+
+| # | Finding | Disposition |
+|---|---|---|
+| B1/C1 | G3 label covers ephemeris age but its definition is calibration-only | **Fixed** — ephemeris-age moved into **G2** (observation integrity, sub-predicate G2e); G3 is calibration/extrinsics only; degradation "Ephemeris" row retriggered to G2 consistently. |
+| B3 | G1 arm has no bus message; per D13 an arm-command message is a contracts requirement | **Fixed** — §1 G1 note + §5 register the D13 dependency (U-C1 contracts v3); `ARCHITECTURE.md` not edited (not owned). |
+| C2/D1 | "unexpired" freq-ref calibration — no expiry concept in baseline | **Fixed** — word "unexpired" dropped; G3 tests presence + identity match only; a calibration validity window recorded in §5 as a **proposed baseline change**, not assumed. |
+| B4 | Add D10 Orbcomm-fusion caveat | **Fixed** — §2.4 Orbcomm caveat: observations excluded from fusion until a second receiver-clock/nuisance state exists; also in §5. |
+| C3 | Define or de-scope "margin shrinking" | **Fixed** — replaced by the concrete `caution_enter` crossing in §3.2. |
+| B2 | "Calibration ID missing/mismatched" row is not one of the 11 literal baseline degradation rows (it derives from extrinsics prose); breaks the 1:1 mapping | **Fixed** (round 2, on receipt of the Sonnet file) — §2.3: the 11 literal baseline rows are listed 1:1 in baseline order (ending with "Companion process stalls"); the calibration row is moved below them and labelled an *additional row* citing its source (baseline §Estimator and degradation contract extrinsics rule). |
+| B5 | §2.3 rows drop qualifying clauses from baseline text (one-mag, both-mags, IMU-stale) | **Fixed** (round 2) — restored: one-mag row now includes "IMU turn dynamics and any selected non-magnetic heading sensor"; both-mags row includes "short-term attitude propagation and any selected non-magnetic heading measurement"; IMU-stale row includes "journalling and recovery may continue". |
+| D2 | "stabilisation dwell" not tagged [UNVERIFIED] at first use | **Fixed** (round 2) — the dwell terms (`dwell_clear`, `dwell_rearm`) are now tagged **[UNVERIFIED]** at their first mention in §1.2, ahead of the later §2.2/§3.2/§5 uses. |
+
+## Rejected / partial
+
+- Nothing rejected. All 22 findings fixed. B2/B5/D2 were briefly "not actionable" in round 1
+  (no Sonnet file on disk); the coordinator supplied `U-S1-review-sonnet.md` and all three are
+  now applied in round 2.
+
+## Key design changes this round
+
+- Revocation is now a defined, two-case MAVLink action, not an assertion; Case B honestly
+  hands the backstop to ArduPilot's bounded non-manoeuvre timeout + the physical layer.
+- Fault-domain boundaries (§3.0) make independence claims honest; two residuals (H6(a)
+  companion process-level fault; H7 unconscious-at-helm) are now labelled **uncontrolled** and
+  routed to an out-of-process monitor and an operational control respectively — not papered
+  over as mitigated.
+- Authority is a clean state machine (DISARMED + S0–S4) with a non-circular lease predicate,
+  three separated timers, real caution-band hysteresis, and a structurally testable
+  sub-predicate table.
+
+## Open uncertainties (full list in §5 register)
+
+Per-epoch protection-limit numbers; the timer set; the Case-A MAVLink revocation
+command/mode/ordering; the Case-B ArduPilot non-manoeuvre failsafe params; MAVLink signing;
+the out-of-process independent monitor (H6a); the content-liveness check (H4); the operational
+human-response control (H7); the G1 arm bus message (D13); the Orbcomm fusion gate (D10).
+
+## Evidence / process
+
+- Read in full: `U-S1-review-sol.md` (14 findings) and `DECISIONS.md` (D10/D12/D13/D14);
+  re-read `DESIGN_BASELINE.md`, `ARCHITECTURE.md`, handoff failure modes 3/5/9 for the
+  degradation contract, DR-timeout rule and the never-auto-manoeuvre rule.
+- Confirmed no `U-S1-review-sonnet.md` file exists; addressed the coordinator-relayed Sonnet
+  findings that carried substance.
+- Documentation-only unit: no executable test suite. No git commit (D3, brief). `ARCHITECTURE.md`
+  deliberately not edited (not owned; the arm-message gap is registered, per D13).
+
+codex
+The first pass already exposes a key distinction I’m checking closely: labeling a behavior “[UNVERIFIED]” can make the safety case honest, but it does not necessarily resolve a finding that demanded an established mechanism. I’m now checking every normative claim and all cross-references, especially the ArduPilot timeout semantics.
+exec
+/bin/bash -lc "nl -ba docs/design/SAFETY_CASE.md | sed -n '1,420p'; rg -n \"GPS_TIMEOUT|GPS_INPUT|failsafe|H[1-7]|independen|mitigat|uncontrolled|caution_enter|caution_clear|dwell|NEES|NIS|kill|dead-man|lease|t_dr|freshness\" docs/design/SAFETY_CASE.md docs/design/DESIGN_BASELINE.md docs/design/ARCHITECTURE.md .orchestration/reports/U-S1.md" in /home/od/work/leo-pnt
+ succeeded in 0ms:
+     1	# Safety Case
+     2	
+     3	Status: **subordinate to [`DESIGN_BASELINE.md`](DESIGN_BASELINE.md)**
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	`DESIGN_BASELINE.md` is the single normative design document. This safety case implements
+     7	and is bounded by it. Where the two differ, the baseline governs until the baseline is
+     8	explicitly revised. This document adds no new sensor, estimator or acceptance requirement;
+     9	it specifies **how steering authority is granted, revoked and backstopped**, deliverable 6
+    10	of `docs/HANDOFF_PROMPT_BLADERF.md`, and it draws every degradation trigger from the
+    11	baseline's degradation contract.
+    12	
+    13	Numbers the baseline and handoff do not supply — per-epoch protection limits, alarm and
+    14	timer values, ArduPilot failsafe parameters, the MAVLink revocation command set — are marked
+    15	**[UNVERIFIED]** and must be frozen before steering trials. Several safety claims in earlier
+    16	drafts overreached by conflating *companion-internal state* with *behaviour observable to
+    17	ArduPilot*; this revision states each boundary explicitly. Where the honest conclusion is
+    18	that a hazard is **not controlled by present design**, this document says so and registers it
+    19	(§5) rather than asserting a mitigation.
+    20	
+    21	---
+    22	
+    23	## 0. Terms, and the four things this case keeps separate
+    24	
+    25	- **Acceptance profile** (baseline §Acceptance profiles): system-level trial statistics
+    26	  (e.g. ≤ 25 m aided, ≤ 200 m denied horizontal position) computed offline over declared test
+    27	  segments against the truth journal. They grade the *campaign*. The baseline states they
+    28	  **do not replace per-epoch integrity and authority checks**.
+    29	- **Protection limit**: the per-epoch bound the authority supervisor tests each solution
+    30	  against, derived by the solution integrity monitor (architecture module 10) from the filter
+    31	  covariance and integrity state, *independently of ArduPilot*. The baseline supplies no
+    32	  protection-limit numbers; they are **[UNVERIFIED]** and shall be no looser than the active
+    33	  acceptance profile implies.
+    34	- **Active profile**: which limit set applies, selected by `gnss_authority` — **aided** under
+    35	  `production`, **denied** under `recorded_only` and `off`. Never changes code path.
+    36	- **Fault domain**: the set of components that fail together under a single process-, board-
+    37	  or link-level fault (§3.0). Distinguishing fault domains is essential and was the central
+    38	  error of the previous draft: modules that share a fault domain cannot mitigate one another
+    39	  against faults of that domain.
+    40	
+    41	Two roles:
+    42	
+    43	- **Authority** is the companion's assertion of autonomous steering — whether the fused
+    44	  solution is permitted to steer via the MAVLink path. It is a *lease*, continuously
+    45	  re-earned, never a latch.
+    46	- **The helm** is the qualified person aboard with a physical, controller-independent manual
+    47	  override (baseline). The helm is the primary safety actor; software is subordinate to it at
+    48	  all times.
+    49	
+    50	**Vessel-speed caveat.** The baseline vessel is a **displacement-hull** vessel in the Danish
+    51	straits (working assumption); handoff failure mode 9 frames the hazard as a *manned fast
+    52	boat*. The revocation *principle* (revocation is never itself a manoeuvre) holds at any speed.
+    53	The *timer* budgets are sized to the vessel's manoeuvre/collision time budget, which shrinks
+    54	with speed; all timer values here are conservative displacement-hull estimates, **[UNVERIFIED]**,
+    55	to be re-derived if the hull planes or slams.
+    56	
+    57	---
+    58	
+    59	## 1. What grants steering authority
+    60	
+    61	Steering authority is granted **only while the full conjunction G1–G4 holds** (logical AND;
+    62	any false term drops authority — §2). The companion never self-grants; grant is opt-in by the
+    63	helm (G1) and continuously re-earned by the solution (G2–G4).
+    64	
+    65	| # | Grant condition | Testable predicate | Evaluated in |
+    66	|---|---|---|---|
+    67	| G1 | **Human arm action** | The helm has raised an explicit arm command and not withdrawn it. Default at process start is **disarmed**. | Companion supervisor (module 11) — see arm-input gap below |
+    68	| G2 | **Solution integrity within the active profile's protection limits** | Horizontal-position, horizontal-velocity and heading protection limits are each within the active-profile set, per epoch on the true (unclamped) covariance; **and** every observation contributing to the solution passed its integrity gate, including the SupGP **ephemeris-age** gate; **and** the age of the last absolute (LEO/aided-GNSS) position-constraining observation is within the DR-authority timeout. | Integrity monitor (module 10) + observation gate (module 8) → supervisor |
+    69	| G3 | **Calibration/extrinsics validity** | Every measurement feeding the current solution carries a calibration ID that resolves and matches the surveyed antenna-phase-centre / IMU / vessel-reference extrinsics; none missing or mismatched. (Calibration/extrinsics only — ephemeris age now lives in G2.) | Bus ingress + integrity monitor |
+    70	| G4 | **Lease liveness** | `monotonic_now < lease_deadline` on the clock service's monotonic domain — i.e. a fresh solution frame has renewed the lease within `t_lease`. G4 tests only *that a fresh, in-integrity frame is still being produced*; it does not re-test G2/G3 content. | Supervisor monotonic watchdog |
+    71	
+    72	**Ephemeris-age placement (fixes B1/C1).** Ephemeris age is an *observation-integrity* input,
+    73	so it is tested inside G2 (via the observation gate), not in G3. G3 is calibration/extrinsics
+    74	only. The degradation mapping (§2.4) and hazard table use this placement consistently.
+    75	
+    76	**Calibration validity window (fixes C2/D1).** The baseline and handoff define no *time-based
+    77	expiry* for the pre-deployment frequency-reference/extrinsics calibration. G3 therefore tests
+    78	only presence and identity match, not age. Any calibration-validity *window* would be a new
+    79	parameter and a **proposed baseline change**, registered in §5; the word "unexpired" from the
+    80	prior draft is dropped as unsupported.
+    81	
+    82	**G1 arm-input architecture gap (fixes B3; per D13).** `ARCHITECTURE.md`'s measurement bus
+    83	defines no arm/disarm input or message, so G1 is **not yet realisable** against the approved
+    84	architecture. Per decision **D13**, an arm-command bus message plus a helm arm input is a
+    85	contracts requirement routed to U-C1 (contracts v3, executive routing). Until that lands, G1
+    86	is a specified-but-unwired predicate; this document does not edit `ARCHITECTURE.md` (not
+    87	owned). Registered in §5.
+    88	
+    89	### 1.1 Lease renewal, defined non-circularly (fixes findings 6, 7)
+    90	
+    91	The previous draft made G4 both a precondition for and a consequence of renewal. Corrected:
+    92	
+    93	- **Renewal event** `R := (solution_sequence advanced since last renewal) ∧ G2 ∧ G3`.
+    94	  `R` is an event predicate over a *newly produced* solution frame; it does **not** depend on
+    95	  the current lease being valid.
+    96	- On `R`: `lease_deadline := monotonic_now + t_lease`.
+    97	- **G4** `:= monotonic_now < lease_deadline` (pure comparison; deadline arrival = expiry).
+    98	- **Initial acquisition / recovery:** at a G1 rising edge, the first fresh frame satisfying
+    99	  `G2 ∧ G3` fires `R` and makes the lease live. An expired lease can therefore always be
+   100	  re-acquired via a fresh in-integrity frame plus re-arm; expiry is never permanent.
+   101	
+   102	**Which frames renew (fixes finding 7).** The baseline permits 5 Hz dead-reckoned fill between
+   103	sparse absolute fixes and makes the DR timeout govern *authority*. Accordingly, **every valid
+   104	5 Hz solution frame — including DR-propagated fill — renews the lease provided it passes G2**.
+   105	Lease liveness (G4) therefore proves only that the companion is *still producing integrity-
+   106	passing output*; it is **not** the mechanism that ends dead-reckoning. Three independent timers
+   107	do distinct jobs, and must not be conflated:
+   108	
+   109	| Timer | Measures age of | Bounds | Effect on expiry | Provisional value |
+   110	|---|---|---|---|---|
+   111	| `t_lease` (G4) | last produced solution frame | companion/estimator liveness | lease expiry → revoke | few×200 ms, `< GPS_TIMEOUT_MS` — [UNVERIFIED] |
+   112	| `t_dr` (in G2) | last absolute position-constraining observation | dead-reckoning authority | revoke even if covariance still looks in-limit | [UNVERIFIED] |
+   113	| per-source freshness | last IMU / magnetometer / speed-log / ephemeris sample | per-sensor staleness feeding integrity | feeds G2/G3 | [UNVERIFIED] |
+   114	
+   115	During all-LEO-loss, DR frames keep renewing the lease (G4 stays satisfied), and authority is
+   116	ended by **G2** — either the growing protection limit breaches, or `t_dr` elapses — whichever
+   117	comes first. This makes the "revoke time" testable against a replayed minutes-long LEO gap.
+   118	
+   119	### 1.2 Sub-predicate requirements (fixes finding 10)
+   120	
+   121	Structure is now executable and testable even where numbers remain deferred. Missing-data
+   122	behaviour is fail-safe (absence ⇒ condition false) throughout.
+   123	
+   124	| ID | Sub-predicate | Metric / unit | Test | Eval rate | Missing-data | Trace / authority |
+   125	|---|---|---|---|---|---|---|
+   126	| G1 | armed | arm latch (bool) | `armed == true` | on-change + per cycle | ⇒ disarmed | brief; **arm message = proposed contracts v3 (D13)** |
+   127	| G2p | horiz position PL | HPL (m) | `HPL ≤ PL_pos[profile]` **[UNVERIFIED]** | per epoch (5 Hz) | ⇒ false | baseline acceptance profiles; per-epoch number **proposed** |
+   128	| G2v | horiz velocity PL | VPL (m/s) | `VPL ≤ PL_vel[profile]` **[UNVERIFIED]** | per epoch | ⇒ false | as above |
+   129	| G2h | heading PL | (deg) | `HdgPL ≤ PL_hdg[profile]` **[UNVERIFIED]** | per epoch | ⇒ false | baseline 2°/5° (both **[UNVERIFIED]**) |
+   130	| G2e | ephemeris age | max SV age (s) | `≤ t_eph` (provisional 6 h) | per observation | over-age ⇒ SV excluded | baseline SupGP 6 h gate **[UNVERIFIED]** |
+   131	| G2d | DR-authority age | age of last absolute fix (s) | `≤ t_dr` **[UNVERIFIED]** | per epoch | ⇒ false | baseline "DR timeout governs authority only"; failure mode 3 |
+   132	| G3 | calibration match | ID resolves & matches (bool) | all contributing meas. match | per epoch | ⇒ false (integrity fault) | baseline extrinsics rule |
+   133	| G4 | lease live | `now − last_R` (s) | `< t_lease` **[UNVERIFIED]** | continuous | ⇒ expiry | this doc (**proposed**); baseline motivates continuous output via `GPS_TIMEOUT_MS` |
+   134	
+   135	Hysteresis/dwell for the caution band (`dwell_clear`) and the re-arm dwell (`dwell_rearm`) are
+   136	defined in §2.2/§3.2; both are **[UNVERIFIED]**. Items traced
+   137	to "proposed" require a baseline/contracts change and cannot be treated as baseline-authorised
+   138	until made so.
+   139	
+   140	### 1.3 Why the authority gate cannot live in ArduPilot
+   141	
+   142	- **ArduPilot's covariance is censored.** It clamps reported horizontal accuracy at **100 m**;
+   143	  its EKF variance cannot distinguish a 5 m solution from a 5 km divergence — the exact
+   144	  discrimination G2 requires. The unclamped protection limit exists only upstream.
+   145	- **ArduPilot cannot see the LEO integrity state** (calibration-ID match, ephemeris age,
+   146	  per-pass transmit-bias health, cross-sensor residuals) that G2/G3 test.
+   147	- **ArduPilot cannot see companion liveness** (G4): a stalled companion looks, from
+   148	  ArduPilot's side, like a GPS gone quiet.
+   149	- **`gnss_authority` / profile selection are companion concepts.**
+   150	
+   151	ArduPilot is therefore a downstream actuator that is **never relied on to judge navigation
+   152	integrity**. Its own GPS/EKF failsafe actions are configured so that loss/degradation of
+   153	`GPS_INPUT` **cannot itself command an autonomous manoeuvre** (RTL/Loiter/disarm) — because
+   154	that manoeuvre is the hazard (§2). Exact failsafe parameter values are **[UNVERIFIED]** and are
+   155	a SITL-validated deliverable pinned to a firmware commit + artifact checksum.
+   156	
+   157	---
+   158	
+   159	## 2. What revokes steering authority
+   160	
+   161	### 2.1 Revocation semantics, and the actual signal path to ArduPilot (fixes findings 2, 3, 11, 14)
+   162	
+   163	Revocation is never a manoeuvre:
+   164	
+   165	> **Revocation = stop steering + alarm + hand to helm.**
+   166	
+   167	Software shall **never** autonomously select RTL, Loiter or disarm (failure mode 9; baseline
+   168	final degradation row). But "stop steering + hand to helm" is only a real safety action if
+   169	the mechanism that delivers it to ArduPilot is defined. It is **not** delivered by `GPS_INPUT`
+   170	— that message is navigation data, not a control-authority interface. Two physically distinct
+   171	cases exist, and the previous draft wrongly treated them as one:
+   172	
+   173	**Case A — companion alive, link up** (integrity/limit breach, lease expiry while the process
+   174	still runs, or a helm-commanded disarm). The companion performs an *active* revocation:
+   175	
+   176	1. It commands ArduPilot into a helm/manual control mode over MAVLink (candidate
+   177	   `MAV_CMD_DO_SET_MODE` / `SET_MODE` to `MANUAL` or an equivalent helm-controlled mode; exact
+   178	   command, mode enum and RC-arbitration parameters **[UNVERIFIED]**, SITL/HIL deliverable).
+   179	2. It then ceases / invalidates the `GPS_INPUT` nav injection, consistent with that mode.
+   180	3. It raises the alarm (§3.2).
+   181	
+   182	The ordering to be **verified in SITL/HIL**: the mode transition to manual precedes or is
+   183	simultaneous with cessation of nav injection, so that no GPS-timeout failsafe is provoked and
+   184	**no commanded turn, throttle change, loiter, RTL, disarm, or actuator discontinuity occurs**;
+   185	physical helm input dominates immediately. Until that test passes on pinned firmware, the
+   186	"hand to helm" action is **unproven** and is registered as such (§5).
+   187	
+   188	**Case B — companion process dead, or MAVLink link lost** (whole-process stall, thread death,
+   189	cable/connector fault). The companion can send nothing; **its internal watchdog/lease cannot
+   190	reach ArduPilot.** ArduPilot observes only the *absence* of `GPS_INPUT` and reacts on its own
+   191	`GPS_TIMEOUT_MS` (4000 ms), taking the pre-configured non-manoeuvre action. In this case the
+   192	actual responders are **(a) ArduPilot's pre-configured non-manoeuvre GPS-failsafe and (b) the
+   193	physical helm / kill-cord — not the internal watchdog.** There is an unavoidable window of up
+   194	to `GPS_TIMEOUT_MS` during which ArduPilot coasts on the last `GPS_INPUT`; the safety argument
+   195	is only that this coast is *bounded*, that the action at its end is *configured non-manoeuvring*,
+   196	and that the physical helm dominates throughout. A one-way companion→ArduPilot TX failure is
+   197	**not observable to the companion** without a return heartbeat; the companion judges link
+   198	health via the ArduPilot→companion MAVLink heartbeat with its own deadline, but even on
+   199	detection it cannot correct ArduPilot over the failed channel — detection serves alarm and
+   200	logging, not actuator control.
+   201	
+   202	**Consequently the corrected guarantee is:** *for faults in which the companion keeps
+   203	executing, the live supervisor revokes within `t_lease` (Case A).* For companion death or link
+   204	loss (Case B) the guarantee degrades to ArduPilot's bounded (~4 s) non-manoeuvre timeout plus
+   205	the physical layer. The claim "the companion always revokes before ArduPilot's failsafe" is
+   206	withdrawn; `t_lease < GPS_TIMEOUT_MS` matters only in Case A, where it bounds how long a
+   207	degraded-but-alive companion may keep asserting before self-revoking.
+   208	
+   209	### 2.2 Authority state machine and full transition table (fixes findings 4, 5)
+   210	
+   211	Intended disarm and startup-unarmed are **not** faults and must not alarm. A distinct
+   212	**DISARMED** state is introduced; the S2/S3 alarm ladder is reserved for loss of a
+   213	*previously granted* lease due to a hazardous condition.
+   214	
+   215	States: **DISARMED** · **NOMINAL (S0)** · **CAUTION (S1)** · **WARNING (S2)** · **ESCALATED
+   216	(S3)** · **LATCHED-SAFE (S4)**.
+   217	
+   218	| Transition (event) | From | To | Authority | Annunciation |
+   219	|---|---|---|---|---|
+   220	| process start (G1 false) | — | DISARMED | none | quiet status |
+   221	| helm arms, `G2∧G3` on fresh frame (`R`) | DISARMED | NOMINAL | granted | quiet "armed" |
+   222	| helm arms, `G2∧G3` not yet met | DISARMED | DISARMED | none | "cannot arm: solution not ready" |
+   223	| protection metric ≥ `caution_enter` | NOMINAL | CAUTION | granted | soft pre-alert |
+   224	| metric ≤ `caution_clear` for `dwell_clear` | CAUTION | NOMINAL | granted | clear |
+   225	| **helm disarms** (G1 commanded false) | NOMINAL/CAUTION | DISARMED | revoked (intended) | quiet handoff confirm — **no alarm** |
+   226	| **G2 or G3 false** (fault) | NOMINAL/CAUTION | WARNING | **revoked, latched** | loud alarm, demand ack |
+   227	| **G4 lease expiry while alive** | NOMINAL/CAUTION | WARNING | **revoked, latched** | loud alarm, demand ack |
+   228	| ack within `T_ack` | WARNING | LATCHED-SAFE | revoked | steady fault |
+   229	| no ack for `T_ack` | WARNING | ESCALATED | revoked | max continuous alarm |
+   230	| ack | ESCALATED | LATCHED-SAFE | revoked | steady fault |
+   231	| re-arm (G1 edge, `G2∧G3`, after `dwell_rearm`) | LATCHED-SAFE / DISARMED | NOMINAL | granted | quiet "armed" |
+   232	
+   233	Every condition change true→false and false→true has exactly one authority + annunciation
+   234	outcome above. Note the distinction the previous draft missed: **G1 falling by helm command is
+   235	an intended, quiet disarm**, while **G2/G3 false or G4 expiry are fault revocations that
+   236	alarm**. "Any false term drops authority" still holds; only the *annunciation* differs by
+   237	cause. Whole-process death (Case B) cannot self-annunciate — it presents to the helm via the
+   238	absence of the healthy indication plus any independent annunciator, and to ArduPilot via
+   239	GPS timeout.
+   240	
+   241	### 2.3 Degradation-row mapping (baseline degradation contract)
+   242	
+   243	"Continue" = estimator keeps running (baseline: authority expiry never stops the estimator);
+   244	authority persists only while G1–G4 hold.
+   245	
+   246	| Baseline degradation row | Supervisor response | Trigger |
+   247	|---|---|---|
+   248	| GNSS absent or forbidden | Normal denied operation; **denied** profile active; GNSS cannot re-enter fusion (bus ingress). | none (mode) |
+   249	| One LEO constellation / RF front end lost | Continue if protection limits met; degrade honestly. | G2 if breached |
+   250	| **All LEO observations lost** | DR frames keep renewing G4; authority ends on G2 — protection-limit breach **or** `t_dr` elapsed, whichever first. | G2 (`t_dr` or PL) |
+   251	| One magnetometer lost/rejected | Continue on the other calibrated magnetometer, IMU turn dynamics and any selected non-magnetic heading sensor; inflate heading uncertainty. | G2 (heading) if breached |
+   252	| **Both magnetometers lost/rejected** | Continue short-term attitude propagation and any selected non-magnetic heading measurement; not passage-capable by inertial integration alone; revoke when heading PL exceeded. | G2 (heading) |
+   253	| Speed log lost | Continue; current separation unavailable. | G2 if breached |
+   254	| **IMU stream stale** | Propagation untrustworthy → revoke; estimator stays running, fabricates no propagation samples, and journalling and recovery may continue. | G2 (per-source freshness) |
+   255	| Frequency reference degrades / sustained heel | Reject biased Doppler per integrity; revoke when limits exceeded. | G2 |
+   256	| Sea-surface multipath biases a tracker | Reject/inflate on correlation quality + residuals; persistent correlated residuals revoke. | G2 |
+   257	| Ephemeris missing or too old | Do not form/accept affected Doppler (never bypass age gate); revoke only if the surviving solution breaches limits. | **G2 (ephemeris-age gate)** |
+   258	| **Companion process stalls** | Live supervisor cannot act (it is the stalled process); responders are ArduPilot's non-manoeuvre timeout + physical layer (Case B, §2.1). Software never selects RTL/Loiter/disarm. | Case B |
+   259	| Calibration ID missing/mismatched *(additional row — not one of the 11 literal baseline rows; sourced from the extrinsics rule, `DESIGN_BASELINE.md` §Estimator and degradation contract, "missing or mismatched calibration is an integrity fault that forbids steering authority")* | Authority-blocking integrity fault. | G3 |
+   260	
+   261	**Orbcomm fusion caveat (fixes B4; per D10).** Orbcomm arrives on an independent, non-coherent
+   262	receiver introducing a **second, unmodelled receiver clock**. Per decision **D10**, Orbcomm
+   263	observations shall **not enter fusion** until a second receiver-clock state or per-receiver
+   264	nuisance term exists; until then they cannot corrupt the steering solution or its protection
+   265	limits. This is a safety-relevant integrity constraint on which observations G2 may rest.
+   266	
+   267	The DR timeout `t_dr` **governs authority only** (baseline; failure mode 3) — it never stops
+   268	propagation, observation processing, journalling, or the 10–20 min convergence.
+   269	
+   270	---
+   271	
+   272	## 3. The backstop when the human does not respond
+   273	
+   274	### 3.0 Fault domains and independence (fixes finding 12; coordinator point ii)
+   275	
+   276	Independence claims are only valid across fault-domain boundaries. The domains are:
+   277	
+   278	- **Companion process / board (one domain).** Clock service, estimator, integrity monitor
+   279	  (module 10), authority supervisor + watchdog (module 11) and MAVLink publisher (module 12)
+   280	  all execute here. A **process-level fault** (memory corruption, scheduler stall, a fault
+   281	  that simultaneously produces a plausible-wrong solution *and* a passing integrity verdict)
+   282	  takes them down **together**. Within this domain, separate modules with design-diverse code
+   283	  contain **design faults** of one another (e.g. a finite-difference-checked integrity monitor
+   284	  catches a wrong-Jacobian estimator bug), but they contain **no** process-level fault.
+   285	- **ArduPilot (separate compute).** Independent of companion process faults, but blind to
+   286	  navigation-integrity correctness (censored 100 m view) — it can react to *absence* of input,
+   287	  not to plausible-wrong input.
+   288	- **Physical helm override + kill-cord (no compute).** Independent of all software; but they
+   289	  act on gross vessel behaviour and human presence, not on nav correctness (§3.3).
+   290	- **The human.** The only element that can judge that steering "looks wrong". Single point.
+   291	
+   292	The consequence, stated plainly: **no in-companion module is an independent mitigation of a
+   293	companion process-level fault.** Where the earlier draft cited "the same integrity monitor +
+   294	watchdog" as mitigation for a companion producing plausible-wrong output (H6), that is
+   295	withdrawn. That residual is **uncontrolled by present design** and requires an **out-of-
+   296	companion-process independent monitor** which does not yet exist; registered in §5.
+   297	
+   298	### 3.1 Layer 1 — supervisor monotonic watchdog (bounded scope)
+   299	
+   300	The lease (§1.1) on the clock service's monotonic domain is renewed only by a fresh,
+   301	integrity-passing frame. Its **genuine, defensible job**: while the companion process is still
+   302	executing, stop it from continuing to assert steering on a **frozen or stale solution** (H4) —
+   303	a frozen estimator does not advance the solution sequence, so `R` does not fire, the lease
+   304	expires, and the *live* supervisor executes a Case-A revocation.
+   305	
+   306	Its **limits**, now stated (correcting the previous over-claim): the watchdog **cannot** act
+   307	once its own process has died or the link is lost (Case B) — it is inside the failed domain.
+   308	"Authority cannot outlive the solution" therefore holds *for the companion-alive fault class
+   309	only*; for companion death/link loss the bound is ArduPilot's ~4 s non-manoeuvre timeout plus
+   310	the physical layer, not the internal watchdog. Independence properties that do hold: the
+   311	watchdog runs on the monotonic clock (a device/UTC reset or spoofed label cannot extend it),
+   312	and its expiry cannot stop the estimator (baseline).
+   313	
+   314	`t_lease` shall be `< GPS_TIMEOUT_MS` (4000 ms) so that in Case A the companion self-revokes
+   315	before its output would age out at ArduPilot. Provisional few×200 ms — **[UNVERIFIED]**.
+   316	
+   317	### 3.2 Layer 2 — un-acknowledged-alarm escalation ladder, with real hysteresis (fixes finding 13)
+   318	
+   319	The ladder exists to *summon the helm*, not to replace the helm; because software never
+   320	manoeuvres, **the terminal state is not kinetic**. States and transitions are in §2.2. The
+   321	caution band uses **distinct entry and clear thresholds with a dwell** (single-threshold logic
+   322	from the prior draft was not hysteresis):
+   323	
+   324	- ordering, for an uncertainty metric (larger = worse): `caution_clear < caution_enter < revoke_threshold`;
+   325	- **CAUTION entry:** metric `≥ caution_enter` (this concrete crossing replaces the prior vague
+   326	  "margin shrinking" — fixes C3);
+   327	- **WARNING:** metric `≥ revoke_threshold`;
+   328	- **CAUTION→NOMINAL clear:** metric `≤ caution_clear` sustained for `dwell_clear`;
+   329	- all of `caution_enter`, `caution_clear`, `dwell_clear`, `revoke_threshold`, `T_ack`,
+   330	  `dwell_rearm` are **[UNVERIFIED]**, frozen before trials against the manoeuvre budget.
+   331	
+   332	Latched revocation requiring explicit re-arm (§2.2) prevents steering-authority flapping;
+   333	the entry/clear band with dwell prevents S0/S1 *alarm* flapping. **Terminal state = ESCALATED
+   334	+ max alarm**, indefinitely, with no kinetic action; if the helm never responds the vessel
+   335	holds its last physical control state (least-surprising) until the helm or the physical layer
+   336	(§3.3) intervenes.
+   337	
+   338	### 3.3 Layer 3 — physical, controller-independent override (final layer)
+   339	
+   340	Independent of companion, ArduPilot and MAVLink:
+   341	
+   342	- **Helm manual override** — steering/throttle mechanically dominates the autopilot at any
+   343	  time (baseline precondition). This is how "hand to helm" becomes real motion control, and is
+   344	  the only control effective in Case B when software cannot signal.
+   345	- **Helm kill-cord** — a physical lanyard that cuts propulsion (failure mode 9). It acts only
+   346	  when *pulled* — i.e. when the helmsman is **displaced** (overboard / falls from station).
+   347	
+   348	**Human-response failure, by sub-case (fixes finding 9 / H7).** The mandated "human does not
+   349	respond" case is not uniform; coverage differs:
+   350	
+   351	| Sub-case | Covered by | Status |
+   352	|---|---|---|
+   353	| Distracted but present | escalation ladder summons attention | controlled if helm eventually responds |
+   354	| Overboard | kill-cord (lanyard pulls) | controlled |
+   355	| Displaced from station | kill-cord | controlled |
+   356	| **Unconscious at the helm, cord still clipped** | nothing in present design | **UNCONTROLLED** |
+   357	| Kill-cord not clipped | pre-trial checklist (procedural) | controlled only if checklist enforced |
+   358	| Manual override mis-wired/failed | pre-trial test (procedural) | controlled only if tested |
+   359	
+   360	The unconscious-at-helm residual — propulsion continues at last physical state until fuel
+   361	exhaustion or third-party intervention — is **not controlled by software and not accepted
+   362	here**: this document has no risk-acceptance authority. It requires an **operational control**
+   363	(a second qualified crew member, or a helm dead-man / vigilance device that cuts propulsion on
+   364	loss of periodic helm input) whose specification and formal risk acceptance belong to the
+   365	trial authority. Registered in §5; **the trial risk envelope should not permit unattended
+   366	continued propulsion until this control is in place.**
+   367	
+   368	Pre-trial checklist (operational): kill-cord clipped; manual override tested; ArduPilot
+   369	non-manoeuvre failsafe verified in SITL; Case-A revocation ordering verified in SITL/HIL.
+   370	
+   371	---
+   372	
+   373	## 4. Hazard table
+   374	
+   375	hazard → cause → mitigation → residual. Residuals marked **[UNVERIFIED]** are bounded only
+   376	after GNSS-withheld replay and/or SITL/HIL evidence.
+   377	
+   378	| # | Hazard | Cause | Mitigation | Residual risk |
+   379	|---|---|---|---|---|
+   380	| **H1** | **Stale-solution steering** | Sparse absolute fixes; DR fill; covariance growth. | Covariance time-propagated from IMU every accepted sample (guards failure mode 5); G2 per-epoch PL; **`t_dr` DR-authority timeout** revokes on last-absolute-fix age even if covariance looks in-limit; G4 requires a live producer. | If the covariance model is itself optimistic (H2), a fresh-looking frame under-reports staleness; `t_dr` bounds this independently of covariance. Magnitude **[UNVERIFIED]** until withheld-replay validation. |
+   381	| **H2** | **Optimistic covariance (wrong-Jacobian class)** — the gate consumes the very covariance that is wrong. | Wrong Jacobian (silent; filter still emits a covariance), missing propagation, mis-modelled process noise. | **Offline, pre-trial:** finite-difference Jacobian check; **NEES against truth in aided/withheld replay** (needs truth ⇒ offline only). **Online:** normalized-innovation-squared (**NIS**) consistency — flags innovations too large for the claimed innovation covariance, but is *covariance-coupled*, not covariance-independent; **cross-sensor redundancy residuals** (speed-log vs LEO ground speed, dual-magnetometer agreement, IMU-predicted vs measured) which *are* covariance-independent but limited in coverage; conservative process noise. | A slow bias that shrinks state **and** innovation covariance consistently evades NIS and lies below the redundancy floor; **not closed online**. Bounded only by conservative limits, offline gates and the human. **[UNVERIFIED]**. (Prior "NEES online, covariance-independent" claim withdrawn as technically wrong.) |
+   382	| **H3** | **Authority flapping** | Metric noise near threshold. | Distinct `caution_enter`/`caution_clear` + `dwell_clear` (real hysteresis); latched revocation + explicit re-arm with `dwell_rearm`. | Mis-tuned band flaps or lags; values **[UNVERIFIED]**, frozen before trials. |
+   383	| **H4** | **Silent estimator halt vs authority-alive inversion** | Estimator stalls/freezes while publisher stays alive. | `R` fires only on an *advancing* solution sequence that passes integrity; a frozen output does not advance the sequence ⇒ lease expires ⇒ **live** supervisor revokes (Case A). Watchdog on independent monotonic clock; its expiry cannot stop the estimator (baseline). | A bug re-emitting *stale-but-sequence-advancing* frames defeats sequence-freshness; needs a **content/innovation-liveness** check (registered §5). Whole-process death is Case B, not H4. **[UNVERIFIED]**. |
+   384	| **H5** | **MAVLink link loss mid-authority** | Cable/USB/serial/connector fault. | This is **Case B**: internal revocation cannot reach ArduPilot. Actual responders: ArduPilot's pre-configured **non-manoeuvre** GPS-failsafe (SITL-validated) at its 4 s timeout, plus helm override/kill-cord (link-independent). Companion detects link loss via ArduPilot→companion heartbeat deadline → alarm/log only. | Unavoidable ≤ `GPS_TIMEOUT_MS` (~4 s) coast on last `GPS_INPUT`; bounded, non-manoeuvring at timeout, helm dominant. Exact failsafe params **[UNVERIFIED]** until SITL-verified. The prior "`t_lease` guarantees the companion revokes first" claim is withdrawn (invalid across a dead link). |
+   385	| **H6** | **`GPS_INPUT` spoof / companion producing plausible-wrong output** | (a) companion process-level fault; (b) external MAVLink injection. | (b) dedicated point-to-point companion↔autopilot link (not networked); companion sole authorised source (`GPS1_TYPE=14`); enable MAVLink signing (**[UNVERIFIED]** support). LEO-SoOP removes the *RF* GNSS-spoof surface; the MAVLink surface remains. (a) **No in-companion module is independent of a process-level fault (§3.0)** — the integrity monitor/watchdog can be falsified by the same fault; this is **not** cited as mitigation. | (a) **Uncontrolled by present design**: requires an out-of-companion-process independent monitor (does not exist). Physical kill-cord cannot detect plausible-wrong steering. **[UNVERIFIED]/uncontrolled — registered §5.** |
+   386	| **H7** | **Human-override failure** | Distracted / unconscious-at-helm / overboard / cord unclipped / override failed. | Per-sub-case coverage table (§3.3): ladder + kill-cord cover distracted/overboard/displaced; checklist covers clip/override. Software never auto-manoeuvres, so an unresponsive human triggers no surprise manoeuvre. | **Unconscious-at-helm with cord clipped is UNCONTROLLED** by software; needs an operational control (second crew / helm dead-man) with formal risk acceptance by the trial authority. Not accepted here. **[UNVERIFIED]/uncontrolled — registered §5.** |
+   387	| **H8** | **Frequency-reference/heel bias or total heading loss steering** | Reference degrades or sustained heel steps the drift model; both magnetometers lost. | Reject biased Doppler per integrity; G2 revokes on limit breach; heading PL revokes on dual-magnetometer loss; mount g-sensitivity vector vertical (baseline). | Slow in-model bias below the innovation-detection floor. **[UNVERIFIED]**; bounded by conservative limits and the human. |
+   388	
+   389	---
+   390	
+   391	## 5. Assumptions and the [UNVERIFIED] / uncontrolled register
+   392	
+   393	Safety-relevant items not yet frozen, and honest control status:
+   394	
+   395	- **Per-epoch protection-limit numbers** (position/velocity/heading, aided and denied) — the
+   396	  baseline gives only campaign-grading acceptance statistics; per-epoch gates are a proposed
+   397	  addition.
+   398	- **Timers:** `t_lease` (`< 4000 ms`), `t_dr` (DR-authority), per-source freshness deadlines,
+   399	  `t_eph` (provisional 6 h), `T_ack`, `caution_enter`/`caution_clear`/`dwell_clear`,
+   400	  `dwell_rearm`.
+   401	- **G1 arm input:** no arm/disarm message exists in `ARCHITECTURE.md`; an arm-command bus
+   402	  message + helm arm input is a contracts requirement per **D13** (U-C1, contracts v3). G1 is
+   403	  specified-but-unwired until then.
+   404	- **Calibration validity window:** baseline/handoff define no time-based calibration expiry;
+   405	  any such window is a **proposed baseline change**, not assumed here (G3 tests presence +
+   406	  identity match only).
+   407	- **MAVLink revocation command set (Case A):** exact mode-set command, target helm/manual
+   408	  mode, RC-arbitration parameters, and the verified ordering (mode-to-manual before nav-injection
+   409	  cessation, no actuator discontinuity) — SITL/HIL deliverable on pinned firmware. Until it
+   410	  passes, "hand to helm" is unproven.
+   411	- **ArduPilot GPS/EKF non-manoeuvre failsafe parameters (Case B):** must prove `GPS_INPUT`
+   412	  loss/degradation cannot command RTL/Loiter/disarm; SITL-validated against pinned commit +
+   413	  artifact checksum.
+   414	- **MAVLink signing** availability on the pinned firmware.
+   415	- **Independent (out-of-companion-process) monitor** for H6(a): does not exist. The
+   416	  correlated companion process-level fault — plausible-wrong `GPS_INPUT` with a falsified
+   417	  integrity verdict — is **uncontrolled** pending such a monitor; no in-companion module is
+   418	  independent of it.
+   419	- **Content/innovation-liveness check** to fully close H4 against stale-but-advancing frames.
+   420	- **Operational human-response control** for the unconscious-at-helm residual (H7): a second
+.orchestration/reports/U-S1.md:14:state** (lease/watchdog) with **behaviour observable to ArduPilot**. Fix: §2.1 now splits
+.orchestration/reports/U-S1.md:18:responders are ArduPilot's pre-configured non-manoeuvre GPS timeout + the physical helm/kill-
+.orchestration/reports/U-S1.md:19:cord). The "companion always revokes before ArduPilot's failsafe" guarantee is withdrawn;
+.orchestration/reports/U-S1.md:20:`t_lease < GPS_TIMEOUT_MS` is now scoped to Case A only. §3.1 narrows the watchdog guarantee
+.orchestration/reports/U-S1.md:21:to the companion-alive fault class. This propagated into H4/H5/H6 and the degradation table.
+.orchestration/reports/U-S1.md:28:| 2 | `t_lease < GPS_TIMEOUT_MS` gives no guarantee across a dead link | **Fixed** — claim withdrawn; scoped to Case A in §2.1 and §3.1; H5 rewritten. |
+.orchestration/reports/U-S1.md:29:| 3 | No defined mechanism for "stop steering + hand to helm" | **Fixed** — §2.1 Case A defines the MAVLink mode-set path (candidate command/mode + RC arbitration, all [UNVERIFIED] SITL/HIL), explicitly states `GPS_INPUT` is not a control interface, and marks "hand to helm" unproven until the SITL/HIL ordering test passes (§5). |
+.orchestration/reports/U-S1.md:32:| 6 | G4 renewal circular (G4 prerequisite for its own renewal) | **Fixed** — §1.1 defines `R := seq-advanced ∧ G2 ∧ G3` (no lease-validity dependency) and `G4 := now < lease_deadline`; initial acquisition/recovery/boundary defined. |
+.orchestration/reports/U-S1.md:33:| 7 | "Fresh solution" undefined vs DR fill; revoke time untestable | **Fixed** — §1.1: every 5 Hz frame incl. DR fill renews G4; authority in all-LEO-loss ends via **G2** (`t_dr` or PL breach). Three-timer table separates `t_lease`, `t_dr`, per-source freshness. |
+.orchestration/reports/U-S1.md:34:| 8 | NEES mischaracterised as online covariance-independent monitor | **Fixed** — H2 rewritten: NEES-vs-truth is **offline** (replay); online is **NIS** (covariance-coupled, partial) plus **cross-sensor redundancy residuals** (covariance-independent, limited); prior claim explicitly withdrawn; residual "not closed online". |
+.orchestration/reports/U-S1.md:35:| 9 | Kill-cord doesn't cover incapacitated-at-helm; residual "accepted" without authority | **Fixed** — §3.3 sub-case coverage table; unconscious-at-helm marked **UNCONTROLLED**, not accepted (no risk-acceptance authority here); requires operational control (second crew / helm dead-man) with trial-authority acceptance; trial envelope should bar unattended propulsion until then. |
+.orchestration/reports/U-S1.md:37:| 11 | Link-loss "detects and treats as revocation" can't alter autopilot over failed link | **Fixed** — §2.1 Case B: one-way TX failure not observable without return heartbeat; detection serves alarm/log only; actuator control is via ArduPilot timeout + physical layer. H5 rewritten. |
+.orchestration/reports/U-S1.md:38:| 12 | Shared companion fault domain cited as independent mitigation | **Fixed** — new §3.0 fault-domain analysis; H6(a) mitigation-by-in-companion-modules withdrawn; correlated process-level fault classified **uncontrolled** pending an out-of-process monitor (registered §5). |
+.orchestration/reports/U-S1.md:39:| 13 | Single-threshold "hysteresis" | **Fixed** — §3.2 distinct `caution_enter`/`caution_clear` + `dwell_clear`, ordering stated; replaces vague "margin shrinking". |
+.orchestration/reports/U-S1.md:50:| C3 | Define or de-scope "margin shrinking" | **Fixed** — replaced by the concrete `caution_enter` crossing in §3.2. |
+.orchestration/reports/U-S1.md:53:| D2 | "stabilisation dwell" not tagged [UNVERIFIED] at first use | **Fixed** (round 2) — the dwell terms (`dwell_clear`, `dwell_rearm`) are now tagged **[UNVERIFIED]** at their first mention in §1.2, ahead of the later §2.2/§3.2/§5 uses. |
+.orchestration/reports/U-S1.md:65:- Fault-domain boundaries (§3.0) make independence claims honest; two residuals (H6(a)
+.orchestration/reports/U-S1.md:66:  companion process-level fault; H7 unconscious-at-helm) are now labelled **uncontrolled** and
+.orchestration/reports/U-S1.md:68:  over as mitigated.
+.orchestration/reports/U-S1.md:69:- Authority is a clean state machine (DISARMED + S0–S4) with a non-circular lease predicate,
+.orchestration/reports/U-S1.md:76:command/mode/ordering; the Case-B ArduPilot non-manoeuvre failsafe params; MAVLink signing;
+.orchestration/reports/U-S1.md:77:the out-of-process independent monitor (H6a); the content-liveness check (H4); the operational
+.orchestration/reports/U-S1.md:78:human-response control (H7); the G1 arm bus message (D13); the Orbcomm fusion gate (D10).
+docs/design/ARCHITECTURE.md:42:10. **Solution integrity monitor** derives protection/uncertainty metrics independently
+docs/design/ARCHITECTURE.md:45:    freshness and uncertainty. Its monotonic watchdog is independent of estimator
+docs/design/ARCHITECTURE.md:48:12. **MAVLink publisher** emits approximately 5 Hz `GPS_INPUT`, with independent horizontal
+docs/design/ARCHITECTURE.md:59:unit of integration rather than a collection of independently tested parts.
+docs/design/ARCHITECTURE.md:89:counters or UTC labels, but may not define ordering, freshness or deadlines. At process
+docs/design/ARCHITECTURE.md:91:checks, authority leases and watchdogs use that monotonic domain. It also maintains an
+docs/design/ARCHITECTURE.md:112:IQ is stored in independently recoverable, fixed-duration segments. Each segment contains
+docs/design/ARCHITECTURE.md:155:7. Add integrity, independent monotonic authority watchdog and 5 Hz MAVLink publisher;
+docs/design/DESIGN_BASELINE.md:16:shall remain aboard with a physical, controller-independent manual override.
+docs/design/DESIGN_BASELINE.md:45:| 137 MHz antenna/front end and independent low-cost receiver | Orbcomm reception | A separate, non-coherent receiver provides continuous constellation/front-end diversity without consuming either bladeRF coherent RX channel; exact receiver is a BOM dependency `[UNVERIFIED]`. |
+docs/design/DESIGN_BASELINE.md:51:| Optional solar/sky-polarisation compass | Independent absolute heading | Candidate mitigation for magnetic heading weakness; not required until selected and verified. |
+docs/design/DESIGN_BASELINE.md:53:| ArduPilot Rover autopilot | Navigation consumer | Receives MAVLink `GPS_INPUT` (message 232, `GPS1_TYPE=14`). |
+docs/design/DESIGN_BASELINE.md:85:| MAVLink `GPS_INPUT` output | 5 Hz nominal (handoff requirement: approximately 5 Hz), continuously while the process is healthy, subject to steering-authority gating. |
+docs/design/DESIGN_BASELINE.md:88:The four-second `GPS_TIMEOUT_MS` motivates continuous output but does not define estimator
+docs/design/DESIGN_BASELINE.md:122:use: `GPS_INPUT.alt` shall publish the MSL-constrained estimate, `vd` shall be 0, and
+docs/design/DESIGN_BASELINE.md:137:| One LEO constellation or RF front end lost | Continue with remaining accepted constellations and inertial/marine sensors; geometry and uncertainty shall degrade honestly. Loss of Ku shall not remove independently received Orbcomm, and loss of the LNB shall not remove direct L-band reception when the bladeRF allocation includes it. |
+docs/design/DESIGN_BASELINE.md:138:| All LEO observations lost | Continue IMU propagation plus magnetometer and speed-log updates; covariance grows and current/ground-speed observability degrades. Steering authority expires by the independently enforced authority policy, but the estimator keeps running. |
+docs/design/DESIGN_BASELINE.md:146:| Companion process stalls | Its independent monotonic watchdog shall make steering authority expire. Alarm escalation and the physical override remain available; software shall not autonomously select RTL, Loiter or disarm. |
+docs/design/DESIGN_BASELINE.md:150:These are system-level trial limits, evaluated against an independent truth journal over
+docs/design/DESIGN_BASELINE.md:161:| Output continuity | Valid `GPS_INPUT` at nominal 5 Hz while healthy; no gap >= 4 s (**estimate** derived from the stated timeout) | Same; dead-reckoned fill is explicitly permitted, with reported uncertainty and authority enforced upstream |
+docs/design/DESIGN_BASELINE.md:178:`speed_accuracy` independently in `GPS_INPUT`. Publish fused heading through the
+docs/design/DESIGN_BASELINE.md:179:`GPS_INPUT.yaw` field with its validity governed by the companion integrity gate. `ODOMETRY`
+docs/design/DESIGN_BASELINE.md:187:`GPS_INPUT`. Jacobians shall be checked against finite differences. The same raw log shall
+docs/design/SAFETY_CASE.md:14:timer values, ArduPilot failsafe parameters, the MAVLink revocation command set — are marked
+docs/design/SAFETY_CASE.md:19:(§5) rather than asserting a mitigation.
+docs/design/SAFETY_CASE.md:31:  covariance and integrity state, *independently of ArduPilot*. The baseline supplies no
+docs/design/SAFETY_CASE.md:38:  error of the previous draft: modules that share a fault domain cannot mitigate one another
+docs/design/SAFETY_CASE.md:44:  solution is permitted to steer via the MAVLink path. It is a *lease*, continuously
+docs/design/SAFETY_CASE.md:46:- **The helm** is the qualified person aboard with a physical, controller-independent manual
+docs/design/SAFETY_CASE.md:70:| G4 | **Lease liveness** | `monotonic_now < lease_deadline` on the clock service's monotonic domain — i.e. a fresh solution frame has renewed the lease within `t_lease`. G4 tests only *that a fresh, in-integrity frame is still being produced*; it does not re-test G2/G3 content. | Supervisor monotonic watchdog |
+docs/design/SAFETY_CASE.md:95:  the current lease being valid.
+docs/design/SAFETY_CASE.md:96:- On `R`: `lease_deadline := monotonic_now + t_lease`.
+docs/design/SAFETY_CASE.md:97:- **G4** `:= monotonic_now < lease_deadline` (pure comparison; deadline arrival = expiry).
+docs/design/SAFETY_CASE.md:99:  `G2 ∧ G3` fires `R` and makes the lease live. An expired lease can therefore always be
+docs/design/SAFETY_CASE.md:104:5 Hz solution frame — including DR-propagated fill — renews the lease provided it passes G2**.
+docs/design/SAFETY_CASE.md:106:passing output*; it is **not** the mechanism that ends dead-reckoning. Three independent timers
+docs/design/SAFETY_CASE.md:111:| `t_lease` (G4) | last produced solution frame | companion/estimator liveness | lease expiry → revoke | few×200 ms, `< GPS_TIMEOUT_MS` — [UNVERIFIED] |
+docs/design/SAFETY_CASE.md:112:| `t_dr` (in G2) | last absolute position-constraining observation | dead-reckoning authority | revoke even if covariance still looks in-limit | [UNVERIFIED] |
+docs/design/SAFETY_CASE.md:113:| per-source freshness | last IMU / magnetometer / speed-log / ephemeris sample | per-sensor staleness feeding integrity | feeds G2/G3 | [UNVERIFIED] |
+docs/design/SAFETY_CASE.md:115:During all-LEO-loss, DR frames keep renewing the lease (G4 stays satisfied), and authority is
+docs/design/SAFETY_CASE.md:116:ended by **G2** — either the growing protection limit breaches, or `t_dr` elapses — whichever
+docs/design/SAFETY_CASE.md:131:| G2d | DR-authority age | age of last absolute fix (s) | `≤ t_dr` **[UNVERIFIED]** | per epoch | ⇒ false | baseline "DR timeout governs authority only"; failure mode 3 |
+docs/design/SAFETY_CASE.md:133:| G4 | lease live | `now − last_R` (s) | `< t_lease` **[UNVERIFIED]** | continuous | ⇒ expiry | this doc (**proposed**); baseline motivates continuous output via `GPS_TIMEOUT_MS` |
+docs/design/SAFETY_CASE.md:135:Hysteresis/dwell for the caution band (`dwell_clear`) and the re-arm dwell (`dwell_rearm`) are
+docs/design/SAFETY_CASE.md:152:integrity**. Its own GPS/EKF failsafe actions are configured so that loss/degradation of
+docs/design/SAFETY_CASE.md:153:`GPS_INPUT` **cannot itself command an autonomous manoeuvre** (RTL/Loiter/disarm) — because
+docs/design/SAFETY_CASE.md:154:that manoeuvre is the hazard (§2). Exact failsafe parameter values are **[UNVERIFIED]** and are
+docs/design/SAFETY_CASE.md:169:the mechanism that delivers it to ArduPilot is defined. It is **not** delivered by `GPS_INPUT`
+docs/design/SAFETY_CASE.md:173:**Case A — companion alive, link up** (integrity/limit breach, lease expiry while the process
+docs/design/SAFETY_CASE.md:179:2. It then ceases / invalidates the `GPS_INPUT` nav injection, consistent with that mode.
+docs/design/SAFETY_CASE.md:183:simultaneous with cessation of nav injection, so that no GPS-timeout failsafe is provoked and
+docs/design/SAFETY_CASE.md:189:cable/connector fault). The companion can send nothing; **its internal watchdog/lease cannot
+docs/design/SAFETY_CASE.md:190:reach ArduPilot.** ArduPilot observes only the *absence* of `GPS_INPUT` and reacts on its own
+docs/design/SAFETY_CASE.md:191:`GPS_TIMEOUT_MS` (4000 ms), taking the pre-configured non-manoeuvre action. In this case the
+docs/design/SAFETY_CASE.md:192:actual responders are **(a) ArduPilot's pre-configured non-manoeuvre GPS-failsafe and (b) the
+docs/design/SAFETY_CASE.md:193:physical helm / kill-cord — not the internal watchdog.** There is an unavoidable window of up
+docs/design/SAFETY_CASE.md:194:to `GPS_TIMEOUT_MS` during which ArduPilot coasts on the last `GPS_INPUT`; the safety argument
+docs/design/SAFETY_CASE.md:203:executing, the live supervisor revokes within `t_lease` (Case A).* For companion death or link
+docs/design/SAFETY_CASE.md:205:the physical layer. The claim "the companion always revokes before ArduPilot's failsafe" is
+docs/design/SAFETY_CASE.md:206:withdrawn; `t_lease < GPS_TIMEOUT_MS` matters only in Case A, where it bounds how long a
+docs/design/SAFETY_CASE.md:213:*previously granted* lease due to a hazardous condition.
+docs/design/SAFETY_CASE.md:223:| protection metric ≥ `caution_enter` | NOMINAL | CAUTION | granted | soft pre-alert |
+docs/design/SAFETY_CASE.md:224:| metric ≤ `caution_clear` for `dwell_clear` | CAUTION | NOMINAL | granted | clear |
+docs/design/SAFETY_CASE.md:227:| **G4 lease expiry while alive** | NOMINAL/CAUTION | WARNING | **revoked, latched** | loud alarm, demand ack |
+docs/design/SAFETY_CASE.md:231:| re-arm (G1 edge, `G2∧G3`, after `dwell_rearm`) | LATCHED-SAFE / DISARMED | NOMINAL | granted | quiet "armed" |
+docs/design/SAFETY_CASE.md:238:absence of the healthy indication plus any independent annunciator, and to ArduPilot via
+docs/design/SAFETY_CASE.md:250:| **All LEO observations lost** | DR frames keep renewing G4; authority ends on G2 — protection-limit breach **or** `t_dr` elapsed, whichever first. | G2 (`t_dr` or PL) |
+docs/design/SAFETY_CASE.md:254:| **IMU stream stale** | Propagation untrustworthy → revoke; estimator stays running, fabricates no propagation samples, and journalling and recovery may continue. | G2 (per-source freshness) |
+docs/design/SAFETY_CASE.md:261:**Orbcomm fusion caveat (fixes B4; per D10).** Orbcomm arrives on an independent, non-coherent
+docs/design/SAFETY_CASE.md:267:The DR timeout `t_dr` **governs authority only** (baseline; failure mode 3) — it never stops
+docs/design/SAFETY_CASE.md:274:### 3.0 Fault domains and independence (fixes finding 12; coordinator point ii)
+docs/design/SAFETY_CASE.md:288:- **Physical helm override + kill-cord (no compute).** Independent of all software; but they
+docs/design/SAFETY_CASE.md:292:The consequence, stated plainly: **no in-companion module is an independent mitigation of a
+docs/design/SAFETY_CASE.md:294:watchdog" as mitigation for a companion producing plausible-wrong output (H6), that is
+docs/design/SAFETY_CASE.md:295:withdrawn. That residual is **uncontrolled by present design** and requires an **out-of-
+docs/design/SAFETY_CASE.md:296:companion-process independent monitor** which does not yet exist; registered in §5.
+docs/design/SAFETY_CASE.md:300:The lease (§1.1) on the clock service's monotonic domain is renewed only by a fresh,
+docs/design/SAFETY_CASE.md:302:executing, stop it from continuing to assert steering on a **frozen or stale solution** (H4) —
+docs/design/SAFETY_CASE.md:303:a frozen estimator does not advance the solution sequence, so `R` does not fire, the lease
+docs/design/SAFETY_CASE.md:314:`t_lease` shall be `< GPS_TIMEOUT_MS` (4000 ms) so that in Case A the companion self-revokes
+docs/design/SAFETY_CASE.md:321:caution band uses **distinct entry and clear thresholds with a dwell** (single-threshold logic
+docs/design/SAFETY_CASE.md:324:- ordering, for an uncertainty metric (larger = worse): `caution_clear < caution_enter < revoke_threshold`;
+docs/design/SAFETY_CASE.md:325:- **CAUTION entry:** metric `≥ caution_enter` (this concrete crossing replaces the prior vague
+docs/design/SAFETY_CASE.md:328:- **CAUTION→NOMINAL clear:** metric `≤ caution_clear` sustained for `dwell_clear`;
+docs/design/SAFETY_CASE.md:329:- all of `caution_enter`, `caution_clear`, `dwell_clear`, `revoke_threshold`, `T_ack`,
+docs/design/SAFETY_CASE.md:330:  `dwell_rearm` are **[UNVERIFIED]**, frozen before trials against the manoeuvre budget.
+docs/design/SAFETY_CASE.md:333:the entry/clear band with dwell prevents S0/S1 *alarm* flapping. **Terminal state = ESCALATED
+docs/design/SAFETY_CASE.md:338:### 3.3 Layer 3 — physical, controller-independent override (final layer)
+docs/design/SAFETY_CASE.md:345:- **Helm kill-cord** — a physical lanyard that cuts propulsion (failure mode 9). It acts only
+docs/design/SAFETY_CASE.md:348:**Human-response failure, by sub-case (fixes finding 9 / H7).** The mandated "human does not
+docs/design/SAFETY_CASE.md:354:| Overboard | kill-cord (lanyard pulls) | controlled |
+docs/design/SAFETY_CASE.md:355:| Displaced from station | kill-cord | controlled |
+docs/design/SAFETY_CASE.md:363:(a second qualified crew member, or a helm dead-man / vigilance device that cuts propulsion on
+docs/design/SAFETY_CASE.md:368:Pre-trial checklist (operational): kill-cord clipped; manual override tested; ArduPilot
+docs/design/SAFETY_CASE.md:369:non-manoeuvre failsafe verified in SITL; Case-A revocation ordering verified in SITL/HIL.
+docs/design/SAFETY_CASE.md:375:hazard → cause → mitigation → residual. Residuals marked **[UNVERIFIED]** are bounded only
+docs/design/SAFETY_CASE.md:380:| **H1** | **Stale-solution steering** | Sparse absolute fixes; DR fill; covariance growth. | Covariance time-propagated from IMU every accepted sample (guards failure mode 5); G2 per-epoch PL; **`t_dr` DR-authority timeout** revokes on last-absolute-fix age even if covariance looks in-limit; G4 requires a live producer. | If the covariance model is itself optimistic (H2), a fresh-looking frame under-reports staleness; `t_dr` bounds this independently of covariance. Magnitude **[UNVERIFIED]** until withheld-replay validation. |
+docs/design/SAFETY_CASE.md:381:| **H2** | **Optimistic covariance (wrong-Jacobian class)** — the gate consumes the very covariance that is wrong. | Wrong Jacobian (silent; filter still emits a covariance), missing propagation, mis-modelled process noise. | **Offline, pre-trial:** finite-difference Jacobian check; **NEES against truth in aided/withheld replay** (needs truth ⇒ offline only). **Online:** normalized-innovation-squared (**NIS**) consistency — flags innovations too large for the claimed innovation covariance, but is *covariance-coupled*, not covariance-independent; **cross-sensor redundancy residuals** (speed-log vs LEO ground speed, dual-magnetometer agreement, IMU-predicted vs measured) which *are* covariance-independent but limited in coverage; conservative process noise. | A slow bias that shrinks state **and** innovation covariance consistently evades NIS and lies below the redundancy floor; **not closed online**. Bounded only by conservative limits, offline gates and the human. **[UNVERIFIED]**. (Prior "NEES online, covariance-independent" claim withdrawn as technically wrong.) |
+docs/design/SAFETY_CASE.md:382:| **H3** | **Authority flapping** | Metric noise near threshold. | Distinct `caution_enter`/`caution_clear` + `dwell_clear` (real hysteresis); latched revocation + explicit re-arm with `dwell_rearm`. | Mis-tuned band flaps or lags; values **[UNVERIFIED]**, frozen before trials. |
+docs/design/SAFETY_CASE.md:383:| **H4** | **Silent estimator halt vs authority-alive inversion** | Estimator stalls/freezes while publisher stays alive. | `R` fires only on an *advancing* solution sequence that passes integrity; a frozen output does not advance the sequence ⇒ lease expires ⇒ **live** supervisor revokes (Case A). Watchdog on independent monotonic clock; its expiry cannot stop the estimator (baseline). | A bug re-emitting *stale-but-sequence-advancing* frames defeats sequence-freshness; needs a **content/innovation-liveness** check (registered §5). Whole-process death is Case B, not H4. **[UNVERIFIED]**. |
+docs/design/SAFETY_CASE.md:384:| **H5** | **MAVLink link loss mid-authority** | Cable/USB/serial/connector fault. | This is **Case B**: internal revocation cannot reach ArduPilot. Actual responders: ArduPilot's pre-configured **non-manoeuvre** GPS-failsafe (SITL-validated) at its 4 s timeout, plus helm override/kill-cord (link-independent). Companion detects link loss via ArduPilot→companion heartbeat deadline → alarm/log only. | Unavoidable ≤ `GPS_TIMEOUT_MS` (~4 s) coast on last `GPS_INPUT`; bounded, non-manoeuvring at timeout, helm dominant. Exact failsafe params **[UNVERIFIED]** until SITL-verified. The prior "`t_lease` guarantees the companion revokes first" claim is withdrawn (invalid across a dead link). |
+docs/design/SAFETY_CASE.md:385:| **H6** | **`GPS_INPUT` spoof / companion producing plausible-wrong output** | (a) companion process-level fault; (b) external MAVLink injection. | (b) dedicated point-to-point companion↔autopilot link (not networked); companion sole authorised source (`GPS1_TYPE=14`); enable MAVLink signing (**[UNVERIFIED]** support). LEO-SoOP removes the *RF* GNSS-spoof surface; the MAVLink surface remains. (a) **No in-companion module is independent of a process-level fault (§3.0)** — the integrity monitor/watchdog can be falsified by the same fault; this is **not** cited as mitigation. | (a) **Uncontrolled by present design**: requires an out-of-companion-process independent monitor (does not exist). Physical kill-cord cannot detect plausible-wrong steering. **[UNVERIFIED]/uncontrolled — registered §5.** |
+docs/design/SAFETY_CASE.md:386:| **H7** | **Human-override failure** | Distracted / unconscious-at-helm / overboard / cord unclipped / override failed. | Per-sub-case coverage table (§3.3): ladder + kill-cord cover distracted/overboard/displaced; checklist covers clip/override. Software never auto-manoeuvres, so an unresponsive human triggers no surprise manoeuvre. | **Unconscious-at-helm with cord clipped is UNCONTROLLED** by software; needs an operational control (second crew / helm dead-man) with formal risk acceptance by the trial authority. Not accepted here. **[UNVERIFIED]/uncontrolled — registered §5.** |
+docs/design/SAFETY_CASE.md:391:## 5. Assumptions and the [UNVERIFIED] / uncontrolled register
+docs/design/SAFETY_CASE.md:398:- **Timers:** `t_lease` (`< 4000 ms`), `t_dr` (DR-authority), per-source freshness deadlines,
+docs/design/SAFETY_CASE.md:399:  `t_eph` (provisional 6 h), `T_ack`, `caution_enter`/`caution_clear`/`dwell_clear`,
+docs/design/SAFETY_CASE.md:400:  `dwell_rearm`.
+docs/design/SAFETY_CASE.md:411:- **ArduPilot GPS/EKF non-manoeuvre failsafe parameters (Case B):** must prove `GPS_INPUT`
+docs/design/SAFETY_CASE.md:415:- **Independent (out-of-companion-process) monitor** for H6(a): does not exist. The
+docs/design/SAFETY_CASE.md:416:  correlated companion process-level fault — plausible-wrong `GPS_INPUT` with a falsified
+docs/design/SAFETY_CASE.md:417:  integrity verdict — is **uncontrolled** pending such a monitor; no in-companion module is
+docs/design/SAFETY_CASE.md:418:  independent of it.
+docs/design/SAFETY_CASE.md:419:- **Content/innovation-liveness check** to fully close H4 against stale-but-advancing frames.
+docs/design/SAFETY_CASE.md:420:- **Operational human-response control** for the unconscious-at-helm residual (H7): a second
+docs/design/SAFETY_CASE.md:421:  qualified crew member or a helm dead-man / vigilance device, with formal risk acceptance by
+docs/design/SAFETY_CASE.md:429:(working assumption), qualified helm aboard with physical controller-independent override,
+docs/design/SAFETY_CASE.md:430:`gnss_authority` enforced at bus ingress, and the MAVLink `GPS_INPUT` (`GPS1_TYPE=14`)
+
+exec
+/bin/bash -lc "nl -ba docs/design/SAFETY_CASE.md | sed -n '270,450p'; git diff --unified=3 -- .orchestration/reports/U-S1.md | sed -n '1,260p'; git status --short" in /home/od/work/leo-pnt
+ succeeded in 0ms:
+   270	---
+   271	
+   272	## 3. The backstop when the human does not respond
+   273	
+   274	### 3.0 Fault domains and independence (fixes finding 12; coordinator point ii)
+   275	
+   276	Independence claims are only valid across fault-domain boundaries. The domains are:
+   277	
+   278	- **Companion process / board (one domain).** Clock service, estimator, integrity monitor
+   279	  (module 10), authority supervisor + watchdog (module 11) and MAVLink publisher (module 12)
+   280	  all execute here. A **process-level fault** (memory corruption, scheduler stall, a fault
+   281	  that simultaneously produces a plausible-wrong solution *and* a passing integrity verdict)
+   282	  takes them down **together**. Within this domain, separate modules with design-diverse code
+   283	  contain **design faults** of one another (e.g. a finite-difference-checked integrity monitor
+   284	  catches a wrong-Jacobian estimator bug), but they contain **no** process-level fault.
+   285	- **ArduPilot (separate compute).** Independent of companion process faults, but blind to
+   286	  navigation-integrity correctness (censored 100 m view) — it can react to *absence* of input,
+   287	  not to plausible-wrong input.
+   288	- **Physical helm override + kill-cord (no compute).** Independent of all software; but they
+   289	  act on gross vessel behaviour and human presence, not on nav correctness (§3.3).
+   290	- **The human.** The only element that can judge that steering "looks wrong". Single point.
+   291	
+   292	The consequence, stated plainly: **no in-companion module is an independent mitigation of a
+   293	companion process-level fault.** Where the earlier draft cited "the same integrity monitor +
+   294	watchdog" as mitigation for a companion producing plausible-wrong output (H6), that is
+   295	withdrawn. That residual is **uncontrolled by present design** and requires an **out-of-
+   296	companion-process independent monitor** which does not yet exist; registered in §5.
+   297	
+   298	### 3.1 Layer 1 — supervisor monotonic watchdog (bounded scope)
+   299	
+   300	The lease (§1.1) on the clock service's monotonic domain is renewed only by a fresh,
+   301	integrity-passing frame. Its **genuine, defensible job**: while the companion process is still
+   302	executing, stop it from continuing to assert steering on a **frozen or stale solution** (H4) —
+   303	a frozen estimator does not advance the solution sequence, so `R` does not fire, the lease
+   304	expires, and the *live* supervisor executes a Case-A revocation.
+   305	
+   306	Its **limits**, now stated (correcting the previous over-claim): the watchdog **cannot** act
+   307	once its own process has died or the link is lost (Case B) — it is inside the failed domain.
+   308	"Authority cannot outlive the solution" therefore holds *for the companion-alive fault class
+   309	only*; for companion death/link loss the bound is ArduPilot's ~4 s non-manoeuvre timeout plus
+   310	the physical layer, not the internal watchdog. Independence properties that do hold: the
+   311	watchdog runs on the monotonic clock (a device/UTC reset or spoofed label cannot extend it),
+   312	and its expiry cannot stop the estimator (baseline).
+   313	
+   314	`t_lease` shall be `< GPS_TIMEOUT_MS` (4000 ms) so that in Case A the companion self-revokes
+   315	before its output would age out at ArduPilot. Provisional few×200 ms — **[UNVERIFIED]**.
+   316	
+   317	### 3.2 Layer 2 — un-acknowledged-alarm escalation ladder, with real hysteresis (fixes finding 13)
+   318	
+   319	The ladder exists to *summon the helm*, not to replace the helm; because software never
+   320	manoeuvres, **the terminal state is not kinetic**. States and transitions are in §2.2. The
+   321	caution band uses **distinct entry and clear thresholds with a dwell** (single-threshold logic
+   322	from the prior draft was not hysteresis):
+   323	
+   324	- ordering, for an uncertainty metric (larger = worse): `caution_clear < caution_enter < revoke_threshold`;
+   325	- **CAUTION entry:** metric `≥ caution_enter` (this concrete crossing replaces the prior vague
+   326	  "margin shrinking" — fixes C3);
+   327	- **WARNING:** metric `≥ revoke_threshold`;
+   328	- **CAUTION→NOMINAL clear:** metric `≤ caution_clear` sustained for `dwell_clear`;
+   329	- all of `caution_enter`, `caution_clear`, `dwell_clear`, `revoke_threshold`, `T_ack`,
+   330	  `dwell_rearm` are **[UNVERIFIED]**, frozen before trials against the manoeuvre budget.
+   331	
+   332	Latched revocation requiring explicit re-arm (§2.2) prevents steering-authority flapping;
+   333	the entry/clear band with dwell prevents S0/S1 *alarm* flapping. **Terminal state = ESCALATED
+   334	+ max alarm**, indefinitely, with no kinetic action; if the helm never responds the vessel
+   335	holds its last physical control state (least-surprising) until the helm or the physical layer
+   336	(§3.3) intervenes.
+   337	
+   338	### 3.3 Layer 3 — physical, controller-independent override (final layer)
+   339	
+   340	Independent of companion, ArduPilot and MAVLink:
+   341	
+   342	- **Helm manual override** — steering/throttle mechanically dominates the autopilot at any
+   343	  time (baseline precondition). This is how "hand to helm" becomes real motion control, and is
+   344	  the only control effective in Case B when software cannot signal.
+   345	- **Helm kill-cord** — a physical lanyard that cuts propulsion (failure mode 9). It acts only
+   346	  when *pulled* — i.e. when the helmsman is **displaced** (overboard / falls from station).
+   347	
+   348	**Human-response failure, by sub-case (fixes finding 9 / H7).** The mandated "human does not
+   349	respond" case is not uniform; coverage differs:
+   350	
+   351	| Sub-case | Covered by | Status |
+   352	|---|---|---|
+   353	| Distracted but present | escalation ladder summons attention | controlled if helm eventually responds |
+   354	| Overboard | kill-cord (lanyard pulls) | controlled |
+   355	| Displaced from station | kill-cord | controlled |
+   356	| **Unconscious at the helm, cord still clipped** | nothing in present design | **UNCONTROLLED** |
+   357	| Kill-cord not clipped | pre-trial checklist (procedural) | controlled only if checklist enforced |
+   358	| Manual override mis-wired/failed | pre-trial test (procedural) | controlled only if tested |
+   359	
+   360	The unconscious-at-helm residual — propulsion continues at last physical state until fuel
+   361	exhaustion or third-party intervention — is **not controlled by software and not accepted
+   362	here**: this document has no risk-acceptance authority. It requires an **operational control**
+   363	(a second qualified crew member, or a helm dead-man / vigilance device that cuts propulsion on
+   364	loss of periodic helm input) whose specification and formal risk acceptance belong to the
+   365	trial authority. Registered in §5; **the trial risk envelope should not permit unattended
+   366	continued propulsion until this control is in place.**
+   367	
+   368	Pre-trial checklist (operational): kill-cord clipped; manual override tested; ArduPilot
+   369	non-manoeuvre failsafe verified in SITL; Case-A revocation ordering verified in SITL/HIL.
+   370	
+   371	---
+   372	
+   373	## 4. Hazard table
+   374	
+   375	hazard → cause → mitigation → residual. Residuals marked **[UNVERIFIED]** are bounded only
+   376	after GNSS-withheld replay and/or SITL/HIL evidence.
+   377	
+   378	| # | Hazard | Cause | Mitigation | Residual risk |
+   379	|---|---|---|---|---|
+   380	| **H1** | **Stale-solution steering** | Sparse absolute fixes; DR fill; covariance growth. | Covariance time-propagated from IMU every accepted sample (guards failure mode 5); G2 per-epoch PL; **`t_dr` DR-authority timeout** revokes on last-absolute-fix age even if covariance looks in-limit; G4 requires a live producer. | If the covariance model is itself optimistic (H2), a fresh-looking frame under-reports staleness; `t_dr` bounds this independently of covariance. Magnitude **[UNVERIFIED]** until withheld-replay validation. |
+   381	| **H2** | **Optimistic covariance (wrong-Jacobian class)** — the gate consumes the very covariance that is wrong. | Wrong Jacobian (silent; filter still emits a covariance), missing propagation, mis-modelled process noise. | **Offline, pre-trial:** finite-difference Jacobian check; **NEES against truth in aided/withheld replay** (needs truth ⇒ offline only). **Online:** normalized-innovation-squared (**NIS**) consistency — flags innovations too large for the claimed innovation covariance, but is *covariance-coupled*, not covariance-independent; **cross-sensor redundancy residuals** (speed-log vs LEO ground speed, dual-magnetometer agreement, IMU-predicted vs measured) which *are* covariance-independent but limited in coverage; conservative process noise. | A slow bias that shrinks state **and** innovation covariance consistently evades NIS and lies below the redundancy floor; **not closed online**. Bounded only by conservative limits, offline gates and the human. **[UNVERIFIED]**. (Prior "NEES online, covariance-independent" claim withdrawn as technically wrong.) |
+   382	| **H3** | **Authority flapping** | Metric noise near threshold. | Distinct `caution_enter`/`caution_clear` + `dwell_clear` (real hysteresis); latched revocation + explicit re-arm with `dwell_rearm`. | Mis-tuned band flaps or lags; values **[UNVERIFIED]**, frozen before trials. |
+   383	| **H4** | **Silent estimator halt vs authority-alive inversion** | Estimator stalls/freezes while publisher stays alive. | `R` fires only on an *advancing* solution sequence that passes integrity; a frozen output does not advance the sequence ⇒ lease expires ⇒ **live** supervisor revokes (Case A). Watchdog on independent monotonic clock; its expiry cannot stop the estimator (baseline). | A bug re-emitting *stale-but-sequence-advancing* frames defeats sequence-freshness; needs a **content/innovation-liveness** check (registered §5). Whole-process death is Case B, not H4. **[UNVERIFIED]**. |
+   384	| **H5** | **MAVLink link loss mid-authority** | Cable/USB/serial/connector fault. | This is **Case B**: internal revocation cannot reach ArduPilot. Actual responders: ArduPilot's pre-configured **non-manoeuvre** GPS-failsafe (SITL-validated) at its 4 s timeout, plus helm override/kill-cord (link-independent). Companion detects link loss via ArduPilot→companion heartbeat deadline → alarm/log only. | Unavoidable ≤ `GPS_TIMEOUT_MS` (~4 s) coast on last `GPS_INPUT`; bounded, non-manoeuvring at timeout, helm dominant. Exact failsafe params **[UNVERIFIED]** until SITL-verified. The prior "`t_lease` guarantees the companion revokes first" claim is withdrawn (invalid across a dead link). |
+   385	| **H6** | **`GPS_INPUT` spoof / companion producing plausible-wrong output** | (a) companion process-level fault; (b) external MAVLink injection. | (b) dedicated point-to-point companion↔autopilot link (not networked); companion sole authorised source (`GPS1_TYPE=14`); enable MAVLink signing (**[UNVERIFIED]** support). LEO-SoOP removes the *RF* GNSS-spoof surface; the MAVLink surface remains. (a) **No in-companion module is independent of a process-level fault (§3.0)** — the integrity monitor/watchdog can be falsified by the same fault; this is **not** cited as mitigation. | (a) **Uncontrolled by present design**: requires an out-of-companion-process independent monitor (does not exist). Physical kill-cord cannot detect plausible-wrong steering. **[UNVERIFIED]/uncontrolled — registered §5.** |
+   386	| **H7** | **Human-override failure** | Distracted / unconscious-at-helm / overboard / cord unclipped / override failed. | Per-sub-case coverage table (§3.3): ladder + kill-cord cover distracted/overboard/displaced; checklist covers clip/override. Software never auto-manoeuvres, so an unresponsive human triggers no surprise manoeuvre. | **Unconscious-at-helm with cord clipped is UNCONTROLLED** by software; needs an operational control (second crew / helm dead-man) with formal risk acceptance by the trial authority. Not accepted here. **[UNVERIFIED]/uncontrolled — registered §5.** |
+   387	| **H8** | **Frequency-reference/heel bias or total heading loss steering** | Reference degrades or sustained heel steps the drift model; both magnetometers lost. | Reject biased Doppler per integrity; G2 revokes on limit breach; heading PL revokes on dual-magnetometer loss; mount g-sensitivity vector vertical (baseline). | Slow in-model bias below the innovation-detection floor. **[UNVERIFIED]**; bounded by conservative limits and the human. |
+   388	
+   389	---
+   390	
+   391	## 5. Assumptions and the [UNVERIFIED] / uncontrolled register
+   392	
+   393	Safety-relevant items not yet frozen, and honest control status:
+   394	
+   395	- **Per-epoch protection-limit numbers** (position/velocity/heading, aided and denied) — the
+   396	  baseline gives only campaign-grading acceptance statistics; per-epoch gates are a proposed
+   397	  addition.
+   398	- **Timers:** `t_lease` (`< 4000 ms`), `t_dr` (DR-authority), per-source freshness deadlines,
+   399	  `t_eph` (provisional 6 h), `T_ack`, `caution_enter`/`caution_clear`/`dwell_clear`,
+   400	  `dwell_rearm`.
+   401	- **G1 arm input:** no arm/disarm message exists in `ARCHITECTURE.md`; an arm-command bus
+   402	  message + helm arm input is a contracts requirement per **D13** (U-C1, contracts v3). G1 is
+   403	  specified-but-unwired until then.
+   404	- **Calibration validity window:** baseline/handoff define no time-based calibration expiry;
+   405	  any such window is a **proposed baseline change**, not assumed here (G3 tests presence +
+   406	  identity match only).
+   407	- **MAVLink revocation command set (Case A):** exact mode-set command, target helm/manual
+   408	  mode, RC-arbitration parameters, and the verified ordering (mode-to-manual before nav-injection
+   409	  cessation, no actuator discontinuity) — SITL/HIL deliverable on pinned firmware. Until it
+   410	  passes, "hand to helm" is unproven.
+   411	- **ArduPilot GPS/EKF non-manoeuvre failsafe parameters (Case B):** must prove `GPS_INPUT`
+   412	  loss/degradation cannot command RTL/Loiter/disarm; SITL-validated against pinned commit +
+   413	  artifact checksum.
+   414	- **MAVLink signing** availability on the pinned firmware.
+   415	- **Independent (out-of-companion-process) monitor** for H6(a): does not exist. The
+   416	  correlated companion process-level fault — plausible-wrong `GPS_INPUT` with a falsified
+   417	  integrity verdict — is **uncontrolled** pending such a monitor; no in-companion module is
+   418	  independent of it.
+   419	- **Content/innovation-liveness check** to fully close H4 against stale-but-advancing frames.
+   420	- **Operational human-response control** for the unconscious-at-helm residual (H7): a second
+   421	  qualified crew member or a helm dead-man / vigilance device, with formal risk acceptance by
+   422	  the trial authority. The trial risk envelope should not permit unattended continued
+   423	  propulsion until this is in place.
+   424	- **Orbcomm fusion (D10):** Orbcomm observations must not enter fusion until a second
+   425	  receiver-clock/per-receiver nuisance state exists.
+   426	- **Timer budgets assume a displacement hull;** a planing/slamming hull invalidates them.
+   427	
+   428	Assumptions carried from the baseline: manned displacement-hull vessel, Danish straits
+   429	(working assumption), qualified helm aboard with physical controller-independent override,
+   430	`gnss_authority` enforced at bus ingress, and the MAVLink `GPS_INPUT` (`GPS1_TYPE=14`)
+   431	interface. Implementation field encodings, ArduPilot parameter/mode names and bus message
+   432	schemas are subordinate v2/v3 contracts and code/config work; this document does not edit
+   433	`ARCHITECTURE.md`.
+ M .orchestration/reports/U-R1.log
+ M .orchestration/reports/U-R2-debug.log
+ M .orchestration/reports/U-R2.stream.jsonl
+?? .orchestration/reports/U-C1.log
+?? .orchestration/reports/U-D1.1.log
+?? .orchestration/reports/U-E1.log
+?? .orchestration/reports/U-F1.log
+?? .orchestration/reports/U-M1.log
+?? .orchestration/reports/U-R2b.err
+?? .orchestration/reports/U-R2b.out
+?? .orchestration/reports/U-S1-review-sol.log
+?? .orchestration/reports/U-S1-verify-sol.log
+?? .orchestration/reports/U-S1.md
+?? docs/design/SAFETY_CASE.md
+
+codex
+The state-transition audit found another concrete overclaim: the table says it covers every Boolean edge, but it omits several recovery/edge cases once the machine is in WARNING/ESCALATED/LATCHED-SAFE. I’m also validating the 4-second silence behavior against ArduPilot’s own documentation/source semantics, because that point cannot safely rest on the report’s disposition.
+web search: 
+web search: site:ardupilot.org rover GPS_INPUT GPS loss failsafe GPS_TIMEOUT_MS ...
+codex
+1. **Resolved** — watchdog guarantee is now correctly limited to companion-alive faults; whole-process death is explicitly outside its control (`SAFETY_CASE.md:188–207, 306–312`).
+
+2. **Resolved** — the invalid claim that `t_lease < GPS_TIMEOUT_MS` guarantees revocation across process/link failure is withdrawn and scoped to Case A (`202–207, 314–315`).
+
+3. **Not resolved** — Case A supplies only candidate commands/modes and explicitly admits that “hand to helm” remains unproven (`176–186, 407–410`). The exact mode, RC arbitration, command acknowledgement/failure behavior, and actuator transition required by the original finding are still undefined.
+
+4. **Resolved** — startup and intentional disarm now enter a quiet DISARMED state rather than the warning ladder (`211–231`).
+
+5. **Not resolved** — G1 withdrawal is covered, but the claim that every Boolean transition has exactly one outcome is false (`233–239`). The table does not define G1 falling from WARNING/ESCALATED/LATCHED-SAFE, G2/G3/G4 recovery in those states, G4 expiry while DISARMED, or acknowledgement/recovery races.
+
+6. **Resolved** — renewal is non-circular: `R` depends on sequence advance plus G2/G3, while G4 is only the deadline comparison; acquisition and expiry boundaries are defined (`89–100`).
+
+7. **Resolved** — DR-propagated frames explicitly renew G4, while loss of absolute observations ends authority through G2 using `t_dr` or protection-limit breach (`102–117, 250`).
+
+8. **Resolved** — NEES is correctly classified as offline/truth-dependent; online NIS is identified as covariance-coupled, redundancy residuals have limited coverage, and the remaining online gap is acknowledged (`381`).
+
+9. **Resolved** — kill-cord coverage is separated by human-failure case, unconscious-at-helm is explicitly UNCONTROLLED, and operational control plus trial-authority acceptance is required (`345–366, 386, 420–423`).
+
+10. **Not resolved** — the table adds operators, units and missing-data behavior, but the protection limits, timers, freshness limits, dwell values and exact test thresholds remain `[UNVERIFIED]` (`119–138, 395–400`). The authority contract therefore still is not numerically executable before steering.
+
+11. **Resolved** — link detection is now alarm/logging only and is no longer claimed to control ArduPilot over the failed channel (`196–200, 384`).
+
+12. **Resolved** — the companion components are placed in one process/board fault domain; H6(a) is honestly UNCONTROLLED and no same-domain integrity monitor/watchdog is cited as independent mitigation (`274–296, 385, 415–418`). H7 is likewise honestly uncontrolled where appropriate.
+
+13. **Resolved** — hysteresis now has ordered, distinct entry and clear thresholds, a clear dwell, and latched revocation/re-arm behavior (`223–224, 321–333, 382`).
+
+14. **Resolved** — the report withdraws the “always revokes first” guarantee and distinguishes Case A from Case B (`.orchestration/reports/U-S1.md:14–25`).
+
+### NEW findings
+
+- **Blocker — high confidence — `docs/design/SAFETY_CASE.md:190–205, 309–315, 384, 411–413`**  
+  The document still asserts that silence on `GPS_INPUT` causes ArduPilot, at 4000 ms, to take a configured “non-manoeuvre GPS-failsafe” action and thereby bounds authority. `GPS_TIMEOUT_MS` is a GPS-backend data timeout; the document provides no evidence that Rover treats it as a dedicated control-authority timeout or immediately changes mode/actuation. Official Rover failsafe documentation describes radio, battery and GCS failsafes, while GPS loss affects position/EKF availability and behavior depends on mode, EKF state and configuration—not simply on this backend timeout. Calling the action bounded while merely marking the parameters `[UNVERIFIED]` remains an asserted central safety mechanism. [ArduPilot Rover failsafes](https://ardupilot.org/rover/docs/rover-failsafes.html)  
+  **How to verify:** On the pinned Rover firmware, stop only `GPS_INPUT` in every intended autonomous mode. Record GPS backend status, EKF source/validity, mode, navigation demand, servo outputs and RC override from last input through at least 10 seconds. Identify the exact source path and parameters producing any transition. Until proven, describe Case B as uncontrolled by the current design rather than as a bounded non-manoeuvre handoff.
+
+- **Major — high confidence — `docs/design/SAFETY_CASE.md:6–8, 255–258, 306–312`; `docs/design/DESIGN_BASELINE.md:146`**  
+  The subordinate safety case correctly says an in-process watchdog cannot handle companion process death, but the governing baseline still requires that watchdog to expire authority on a companion process stall. Thus the documents remain normatively inconsistent; under the safety case’s own precedence rule, the erroneous baseline claim governs.  
+  **How to verify:** Revise/approve the baseline to distinguish estimator-only stall, live-supervisor failure, whole-process death and board/power loss, then trace each class to an independently executing responder and test.
+
+- **Major — high confidence — `docs/design/SAFETY_CASE.md:218–239`**  
+  The state machine claims complete edge coverage but omits multiple state/event combinations and race precedence. This could yield implementation-dependent alarm, latch or re-arm behavior.  
+  **How to verify:** Produce a total state/event matrix for every state and every G1–G4 edge, ACK, arm/re-arm and simultaneous event; define priority and prove every cell has exactly one next state, authority result and annunciation.
+
+**FAIL**
+tokens used
+45,768
+1. **Resolved** — watchdog guarantee is now correctly limited to companion-alive faults; whole-process death is explicitly outside its control (`SAFETY_CASE.md:188–207, 306–312`).
+
+2. **Resolved** — the invalid claim that `t_lease < GPS_TIMEOUT_MS` guarantees revocation across process/link failure is withdrawn and scoped to Case A (`202–207, 314–315`).
+
+3. **Not resolved** — Case A supplies only candidate commands/modes and explicitly admits that “hand to helm” remains unproven (`176–186, 407–410`). The exact mode, RC arbitration, command acknowledgement/failure behavior, and actuator transition required by the original finding are still undefined.
+
+4. **Resolved** — startup and intentional disarm now enter a quiet DISARMED state rather than the warning ladder (`211–231`).
+
+5. **Not resolved** — G1 withdrawal is covered, but the claim that every Boolean transition has exactly one outcome is false (`233–239`). The table does not define G1 falling from WARNING/ESCALATED/LATCHED-SAFE, G2/G3/G4 recovery in those states, G4 expiry while DISARMED, or acknowledgement/recovery races.
+
+6. **Resolved** — renewal is non-circular: `R` depends on sequence advance plus G2/G3, while G4 is only the deadline comparison; acquisition and expiry boundaries are defined (`89–100`).
+
+7. **Resolved** — DR-propagated frames explicitly renew G4, while loss of absolute observations ends authority through G2 using `t_dr` or protection-limit breach (`102–117, 250`).
+
+8. **Resolved** — NEES is correctly classified as offline/truth-dependent; online NIS is identified as covariance-coupled, redundancy residuals have limited coverage, and the remaining online gap is acknowledged (`381`).
+
+9. **Resolved** — kill-cord coverage is separated by human-failure case, unconscious-at-helm is explicitly UNCONTROLLED, and operational control plus trial-authority acceptance is required (`345–366, 386, 420–423`).
+
+10. **Not resolved** — the table adds operators, units and missing-data behavior, but the protection limits, timers, freshness limits, dwell values and exact test thresholds remain `[UNVERIFIED]` (`119–138, 395–400`). The authority contract therefore still is not numerically executable before steering.
+
+11. **Resolved** — link detection is now alarm/logging only and is no longer claimed to control ArduPilot over the failed channel (`196–200, 384`).
+
+12. **Resolved** — the companion components are placed in one process/board fault domain; H6(a) is honestly UNCONTROLLED and no same-domain integrity monitor/watchdog is cited as independent mitigation (`274–296, 385, 415–418`). H7 is likewise honestly uncontrolled where appropriate.
+
+13. **Resolved** — hysteresis now has ordered, distinct entry and clear thresholds, a clear dwell, and latched revocation/re-arm behavior (`223–224, 321–333, 382`).
+
+14. **Resolved** — the report withdraws the “always revokes first” guarantee and distinguishes Case A from Case B (`.orchestration/reports/U-S1.md:14–25`).
+
+### NEW findings
+
+- **Blocker — high confidence — `docs/design/SAFETY_CASE.md:190–205, 309–315, 384, 411–413`**  
+  The document still asserts that silence on `GPS_INPUT` causes ArduPilot, at 4000 ms, to take a configured “non-manoeuvre GPS-failsafe” action and thereby bounds authority. `GPS_TIMEOUT_MS` is a GPS-backend data timeout; the document provides no evidence that Rover treats it as a dedicated control-authority timeout or immediately changes mode/actuation. Official Rover failsafe documentation describes radio, battery and GCS failsafes, while GPS loss affects position/EKF availability and behavior depends on mode, EKF state and configuration—not simply on this backend timeout. Calling the action bounded while merely marking the parameters `[UNVERIFIED]` remains an asserted central safety mechanism. [ArduPilot Rover failsafes](https://ardupilot.org/rover/docs/rover-failsafes.html)  
+  **How to verify:** On the pinned Rover firmware, stop only `GPS_INPUT` in every intended autonomous mode. Record GPS backend status, EKF source/validity, mode, navigation demand, servo outputs and RC override from last input through at least 10 seconds. Identify the exact source path and parameters producing any transition. Until proven, describe Case B as uncontrolled by the current design rather than as a bounded non-manoeuvre handoff.
+
+- **Major — high confidence — `docs/design/SAFETY_CASE.md:6–8, 255–258, 306–312`; `docs/design/DESIGN_BASELINE.md:146`**  
+  The subordinate safety case correctly says an in-process watchdog cannot handle companion process death, but the governing baseline still requires that watchdog to expire authority on a companion process stall. Thus the documents remain normatively inconsistent; under the safety case’s own precedence rule, the erroneous baseline claim governs.  
+  **How to verify:** Revise/approve the baseline to distinguish estimator-only stall, live-supervisor failure, whole-process death and board/power loss, then trace each class to an independently executing responder and test.
+
+- **Major — high confidence — `docs/design/SAFETY_CASE.md:218–239`**  
+  The state machine claims complete edge coverage but omits multiple state/event combinations and race precedence. This could yield implementation-dependent alarm, latch or re-arm behavior.  
+  **How to verify:** Produce a total state/event matrix for every state and every G1–G4 edge, ACK, arm/re-arm and simultaneous event; define priority and prove every cell has exactly one next state, authority result and annunciation.
+
+**FAIL**

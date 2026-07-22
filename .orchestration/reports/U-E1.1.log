@@ -1,0 +1,702 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.5
+--------
+workdir: /home/od/work/leo-pnt-wt-UE1
+model: gpt-5.6-sol
+provider: openai
+approval: on-request
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 019f8ba1-03cc-7993-88bd-475b134a4073
+--------
+user
+You are unit U-E1.1, a fix round on branch unit/U-E1 in this worktree. First run: git fetch . && git merge main --no-edit (bring in latest orchestration state; resolve nothing by deletion — main's versions of orchestration files win). Then read .orchestration/reports/U-E1-review-summary.md and execute every numbered fix item with TDD discipline. Gate: PATH="$HOME/.cargo/bin:$PATH" cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --all -- --check. Update .orchestration/reports/U-E1.md with a disposition line per fix item + real terminal gate output. Commit on this branch; never merge to main.
+codex
+I’ll merge the latest `main` state first, preserving main’s orchestration files if conflicts arise. Then I’ll read the review summary, implement each numbered item test-first, run the full gate, update the report with dispositions and actual output, and commit only on `unit/U-E1`.
+exec
+/bin/bash -lc 'git fetch . && git merge main --no-edit' in /home/od/work/leo-pnt-wt-UE1
+ succeeded in 0ms:
+From .
+ * branch            HEAD       -> FETCH_HEAD
+Merge made by the 'ort' strategy.
+ .orchestration/DECISIONS.md                   |     3 +
+ .orchestration/PLAN.md                        |    12 +-
+ .orchestration/reports/U-C1.log               | 29324 ++++++++++++++
+ .orchestration/reports/U-D1.1.log             |  3726 ++
+ .orchestration/reports/U-E1-review-summary.md |    11 +
+ .orchestration/reports/U-E1.log               | 23053 +++++++++++
+ .orchestration/reports/U-F1-review-opus.md    |    19 +
+ .orchestration/reports/U-F1.log               | 33018 ++++++++++++++++
+ .orchestration/reports/U-M1.log               | 48513 ++++++++++++++++++++++++
+ .orchestration/reports/U-R1.log               |    19 +-
+ .orchestration/reports/U-R2-debug.log         |   493 +
+ .orchestration/reports/U-R2.stream.jsonl      |   288 +
+ .orchestration/reports/U-R2b.err              |     0
+ .orchestration/reports/U-R2b.out              |   355 +
+ .orchestration/reports/U-S1-review-sol.log    |  2140 ++
+ .orchestration/reports/U-S1-review-sonnet.md  |     8 +
+ .orchestration/reports/U-S1-verify-sol.log    |  1360 +
+ .orchestration/reports/U-S1-verify-sol.md     |    45 +
+ .orchestration/reports/U-S1.md                |    88 +
+ docs/design/DESIGN_BASELINE.md                |     2 +-
+ 20 files changed, 142469 insertions(+), 8 deletions(-)
+ create mode 100644 .orchestration/reports/U-C1.log
+ create mode 100644 .orchestration/reports/U-D1.1.log
+ create mode 100644 .orchestration/reports/U-E1-review-summary.md
+ create mode 100644 .orchestration/reports/U-E1.log
+ create mode 100644 .orchestration/reports/U-F1-review-opus.md
+ create mode 100644 .orchestration/reports/U-F1.log
+ create mode 100644 .orchestration/reports/U-M1.log
+ create mode 100644 .orchestration/reports/U-R2b.err
+ create mode 100644 .orchestration/reports/U-R2b.out
+ create mode 100644 .orchestration/reports/U-S1-review-sol.log
+ create mode 100644 .orchestration/reports/U-S1-review-sonnet.md
+ create mode 100644 .orchestration/reports/U-S1-verify-sol.log
+ create mode 100644 .orchestration/reports/U-S1-verify-sol.md
+ create mode 100644 .orchestration/reports/U-S1.md
+
+codex
+The merge completed cleanly, so no conflict resolution was needed. I’m now mapping each numbered review item to the relevant code and tests before making changes.
+exec
+/bin/bash -lc "sed -n '1,240p' .orchestration/reports/U-E1-review-summary.md && printf '\\n--- report ---\\n' && sed -n '1,240p' .orchestration/reports/U-E1.md && printf '\\n--- status ---\\n' && git status --short && printf '\\n--- files ---\\n' && rg --files -g 'AGENTS.md' -g '"'!target'"' | sort" in /home/od/work/leo-pnt-wt-UE1
+ succeeded in 0ms:
+U-E1 dual review: Opus PASS (8 non-blocking findings), Sonnet FAIL (vacuous GMST test + wrong fixture provenance). Fable arbitration (D18): implementation verified correct by BOTH seats' independent re-derivations; failures are test-integrity defects — the exact decoy-test pattern this project rejects. One fix round U-E1.1, single-seat re-verify, then merge.
+
+Fix list (U-E1.1):
+1. (Sonnet F2) Make gmst_rad testable (pub(crate) or via public API) and assert GMST at J2000 epoch 946728000 ≈ 280.46061837° within stated tolerance; delete the tautological utc.timestamp() assertion; have the rotation test derive its angle from gmst_rad, not a hardcoded FRAC_PI_2 (or keep both: known-angle geometry + known-epoch GMST).
+2. (Sonnet F1) Fix the receiver-fixture provenance: recompute the Copenhagen WGS-84 ECEF properly (expected ≈ [3518304.71, 784390.70, 5244191.85] for 55.6761N 12.5683E h=0 — verify independently) and update value + comment, or replace the comment with the true derivation of the existing value.
+3. (Opus F3) Add a reference-value assertion on EcefState.velocity_mps exercising the ω×r term (e.g. equatorial TEME state at known GMST; assert full 3-vector within tolerance, derivation in comment).
+4. (Opus F2) Add a Vallado deep-propagation case (t=360 min, sat 00005) asserted at 1e-6 km from the sgp4 crate's shipped test_cases.toml values — copy the numbers into the test with provenance comment.
+5. (Opus F1) Switch the ephemeris store to the crate's non-AFSPC (improved) mode for production propagation; keep AFSPC mode ONLY inside the Vallado reference tests; document the accuracy rationale in code + report.
+6. (Sonnet minors) Add literal [UNVERIFIED] tags in the TEME→ECEF doc comment matching the report; add backward-in-time age-gate test; comment the -90.0-rad "mask disabled" sentinel or add a None/disable API; note report evidence is paraphrased (append the real terminal output this round).
+7. (Opus F8) Strengthen ISS end-to-end: assert approach-positive precedes recede-negative ordering; make parses test assert a parsed element (epoch) not just contains(25544).
+Out of scope: F4/F5/F6/F7 (Jacobian output, NED→ECEF conversion, offset semantics, drift sign) — routed to U-I2 handoff, already in the U-E1 report.
+
+--- report ---
+# U-E1 report — ephemeris propagator and Doppler predictor
+
+Built against contract v2 (2026-07-22). The two design documents still display a v1 label;
+the binding v2 additions in `.orchestration/CONTRACTS.md` were applied.
+
+## Changes
+
+- Added `pnt-ephemeris`, a local-file-only TLE and CelesTrak OMM JSON store keyed by NORAD
+  catalogue ID. Both a JSON object and array are accepted. Each entry retains its epoch.
+- Added configurable, typed ephemeris age rejection. The default is six hours, from
+  `docs/design/DESIGN_BASELINE.md` (approximately 0.94 km cited orbit-error datum). The
+  absolute epoch/query separation is gated, including backward propagation.
+- Added SGP4 TEME propagation using `sgp4` 2.4.0 in AFSPC compatibility mode. That selects
+  WGS-72 constants and makes the included Vallado case 00005 comparison identical to the
+  dependency's shipped `tests/test_cases.toml` reference vector.
+- Added TEME-to-ECEF position and velocity conversion and documented its model limits.
+- Added `pnt-predictor` with geometric range, range rate, ECEF line of sight, geocentric
+  elevation/mask, receiver-clock drift, nominal carrier and per-SV nuisance bias.
+  Sign convention is pinned: range rate is `d(range)/dt`; approach is negative range rate,
+  and the first-order received-frequency Doppler is therefore positive.
+- Added an end-to-end fixture test that propagates a real ISS TLE over a fixed Copenhagen
+  receiver, finds a visible pass, and checks the closest-approach sign change, orbital-speed
+  Doppler bound, and ten-second smoothness.
+
+## Dependencies
+
+- `sgp4` 2.4.0
+- `chrono` resolved 0.4.45 (manifest compatibility floor 0.4.43)
+- `serde_json` resolved 1.0.151
+- `thiserror` resolved 2.0.19
+
+No runtime or test code performs network access. Fixtures are under
+`crates/pnt-ephemeris/tests/fixtures/`.
+
+## Models, bounds, and assumptions
+
+- SGP4 uses the crate's AFSPC compatibility path and WGS-72 geopotential. Its included
+  Vallado reference is checked to 1e-6 km position and 1e-9 km/s velocity at epoch. This is
+  an implementation-verification tolerance, not an ephemeris accuracy claim.
+- TEME to Earth-fixed uses the IAU-1982 GMST polynomial/Vallado TEME-to-PEF rotation,
+  constant Earth rotation rate 7.2921150e-5 rad/s, and the corresponding `omega cross r`
+  velocity term. UTC is used as UT1. Since IERS keeps `|UT1-UTC| < 0.9 s`, the stated worst
+  equatorial angular-position contribution is below approximately 420 m. Polar motion,
+  current Earth-orientation parameters, length-of-day variation, and higher-fidelity
+  transformations are omitted.
+- `[UNVERIFIED]` The net TEME-to-ECEF error for the actual deployment epochs has not been
+  validated against an IERS-EOP-aware reference implementation. Omitted polar motion is
+  expected to be metre-scale, but no project-local validation fixture establishes a bound.
+- `[UNVERIFIED]` The baseline's mapping from the six-hour/approximately-0.94-km orbit error
+  to navigation integrity remains unresolved, as the baseline itself states.
+- Elevation is relative to the receiver's geocentric radial direction. This is deliberate
+  and documented; an ellipsoidal geodetic local-up conversion is needed if sub-degree mask
+  accuracy matters.
+- Receiver clock drift is represented as equivalent range rate in m/s. Per-SV nuisance
+  bias is an additive correlation-frequency offset in Hz.
+
+## Integration changes needed from U-I2
+
+No existing crate was modified. U-I2 must add executive ports/adapters for ephemeris query,
+predicted observation, and typed rejection reporting (review finding F7). It must map the
+estimator's receiver clock-drift state into equivalent m/s with the same sign convention,
+create/retire the per-SV per-pass nuisance state, and decide where geodetic elevation/local
+up is supplied. Existing `pnt-types` has no satellite ECEF-state or predicted-Doppler bus
+payload; integration needs those schema decisions without weakening the age gate.
+
+## Evidence
+
+TDD commits:
+
+- `12394a0 test(ephemeris): specify propagation and Doppler contracts` (tests committed
+  before library sources; initial run failed because the crates did not yet exist).
+- `794156a feat(ephemeris): add SGP4 propagation and Doppler prediction`.
+
+Final gate, 2026-07-22:
+
+```text
+$ cargo test
+all workspace tests passed (new tests: pnt-ephemeris 5/5, pnt-predictor 3/3)
+$ cargo clippy --all-targets -- -D warnings
+finished successfully, zero warnings
+$ cargo fmt --all -- --check
+finished successfully
+```
+
+--- status ---
+
+--- files ---
+
+exec
+/bin/bash -lc "rg -n \"gmst_rad|AFSPC|afspc|mask|946728000|25544|Copenhagen|FRAC_PI_2|teme|velocity_mps|age\" crates/pnt-ephemeris crates/pnt-predictor -g '*.rs' -g '*.toml' -g '*.json' && printf '\\n--- ephemeris sources ---\\n' && sed -n '1,280p' crates/pnt-ephemeris/src/lib.rs && printf '\\n--- ephemeris tests ---\\n' && sed -n '1,360p' crates/pnt-ephemeris/tests/*.rs && printf '\\n--- predictor tests ---\\n' && sed -n '1,360p' crates/pnt-predictor/tests/*.rs" in /home/od/work/leo-pnt-wt-UE1
+ succeeded in 0ms:
+crates/pnt-predictor/src/lib.rs:35:    BelowElevationMask { elevation_rad: f64, mask_rad: f64 },
+crates/pnt-predictor/src/lib.rs:51:/// [`PredictError::BelowElevationMask`] when the satellite is below the requested mask.
+crates/pnt-predictor/src/lib.rs:57:    elevation_mask_rad: f64,
+crates/pnt-predictor/src/lib.rs:62:        || !elevation_mask_rad.is_finite()
+crates/pnt-predictor/src/lib.rs:84:    if elevation_rad < elevation_mask_rad {
+crates/pnt-predictor/src/lib.rs:87:            mask_rad: elevation_mask_rad,
+crates/pnt-predictor/Cargo.toml:1:[package]
+crates/pnt-ephemeris/Cargo.toml:1:[package]
+crates/pnt-ephemeris/tests/ephemeris.rs:8:    assert!(tle.contains(25544));
+crates/pnt-ephemeris/tests/ephemeris.rs:9:    assert!(omm.contains(25544));
+crates/pnt-ephemeris/tests/ephemeris.rs:13:fn default_six_hour_age_gate_is_typed() {
+crates/pnt-ephemeris/tests/ephemeris.rs:15:    let epoch = store.epoch(25544).unwrap();
+crates/pnt-ephemeris/tests/ephemeris.rs:17:        .propagate_ecef(25544, epoch + Duration::hours(6))
+crates/pnt-ephemeris/tests/ephemeris.rs:20:        store.propagate_ecef(25544, epoch + Duration::hours(6) + Duration::nanoseconds(1)),
+crates/pnt-ephemeris/tests/ephemeris.rs:31:    let state = store.propagate_teme(5, store.epoch(5).unwrap()).unwrap();
+crates/pnt-ephemeris/tests/ephemeris.rs:45:    let epoch = store.epoch(25544).unwrap();
+crates/pnt-ephemeris/tests/ephemeris.rs:46:    // Fixed WGS-84 ECEF receiver near Copenhagen, independently generated from
+crates/pnt-ephemeris/tests/ephemeris.rs:57:            .propagate_ecef(25544, epoch + Duration::seconds(seconds))
+crates/pnt-ephemeris/tests/ephemeris.rs:62:                velocity_ecef_mps: state.velocity_mps,
+crates/pnt-ephemeris/tests/ephemeris.rs:105:    let state = pnt_ephemeris::teme_to_ecef_at_gmst(
+crates/pnt-ephemeris/tests/ephemeris.rs:108:        core::f64::consts::FRAC_PI_2,
+crates/pnt-ephemeris/tests/fixtures/iss.json:1:[{"OBJECT_NAME":"ISS (ZARYA)","OBJECT_ID":"1998-067A","EPOCH":"2020-07-12T21:16:01.000416","MEAN_MOTION":15.49507896,"ECCENTRICITY":0.0001413,"INCLINATION":51.6461,"RA_OF_ASC_NODE":221.2784,"ARG_OF_PERICENTER":89.1723,"MEAN_ANOMALY":280.4612,"EPHEMERIS_TYPE":0,"CLASSIFICATION_TYPE":"U","NORAD_CAT_ID":25544,"ELEMENT_SET_NO":999,"REV_AT_EPOCH":23600,"BSTAR":-0.000031515,"MEAN_MOTION_DOT":-0.00002218,"MEAN_MOTION_DDOT":0.0}]
+crates/pnt-ephemeris/src/lib.rs:1:#![doc = "Local-file OMM/TLE storage, age gating, SGP4 propagation, and TEME-to-ECEF conversion."]
+crates/pnt-ephemeris/src/lib.rs:19:    pub velocity_mps: [f64; 3],
+crates/pnt-ephemeris/src/lib.rs:32:    #[error("ephemeris for satellite {norad_id} is too old: {age_seconds:.3}s exceeds {limit_seconds:.3}s")]
+crates/pnt-ephemeris/src/lib.rs:35:        age_seconds: f64,
+crates/pnt-ephemeris/src/lib.rs:48:    max_age: Duration,
+crates/pnt-ephemeris/src/lib.rs:108:            // AFSPC compatibility mode (WGS-72 constants) is selected so results are
+crates/pnt-ephemeris/src/lib.rs:110:            let constants = Constants::from_elements_afspc_compatibility_mode(&element)
+crates/pnt-ephemeris/src/lib.rs:122:            max_age: DEFAULT_MAX_AGE,
+crates/pnt-ephemeris/src/lib.rs:127:    pub fn with_max_age(mut self, max_age: Duration) -> Self {
+crates/pnt-ephemeris/src/lib.rs:128:        self.max_age = max_age;
+crates/pnt-ephemeris/src/lib.rs:142:    /// Propagates the requested satellite to a TEME state after enforcing the age gate.
+crates/pnt-ephemeris/src/lib.rs:146:    pub fn propagate_teme(
+crates/pnt-ephemeris/src/lib.rs:155:        self.check_age(norad_id, entry.elements.datetime, query.naive_utc())?;
+crates/pnt-ephemeris/src/lib.rs:162:            .propagate_afspc_compatibility_mode(minutes)
+crates/pnt-ephemeris/src/lib.rs:173:    /// Returns the same typed errors as [`Self::propagate_teme`].
+crates/pnt-ephemeris/src/lib.rs:179:        let teme = self.propagate_teme(norad_id, query)?;
+crates/pnt-ephemeris/src/lib.rs:180:        Ok(teme_to_ecef_at_gmst(
+crates/pnt-ephemeris/src/lib.rs:181:            teme.position_km,
+crates/pnt-ephemeris/src/lib.rs:182:            teme.velocity_kmps,
+crates/pnt-ephemeris/src/lib.rs:183:            gmst_rad(query),
+crates/pnt-ephemeris/src/lib.rs:187:    fn check_age(
+crates/pnt-ephemeris/src/lib.rs:193:        let age = query.signed_duration_since(epoch).abs();
+crates/pnt-ephemeris/src/lib.rs:194:        if age > self.max_age {
+crates/pnt-ephemeris/src/lib.rs:195:            let age_seconds = age
+crates/pnt-ephemeris/src/lib.rs:199:                .max_age
+crates/pnt-ephemeris/src/lib.rs:204:                age_seconds,
+crates/pnt-ephemeris/src/lib.rs:218:pub fn teme_to_ecef_at_gmst(
+crates/pnt-ephemeris/src/lib.rs:234:        velocity_mps: [
+crates/pnt-ephemeris/src/lib.rs:242:fn gmst_rad(time: DateTime<Utc>) -> f64 {
+crates/pnt-predictor/tests/predictor.rs:24:    assert!((p.elevation_rad - core::f64::consts::FRAC_PI_2).abs() < 2e-8);
+crates/pnt-predictor/tests/predictor.rs:43:fn elevation_mask_rejects_below_horizon() {
+
+--- ephemeris sources ---
+#![doc = "Local-file OMM/TLE storage, age gating, SGP4 propagation, and TEME-to-ECEF conversion."]
+
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use sgp4::{Constants, Elements};
+use std::{collections::HashMap, fs, path::Path};
+
+pub const DEFAULT_MAX_AGE: Duration = Duration::hours(6);
+const EARTH_ROTATION_RAD_S: f64 = 7.292_115_0e-5;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TemeState {
+    pub position_km: [f64; 3],
+    pub velocity_kmps: [f64; 3],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EcefState {
+    pub position_m: [f64; 3],
+    pub velocity_mps: [f64; 3],
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EphemerisError {
+    #[error("failed to read local ephemeris: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("invalid OMM JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("invalid ephemeris record: {0}")]
+    Parse(String),
+    #[error("satellite {0} is not in the ephemeris store")]
+    Missing(u64),
+    #[error("ephemeris for satellite {norad_id} is too old: {age_seconds:.3}s exceeds {limit_seconds:.3}s")]
+    TooOld {
+        norad_id: u64,
+        age_seconds: f64,
+        limit_seconds: f64,
+    },
+    #[error("SGP4 propagation failed: {0}")]
+    Propagation(String),
+}
+
+struct Entry {
+    elements: Elements,
+    constants: Constants,
+}
+pub struct EphemerisStore {
+    entries: HashMap<u64, Entry>,
+    max_age: Duration,
+}
+
+impl EphemerisStore {
+    /// Reads and parses one or more named or unnamed TLE records from a local file.
+    ///
+    /// # Errors
+    /// Returns an I/O or typed parse error; this function performs no network access.
+    pub fn from_tle_file(path: impl AsRef<Path>) -> Result<Self, EphemerisError> {
+        Self::from_tle_str(&fs::read_to_string(path)?)
+    }
+
+    /// Parses one or more named or unnamed TLE records.
+    ///
+    /// # Errors
+    /// Returns [`EphemerisError::Parse`] for malformed or incomplete records.
+    pub fn from_tle_str(text: &str) -> Result<Self, EphemerisError> {
+        let records: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        let mut elements = Vec::new();
+        let mut index = 0;
+        while index < records.len() {
+            let (name, row_a, row_b, consumed) = if records[index].starts_with("1 ") {
+                (None, records[index], records.get(index + 1), 2)
+            } else {
+                (
+                    Some(records[index].trim_start_matches("0 ").to_owned()),
+                    *records
+                        .get(index + 1)
+                        .ok_or_else(|| EphemerisError::Parse("TLE line 1 missing".into()))?,
+                    records.get(index + 2),
+                    3,
+                )
+            };
+            let row_b = row_b.ok_or_else(|| EphemerisError::Parse("TLE line 2 missing".into()))?;
+            elements.push(
+                Elements::from_tle(name, row_a.as_bytes(), row_b.as_bytes())
+                    .map_err(|e| EphemerisError::Parse(e.to_string()))?,
+            );
+            index += consumed;
+        }
+        Self::from_elements(elements)
+    }
+
+    /// Reads a `CelesTrak` OMM JSON object or array from a local file.
+    ///
+    /// # Errors
+    /// Returns an I/O, JSON, or orbital-element validation error.
+    pub fn from_omm_json_file(path: impl AsRef<Path>) -> Result<Self, EphemerisError> {
+        let text = fs::read_to_string(path)?;
+        let elements = serde_json::from_str::<Vec<Elements>>(&text)
+            .or_else(|_| serde_json::from_str::<Elements>(&text).map(|one| vec![one]))?;
+        Self::from_elements(elements)
+    }
+
+    fn from_elements(elements: Vec<Elements>) -> Result<Self, EphemerisError> {
+        let mut entries = HashMap::new();
+        for element in elements {
+            // AFSPC compatibility mode (WGS-72 constants) is selected so results are
+            // directly traceable to the Vallado reference vectors shipped by sgp4.
+            let constants = Constants::from_elements_afspc_compatibility_mode(&element)
+                .map_err(|e| EphemerisError::Parse(e.to_string()))?;
+            entries.insert(
+                element.norad_id,
+                Entry {
+                    elements: element,
+                    constants,
+                },
+            );
+        }
+        Ok(Self {
+            entries,
+            max_age: DEFAULT_MAX_AGE,
+        })
+    }
+
+    #[must_use]
+    pub fn with_max_age(mut self, max_age: Duration) -> Self {
+        self.max_age = max_age;
+        self
+    }
+    #[must_use]
+    pub fn contains(&self, norad_id: u64) -> bool {
+        self.entries.contains_key(&norad_id)
+    }
+    #[must_use]
+    pub fn epoch(&self, norad_id: u64) -> Option<DateTime<Utc>> {
+        self.entries
+            .get(&norad_id)
+            .map(|entry| DateTime::from_naive_utc_and_offset(entry.elements.datetime, Utc))
+    }
+
+    /// Propagates the requested satellite to a TEME state after enforcing the age gate.
+    ///
+    /// # Errors
+    /// Returns a missing-satellite, stale-ephemeris, time-conversion, or SGP4 error.
+    pub fn propagate_teme(
+        &self,
+        norad_id: u64,
+        query: DateTime<Utc>,
+    ) -> Result<TemeState, EphemerisError> {
+        let entry = self
+            .entries
+            .get(&norad_id)
+            .ok_or(EphemerisError::Missing(norad_id))?;
+        self.check_age(norad_id, entry.elements.datetime, query.naive_utc())?;
+        let minutes = entry
+            .elements
+            .datetime_to_minutes_since_epoch(&query.naive_utc())
+            .map_err(|e| EphemerisError::Propagation(e.to_string()))?;
+        let prediction = entry
+            .constants
+            .propagate_afspc_compatibility_mode(minutes)
+            .map_err(|e| EphemerisError::Propagation(e.to_string()))?;
+        Ok(TemeState {
+            position_km: prediction.position,
+            velocity_kmps: prediction.velocity,
+        })
+    }
+
+    /// Propagates the requested satellite and converts its state to ECEF.
+    ///
+    /// # Errors
+    /// Returns the same typed errors as [`Self::propagate_teme`].
+    pub fn propagate_ecef(
+        &self,
+        norad_id: u64,
+        query: DateTime<Utc>,
+    ) -> Result<EcefState, EphemerisError> {
+        let teme = self.propagate_teme(norad_id, query)?;
+        Ok(teme_to_ecef_at_gmst(
+            teme.position_km,
+            teme.velocity_kmps,
+            gmst_rad(query),
+        ))
+    }
+
+    fn check_age(
+        &self,
+        norad_id: u64,
+        epoch: NaiveDateTime,
+        query: NaiveDateTime,
+    ) -> Result<(), EphemerisError> {
+        let age = query.signed_duration_since(epoch).abs();
+        if age > self.max_age {
+            let age_seconds = age
+                .to_std()
+                .map_or(f64::INFINITY, |value| value.as_secs_f64());
+            let limit_seconds = self
+                .max_age
+                .to_std()
+                .map_or(0.0, |value| value.as_secs_f64());
+            return Err(EphemerisError::TooOld {
+                norad_id,
+                age_seconds,
+                limit_seconds,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Rotates TEME into an Earth-fixed frame using the IAU-1982 GMST expression and constant
+/// Earth angular velocity, following Vallado's TEME-to-PEF method. Polar motion, DUT1,
+/// precession/nutation corrections, and length-of-day variation are omitted. With UTC used
+/// as UT1, the IERS bound |UT1-UTC| < 0.9 s implies <420 m equatorial rotation error; omitted
+/// polar motion is normally metre-scale. This is therefore not a precision EOP transform.
+#[must_use]
+pub fn teme_to_ecef_at_gmst(
+    position_km: [f64; 3],
+    velocity_kmps: [f64; 3],
+    gmst: f64,
+) -> EcefState {
+    let (sin, cos) = gmst.sin_cos();
+    let rotate = |v: [f64; 3]| [cos * v[0] + sin * v[1], -sin * v[0] + cos * v[1], v[2]];
+    let r = rotate(position_km).map(|x| x * 1000.0);
+    let inertial_v = rotate(velocity_kmps).map(|x| x * 1000.0);
+    let omega_cross_r = [
+        -EARTH_ROTATION_RAD_S * r[1],
+        EARTH_ROTATION_RAD_S * r[0],
+        0.0,
+    ];
+    EcefState {
+        position_m: r,
+        velocity_mps: [
+            inertial_v[0] - omega_cross_r[0],
+            inertial_v[1] - omega_cross_r[1],
+            inertial_v[2],
+        ],
+    }
+}
+
+fn gmst_rad(time: DateTime<Utc>) -> f64 {
+    let whole_days = i32::try_from(time.timestamp().div_euclid(86_400))
+        .expect("supported chrono dates fit in i32 Unix days");
+    let day_seconds = i32::try_from(time.timestamp().rem_euclid(86_400))
+        .expect("seconds within a day fit in i32");
+    let unix_days = f64::from(whole_days)
+        + (f64::from(day_seconds) + f64::from(time.timestamp_subsec_nanos()) / 1e9) / 86_400.0;
+    let jd = 2_440_587.5 + unix_days;
+    let t = (jd - 2_451_545.0) / 36_525.0;
+    let degrees = 280.460_618_37 + 360.985_647_366_29 * (jd - 2_451_545.0) + 0.000_387_933 * t * t
+        - t * t * t / 38_710_000.0;
+    degrees.to_radians().rem_euclid(core::f64::consts::TAU)
+}
+
+--- ephemeris tests ---
+use chrono::{Duration, TimeZone, Utc};
+use pnt_ephemeris::{EphemerisError, EphemerisStore};
+
+#[test]
+fn parses_local_tle_and_omm_json() {
+    let tle = EphemerisStore::from_tle_file("tests/fixtures/iss.tle").unwrap();
+    let omm = EphemerisStore::from_omm_json_file("tests/fixtures/iss.json").unwrap();
+    assert!(tle.contains(25544));
+    assert!(omm.contains(25544));
+}
+
+#[test]
+fn default_six_hour_age_gate_is_typed() {
+    let store = EphemerisStore::from_tle_file("tests/fixtures/iss.tle").unwrap();
+    let epoch = store.epoch(25544).unwrap();
+    assert!(store
+        .propagate_ecef(25544, epoch + Duration::hours(6))
+        .is_ok());
+    assert!(matches!(
+        store.propagate_ecef(25544, epoch + Duration::hours(6) + Duration::nanoseconds(1)),
+        Err(EphemerisError::TooOld { .. })
+    ));
+}
+
+#[test]
+fn vallado_reference_vector_case_00005() {
+    // Vallado et al. SGP4 verification case 00005, t=0 min (SGP4-VER.TLE/tcppver.out).
+    // Values are TEME km and km/s, not produced by this crate.
+    let tle = "0 VANGUARD 1\n1 00005U 58002B   00179.78495062  .00000023  00000-0  28098-4 0  4753\n2 00005  34.2682 348.7242 1859667 331.7664  19.3264 10.82419157413667\n";
+    let store = EphemerisStore::from_tle_str(tle).unwrap();
+    let state = store.propagate_teme(5, store.epoch(5).unwrap()).unwrap();
+    let expected_p = [7_022.465_292_66, -1_400.082_967_55, 0.039_951_55];
+    let expected_v = [1.893_841_015, 6.405_893_759, 4.534_807_250];
+    for i in 0..3 {
+        assert!((state.position_km[i] - expected_p[i]).abs() < 1e-6);
+        assert!((state.velocity_kmps[i] - expected_v[i]).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn real_ephemeris_produces_sane_doppler_pass() {
+    use pnt_predictor::{predict, ReceiverState, SatelliteState};
+
+    let store = EphemerisStore::from_tle_file("tests/fixtures/iss.tle").unwrap();
+    let epoch = store.epoch(25544).unwrap();
+    // Fixed WGS-84 ECEF receiver near Copenhagen, independently generated from
+    // geodetic (55.6761 N, 12.5683 E, 0 m) using the standard ellipsoid equations.
+    let receiver = ReceiverState {
+        position_ecef_m: [3_506_268.0, 781_619.0, 5_252_986.0],
+        velocity_ecef_mps: [0.0; 3],
+        clock_drift_mps: 0.0,
+    };
+    let carrier = 1_600_000_000.0;
+    let mut passes = vec![Vec::new()];
+    for seconds in (-21_600..=21_600).step_by(10) {
+        let state = store
+            .propagate_ecef(25544, epoch + Duration::seconds(seconds))
+            .unwrap();
+        if let Ok(prediction) = predict(
+            SatelliteState {
+                position_ecef_m: state.position_m,
+                velocity_ecef_mps: state.velocity_mps,
+            },
+            receiver,
+            0.0,
+            carrier,
+            0.0,
+        ) {
+            let needs_new = passes
+                .last()
+                .and_then(|pass| pass.last())
+                .is_some_and(|(previous, _)| seconds - previous > 10);
+            if needs_new {
+                passes.push(Vec::new());
+            }
+            passes.last_mut().unwrap().push((seconds, prediction));
+        }
+    }
+    let pass = passes
+        .iter()
+        .find(|pass| {
+            pass.iter().any(|(_, p)| p.correlation_peak_hz > 0.0)
+                && pass.iter().any(|(_, p)| p.correlation_peak_hz < 0.0)
+        })
+        .expect("expected a sign-changing visible pass");
+    assert!(
+        pass.len() > 10,
+        "expected a visible pass in the 12-hour gate window"
+    );
+    assert!(pass.iter().any(|(_, p)| p.correlation_peak_hz > 0.0));
+    assert!(pass.iter().any(|(_, p)| p.correlation_peak_hz < 0.0));
+    // ISS orbital speed is below 8 km/s; |f*v/c| < 42.7 kHz at 1.6 GHz.
+    assert!(pass
+        .iter()
+        .all(|(_, p)| p.correlation_peak_hz.abs() < 43_000.0));
+    // Ten-second samples cannot jump by 5 kHz in a physical LEO pass.
+    assert!(pass
+        .windows(2)
+        .all(|w| (w[1].1.correlation_peak_hz - w[0].1.correlation_peak_hz).abs() < 5_000.0));
+}
+
+#[test]
+fn ecef_rotation_has_known_quarter_turn_geometry() {
+    let utc = Utc.timestamp_opt(946_728_000, 0).unwrap(); // J2000 instant
+    let state = pnt_ephemeris::teme_to_ecef_at_gmst(
+        [1.0, 0.0, 0.0],
+        [0.0; 3],
+        core::f64::consts::FRAC_PI_2,
+    );
+    assert!(state.position_m[0].abs() < 1e-9);
+    assert!((state.position_m[1] + 1000.0).abs() < 1e-9);
+    assert_eq!(utc.timestamp(), 946_728_000);
+}
+
+--- predictor tests ---
+use pnt_predictor::{predict, PredictError, ReceiverState, SatelliteState};
+
+const C_MPS: f64 = 299_792_458.0;
+
+#[test]
+fn approaching_is_positive_doppler() {
+    let sat = SatelliteState {
+        position_ecef_m: [20_000_000.0, 0.0, 0.0],
+        velocity_ecef_mps: [-1_000.0, 0.0, 0.0],
+    };
+    let rx = ReceiverState {
+        position_ecef_m: [6_400_000.0, 0.0, 0.0],
+        velocity_ecef_mps: [0.0; 3],
+        clock_drift_mps: 0.0,
+    };
+    let p = predict(sat, rx, 0.0, 1_500_000_000.0, -90.0).unwrap();
+    // Independently: rho_dot = LOS dot (v_sat-v_rx) = -1000 m/s and
+    // received Doppler = -f*rho_dot/c = +5003.461... Hz.
+    assert!((p.range_rate_mps + 1_000.0).abs() < 1e-12);
+    assert!((p.correlation_peak_hz - 1_500_000_000.0 * 1_000.0 / C_MPS).abs() < 1e-9);
+    assert!((p.line_of_sight_ecef[0] - 1.0).abs() < 1e-15);
+    assert_eq!(&p.line_of_sight_ecef[1..], &[0.0, 0.0]);
+    assert!((p.range_m - 13_600_000.0).abs() < 1e-9);
+    assert!((p.elevation_rad - core::f64::consts::FRAC_PI_2).abs() < 2e-8);
+}
+
+#[test]
+fn clock_and_nuisance_terms_are_additive_frequency_offsets() {
+    let sat = SatelliteState {
+        position_ecef_m: [7_000_000.0, 0.0, 0.0],
+        velocity_ecef_mps: [0.0; 3],
+    };
+    let rx = ReceiverState {
+        position_ecef_m: [6_000_000.0, 0.0, 0.0],
+        velocity_ecef_mps: [0.0; 3],
+        clock_drift_mps: 2.0,
+    };
+    let p = predict(sat, rx, 7.0, C_MPS, 0.0).unwrap();
+    assert!((p.correlation_peak_hz - 5.0).abs() < 1e-12);
+}
+
+#[test]
+fn elevation_mask_rejects_below_horizon() {
+    let sat = SatelliteState {
+        position_ecef_m: [-7_000_000.0, 0.0, 0.0],
+        velocity_ecef_mps: [0.0; 3],
+    };
+    let rx = ReceiverState {
+        position_ecef_m: [6_000_000.0, 0.0, 0.0],
+        velocity_ecef_mps: [0.0; 3],
+        clock_drift_mps: 0.0,
+    };
+    assert!(matches!(
+        predict(sat, rx, 0.0, 1.0, 0.0),
+        Err(PredictError::BelowElevationMask { .. })
+    ));
+}
+
+exec
+/bin/bash -lc "rg -n \"from_elements\\(|propagate\\(|360\\.000000|360.0\" ~/.cargo/registry/src -g '*.rs' -g 'test_cases.toml' | rg 'sgp4-2\\.4\\.0|00005|360\\.000000' | head -120" in /home/od/work/leo-pnt-wt-UE1
+ succeeded in 0ms:
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:10:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:121:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:251:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:381:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:575:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:615:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:745:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:887:        time = 3360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:952:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1203:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1332:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1401:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1555:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1669:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1774:        time = -360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1804:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1868:        time = 9360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:1898:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2028:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2060:        velocity = [-2.798936020, -6.889265977, 0.472770873]
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2157:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2229:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2299:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2369:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2573:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2613:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:2682:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:3179:        time = 360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/test_cases.toml:3429:        time = 1360.0
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/tests/propagate.rs:6:fn propagate() -> anyhow::Result<()> {
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/advanced.rs:7:    let constants = sgp4::Constants::from_elements(&elements)?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/celestrak.rs:9:        let constants = sgp4::Constants::from_elements(elements)?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/celestrak.rs:12:            let prediction = constants.propagate(sgp4::MinutesSinceEpoch((hours * 60) as f64))?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/tle.rs:7:    let constants = sgp4::Constants::from_elements(&elements)?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/tle.rs:10:        let prediction = constants.propagate(sgp4::MinutesSinceEpoch((hours * 60) as f64))?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/space-track.rs:10:        let constants = sgp4::Constants::from_elements(elements)?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/space-track.rs:13:            let prediction = constants.propagate(sgp4::MinutesSinceEpoch((hours * 60) as f64))?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/omm.rs:23:    let constants = sgp4::Constants::from_elements(&elements)?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/examples/omm.rs:26:        let prediction = constants.propagate(sgp4::MinutesSinceEpoch((hours * 60) as f64))?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/deep_space.rs:278:        (4.5236020 - 9.2422029e-4 * d1900) % (2.0 * core::f64::consts::PI);
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/lib.rs:22://!         let constants = sgp4::Constants::from_elements(elements)?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/lib.rs:25://!             let prediction = constants.propagate(sgp4::MinutesSinceEpoch((hours * 60) as f64))?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/lib.rs:479:    /// let constants = sgp4::Constants::from_elements(
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/lib.rs:489:    pub fn from_elements(elements: &Elements) -> core::result::Result<Self, ElementsError> {
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/lib.rs:602:    /// let constants = sgp4::Constants::from_elements(&elements)?;
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/lib.rs:828:    /// let prediction = constants.propagate(sgp4::MinutesSinceEpoch(60.0 * 24.0));
+/home/od/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sgp4-2.4.0/src/lib.rs:832:    pub fn propagate(&self, t: MinutesSinceEpoch) -> core::result::Result<Prediction, gp::Error> {
+

@@ -48511,3 +48511,3030 @@ index 0000000000000000000000000000000000000000..e7cbe1cb93aefeea1dd11e9a2b8fa73b
 
 codex
 The stricter rerun proves the external feed is active: `GPS_RAW_INT` repeatedly shows fix type 3 and exactly 800 mm horizontal accuracy, and reported position is within 0.08 m. EKF nevertheless remains in constant-position mode (`flags=167`), so acceptance is still not claimed. I found one mapping-policy issue that can explain this: I was encoding `vd=0` but simultaneously telling ArduPilot to ignore it; the baseline requires publishing zero vertical velocity. I’m correcting that contradiction and doing one final live probe.
+apply patch
+patch: completed
+/home/od/work/leo-pnt-wt-UM1/tools/mavlink_bridge/README.md
+/home/od/work/leo-pnt-wt-UM1/tools/mavlink_bridge/mavlink_bridge/mapping.py
+/home/od/work/leo-pnt-wt-UM1/tools/mavlink_bridge/tests/test_mapping.py
+diff --git a/tools/mavlink_bridge/README.md b/tools/mavlink_bridge/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2a4d2f7c5242398368ac3de8d997d94f3a49035c
+--- /dev/null
++++ b/tools/mavlink_bridge/README.md
+@@ -0,0 +1,60 @@
++# MAVLink GPS_INPUT bridge
++
++This Python 3 package consumes one JSON object per line on standard input and emits
++MAVLink 2 `GPS_INPUT` (message 232) at 5 Hz. It uses `pymavlink` 2.4.43 for transport and
++`pymap3d` 3.2.0 for WGS 84 (EPSG:4978 ECEF to EPSG:4979 geodetic) conversion. The ECEF
++ellipsoid height is deliberately discarded: `alt` is the estimator's separate
++MSL-constrained `msl_alt_m` value. Velocity is NED and `vd` is always zero.
++
++The [MAVLink common message specification](https://mavlink.io/en/messages/common.html#GPS_INPUT)
++defines `yaw` as clockwise from Earth north in centidegrees: zero means unavailable and
++36000 must represent north. This bridge uses 65535 when a configured heading is temporarily
++unavailable, as prescribed by the current extension-field definition. ArduPilot documents
++that [GPS1_TYPE must be 14](https://ardupilot.org/mavproxy/docs/modules/GPSInput.html).
++
++## Input schema
++
++Every line has this exact shape (JSON numbers must be finite):
++
++```json
++{
++  "monotonic_ns": 123456789000,
++  "state": {
++    "position_ecef_m": [-4479000.0, 2670000.0, -3660000.0],
++    "horizontal_velocity_ned_mps": [1.0, 0.0],
++    "heading_rad": 0.0,
++    "receiver_clock_bias_m": 0.0,
++    "receiver_clock_drift_mps": 0.0
++  },
++  "steering_authorised": true,
++  "horiz_accuracy_m": 0.8,
++  "speed_accuracy_mps": 0.1,
++  "vert_accuracy_m": 1.5,
++  "msl_alt_m": 584.0
++}
++```
++
++The first three fields mirror v2 `SolutionEpoch` and all five `FilterState` members are
++carried in the JSON contract (the bridge currently needs position, horizontal velocity and
++heading). `heading_rad` may be `null`. The three positive accuracy fields and MSL altitude
++extend the current Rust type pending the estimator unit; all are required. Accuracy means
++a one-standard-deviation bound in the units named by the field.
++
++Fresh authorised epochs claim fix type 3. After 1 second without a new epoch the repeated
++fill degrades to fix type 2; after 3 seconds it reports no fix, ignores horizontal velocity,
++and marks yaw unavailable. A revoked `steering_authorised` value reports no fix immediately.
++Horizontal and vertical position accuracy grow by 2 m/s of age and speed accuracy by
++0.25 m/s per second of age. Publication itself continues, preventing transport silence;
++the default 5 Hz interval is far inside the baseline's estimated 4-second timeout.
++HDOP/VDOP are ignored. Vertical velocity is supplied as zero, exactly as required by the
++baseline. `ODOMETRY` is never emitted.
++
++## Run and test
++
++```sh
++DISABLE_MAVNATIVE=1 tools/.venv/bin/pip install -e tools/mavlink_bridge
++tools/.venv/bin/pytest tools/mavlink_bridge
++tools/.venv/bin/ruff check tools/mavlink_bridge
++tools/.venv/bin/python -m mavlink_bridge.synthetic --realtime --duration 30 |
++  tools/.venv/bin/python -m mavlink_bridge.cli --connect udpout:127.0.0.1:14550 --stop-after-eof 4
++```
+diff --git a/tools/mavlink_bridge/mavlink_bridge/__init__.py b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8153c35c8375b57ab98cbe200dc3d7bbb936b823
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+@@ -0,0 +1,6 @@
++"""LEO PNT SolutionEpoch to MAVLink GPS_INPUT bridge."""
++
++from .mapping import GpsInput, SolutionEpoch, map_epoch
++
++__all__ = ["GpsInput", "SolutionEpoch", "map_epoch"]
++
+diff --git a/tools/mavlink_bridge/mavlink_bridge/cli.py b/tools/mavlink_bridge/mavlink_bridge/cli.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..61b8566245297d0a33e475c9ddeebefe5da375cd
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/cli.py
+@@ -0,0 +1,67 @@
++from __future__ import annotations
++
++import argparse
++import json
++import selectors
++import sys
++import time
++
++from pymavlink import mavutil
++
++from .mapping import SolutionEpoch, map_epoch
++
++
++def parser() -> argparse.ArgumentParser:
++    result = argparse.ArgumentParser(description="Publish JSON SolutionEpoch lines as GPS_INPUT")
++    result.add_argument("--connect", default="udpout:127.0.0.1:14550")
++    result.add_argument("--rate-hz", type=float, default=5.0)
++    result.add_argument("--gps-id", type=int, default=0)
++    result.add_argument("--stop-after-eof", type=float, metavar="SECONDS")
++    return result
++
++
++def run(args: argparse.Namespace) -> int:
++    if args.rate_hz <= 0:
++        raise ValueError("--rate-hz must be greater than zero")
++    connection = mavutil.mavlink_connection(args.connect, source_system=245, source_component=191)
++    selector = selectors.DefaultSelector()
++    selector.register(sys.stdin, selectors.EVENT_READ)
++    latest = None
++    eof_at = None
++    interval = 1.0 / args.rate_hz
++    next_send = time.monotonic()
++    while True:
++        timeout = max(0.0, next_send - time.monotonic())
++        if eof_at is None:
++            for key, _mask in selector.select(timeout):
++                line = key.fileobj.readline()
++                if line:
++                    try:
++                        latest = SolutionEpoch.from_dict(json.loads(line))
++                    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
++                        print(f"rejected input: {error}", file=sys.stderr)
++                else:
++                    eof_at = time.monotonic()
++                    selector.unregister(sys.stdin)
++        else:
++            time.sleep(min(timeout, 0.02))
++        now = time.monotonic()
++        if now >= next_send:
++            if latest is not None:
++                message = map_epoch(latest, time.monotonic_ns(), args.gps_id)
++                message.send(connection)
++                print(json.dumps(message.__dict__, sort_keys=True), file=sys.stderr, flush=True)
++            next_send += interval
++            if next_send < now:
++                next_send = now + interval
++        if eof_at is not None and args.stop_after_eof is not None:
++            if now - eof_at >= args.stop_after_eof:
++                return 0
++
++
++def main() -> None:
++    raise SystemExit(run(parser().parse_args()))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/mavlink_bridge/mapping.py b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a4a1a675c505dd70b174aac0b6981aa99edd86f4
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+@@ -0,0 +1,142 @@
++"""Pure mapping and staleness policy for MAVLink GPS_INPUT (message 232)."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++import math
++from typing import Any
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++
++NANOSECONDS = 1_000_000_000
++FRESH_NS = NANOSECONDS
++NO_FIX_NS = 3 * NANOSECONDS
++ACCURACY_GROWTH_MPS = 2.0
++SPEED_ACCURACY_GROWTH_MPS2 = 0.25
++
++
++@dataclass(frozen=True)
++class SolutionEpoch:
++    monotonic_ns: int
++    position_ecef_m: tuple[float, float, float]
++    horizontal_velocity_ned_mps: tuple[float, float]
++    heading_rad: float | None
++    steering_authorised: bool
++    horiz_accuracy_m: float
++    speed_accuracy_mps: float
++    vert_accuracy_m: float
++    msl_alt_m: float
++
++    @classmethod
++    def from_dict(cls, value: dict[str, Any]) -> SolutionEpoch:
++        state = value["state"]
++        epoch = cls(
++            monotonic_ns=int(value["monotonic_ns"]),
++            position_ecef_m=_vector(state["position_ecef_m"], 3, "position_ecef_m"),
++            horizontal_velocity_ned_mps=_vector(
++                state["horizontal_velocity_ned_mps"], 2, "horizontal_velocity_ned_mps"
++            ),
++            heading_rad=None if state.get("heading_rad") is None else float(state["heading_rad"]),
++            steering_authorised=bool(value["steering_authorised"]),
++            horiz_accuracy_m=float(value["horiz_accuracy_m"]),
++            speed_accuracy_mps=float(value["speed_accuracy_mps"]),
++            vert_accuracy_m=float(value["vert_accuracy_m"]),
++            msl_alt_m=float(value["msl_alt_m"]),
++        )
++        epoch.validate()
++        return epoch
++
++    def validate(self) -> None:
++        scalars = (*self.position_ecef_m, *self.horizontal_velocity_ned_mps, self.msl_alt_m)
++        if not all(math.isfinite(item) for item in scalars):
++            raise ValueError("position, velocity, and altitude must be finite")
++        if self.heading_rad is not None and not math.isfinite(self.heading_rad):
++            raise ValueError("heading_rad must be finite or null")
++        for name in ("horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"):
++            value = getattr(self, name)
++            if not math.isfinite(value) or value <= 0:
++                raise ValueError(f"{name} must be finite and greater than zero")
++
++
++def _vector(value: Any, length: int, name: str) -> tuple:
++    if not isinstance(value, (list, tuple)) or len(value) != length:
++        raise ValueError(f"{name} must contain exactly {length} numbers")
++    return tuple(float(item) for item in value)
++
++
++@dataclass(frozen=True)
++class GpsInput:
++    time_usec: int
++    gps_id: int
++    ignore_flags: int
++    time_week_ms: int
++    time_week: int
++    fix_type: int
++    lat: int
++    lon: int
++    alt: float
++    hdop: float
++    vdop: float
++    vn: float
++    ve: float
++    vd: float
++    speed_accuracy: float
++    horiz_accuracy: float
++    vert_accuracy: float
++    satellites_visible: int
++    yaw: int
++
++    def send(self, connection: Any) -> None:
++        connection.mav.gps_input_send(**self.__dict__)
++
++
++def encode_yaw(heading_rad: float | None) -> int:
++    """Encode radians clockwise from north as MAVLink centidegrees."""
++    if heading_rad is None:
++        return 65535
++    centidegrees = round(math.degrees(heading_rad) % 360.0 * 100.0)
++    if centidegrees in (0, 36000):
++        return 36000
++    return centidegrees
++
++
++def map_epoch(epoch: SolutionEpoch, now_monotonic_ns: int, gps_id: int = 0) -> GpsInput:
++    epoch.validate()
++    age_ns = max(0, now_monotonic_ns - epoch.monotonic_ns)
++    age_s = age_ns / NANOSECONDS
++    lat_deg, lon_deg, _ellipsoid_alt_m = pm.ecef2geodetic(*epoch.position_ecef_m, deg=True)
++    ignore = (
++        mavlink2.GPS_INPUT_IGNORE_FLAG_HDOP
++        | mavlink2.GPS_INPUT_IGNORE_FLAG_VDOP
++    )
++    fix_type = 3 if epoch.steering_authorised else 1
++    yaw = encode_yaw(epoch.heading_rad)
++    if age_ns > FRESH_NS:
++        fix_type = min(fix_type, 2)
++    if age_ns > NO_FIX_NS:
++        fix_type = 1
++        ignore |= mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++        yaw = 65535
++
++    return GpsInput(
++        time_usec=now_monotonic_ns // 1000,
++        gps_id=gps_id,
++        ignore_flags=ignore,
++        time_week_ms=0,
++        time_week=0,
++        fix_type=fix_type,
++        lat=round(lat_deg * 10_000_000),
++        lon=round(lon_deg * 10_000_000),
++        alt=epoch.msl_alt_m,
++        hdop=65535.0,
++        vdop=65535.0,
++        vn=epoch.horizontal_velocity_ned_mps[0],
++        ve=epoch.horizontal_velocity_ned_mps[1],
++        vd=0.0,
++        speed_accuracy=epoch.speed_accuracy_mps + SPEED_ACCURACY_GROWTH_MPS2 * age_s,
++        horiz_accuracy=epoch.horiz_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        vert_accuracy=epoch.vert_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        satellites_visible=10 if fix_type >= 3 else 0,
++        yaw=yaw,
++    )
+diff --git a/tools/mavlink_bridge/mavlink_bridge/synthetic.py b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..3e89e052d21a55709ac497495901a98052673220
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+@@ -0,0 +1,55 @@
++from __future__ import annotations
++
++import argparse
++import json
++import math
++import time
++
++import pymap3d as pm
++
++
++def generate(lat_deg: float, lon_deg: float, alt_m: float, speed_mps: float, count: int):
++    start_ns = time.monotonic_ns()
++    for index in range(count):
++        elapsed = index / 5.0
++        north_m = speed_mps * elapsed
++        lat, lon, ellipsoid_alt = pm.enu2geodetic(
++            0.0, north_m, 0.0, lat_deg, lon_deg, alt_m, deg=True
++        )
++        ecef = pm.geodetic2ecef(lat, lon, ellipsoid_alt, deg=True)
++        yield {
++            "monotonic_ns": start_ns + round(elapsed * 1_000_000_000),
++            "state": {
++                "position_ecef_m": list(ecef),
++                "horizontal_velocity_ned_mps": [speed_mps, 0.0],
++                "heading_rad": 0.0,
++                "receiver_clock_bias_m": 0.0,
++                "receiver_clock_drift_mps": 0.0,
++            },
++            "steering_authorised": True,
++            "horiz_accuracy_m": 0.8,
++            "speed_accuracy_mps": 0.1,
++            "vert_accuracy_m": 1.5,
++            "msl_alt_m": alt_m,
++        }
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description="Generate a 5 Hz straight north trajectory")
++    parser.add_argument("--lat", type=float, default=-35.363261)
++    parser.add_argument("--lon", type=float, default=149.165230)
++    parser.add_argument("--alt", type=float, default=584.0)
++    parser.add_argument("--speed", type=float, default=1.0)
++    parser.add_argument("--duration", type=float, default=30.0)
++    parser.add_argument("--realtime", action="store_true")
++    args = parser.parse_args()
++    count = math.ceil(args.duration * 5)
++    started = time.monotonic()
++    for index, epoch in enumerate(generate(args.lat, args.lon, args.alt, args.speed, count)):
++        if args.realtime:
++            time.sleep(max(0, started + index / 5.0 - time.monotonic()))
++        print(json.dumps(epoch), flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/pyproject.toml b/tools/mavlink_bridge/pyproject.toml
+new file mode 100644
+index 0000000000000000000000000000000000000000..e9f3deef99fe8b0cb89edede8eda056922c472e3
+--- /dev/null
++++ b/tools/mavlink_bridge/pyproject.toml
+@@ -0,0 +1,23 @@
++[build-system]
++requires = ["setuptools>=68"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "leo-pnt-mavlink-bridge"
++version = "0.1.0"
++requires-python = ">=3.10"
++dependencies = ["pymap3d==3.2.0", "pymavlink==2.4.43"]
++
++[project.scripts]
++leo-pnt-mavlink-bridge = "mavlink_bridge.cli:main"
++leo-pnt-synthetic-trajectory = "mavlink_bridge.synthetic:main"
++
++[tool.setuptools]
++packages = ["mavlink_bridge"]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++
++[tool.ruff]
++line-length = 100
++
+diff --git a/tools/mavlink_bridge/tests/test_mapping.py b/tools/mavlink_bridge/tests/test_mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a08fb1d8ac350d18c80cdf40e2f941ff3ffdaef
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_mapping.py
+@@ -0,0 +1,75 @@
++import math
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch, encode_yaw, map_epoch
++
++
++def epoch(**changes):
++    ecef = pm.geodetic2ecef(51.4778, -0.0014, 45.0, deg=True)
++    values = {
++        "monotonic_ns": 10_000_000_000,
++        "position_ecef_m": tuple(ecef),
++        "horizontal_velocity_ned_mps": (2.5, -1.25),
++        "heading_rad": math.radians(90),
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1.2,
++        "speed_accuracy_mps": 0.15,
++        "vert_accuracy_m": 2.4,
++        "msl_alt_m": 7.5,
++    }
++    values.update(changes)
++    return SolutionEpoch(**values)
++
++
++def test_ecef_is_wgs84_and_altitude_is_explicit_msl():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert message.lat == pytest.approx(51.4778e7, abs=1)
++    assert message.lon == pytest.approx(-0.0014e7, abs=1)
++    assert message.alt == 7.5  # never substitute the 45 m ellipsoid height
++
++
++def test_ned_velocity_accuracy_and_vertical_policy_map_independently():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert (message.vn, message.ve, message.vd) == (2.5, -1.25, 0.0)
++    assert message.horiz_accuracy == 1.2
++    assert message.speed_accuracy == 0.15
++    assert message.vert_accuracy == 2.4
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_VERT
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++
++
++@pytest.mark.parametrize(
++    ("radians", "encoded"),
++    [(0.0, 36000), (2 * math.pi, 36000), (-2 * math.pi, 36000), (math.pi / 2, 9000), (None, 65535)],
++)
++def test_yaw_encoding_including_north_wrap(radians, encoded):
++    assert encode_yaw(radians) == encoded
++
++
++def test_stale_fill_inflates_uncertainty_and_degrades_fix():
++    stale = map_epoch(epoch(), 12_000_000_000)
++    assert stale.fix_type == 2
++    assert stale.horiz_accuracy == pytest.approx(5.2)
++    assert stale.speed_accuracy == pytest.approx(0.65)
++    assert stale.vert_accuracy == pytest.approx(6.4)
++    assert stale.lat == map_epoch(epoch(), 10_000_000_000).lat
++
++
++def test_expired_fill_is_no_fix_and_marks_velocity_and_yaw_unavailable():
++    expired = map_epoch(epoch(), 14_000_000_001)
++    assert expired.fix_type == 1
++    assert expired.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++    assert expired.yaw == 65535
++
++
++def test_revoked_authority_never_claims_a_fix():
++    assert map_epoch(epoch(steering_authorised=False), 10_000_000_000).fix_type == 1
++
++
++@pytest.mark.parametrize("name", ["horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"])
++def test_required_accuracies_must_be_positive(name):
++    with pytest.raises(ValueError, match=name):
++        epoch(**{name: 0.0}).validate()
+diff --git a/tools/mavlink_bridge/tests/test_schema.py b/tools/mavlink_bridge/tests/test_schema.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..01570830aa4a0c387a1be07f102f431f743a0e86
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_schema.py
+@@ -0,0 +1,33 @@
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch
++
++
++def valid_dict():
++    return {
++        "monotonic_ns": 42,
++        "state": {
++            "position_ecef_m": [1, 2, 3],
++            "horizontal_velocity_ned_mps": [4, 5],
++            "heading_rad": 0,
++            "receiver_clock_bias_m": 6,
++            "receiver_clock_drift_mps": 7,
++        },
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1,
++        "speed_accuracy_mps": 2,
++        "vert_accuracy_m": 3,
++        "msl_alt_m": 4,
++    }
++
++
++def test_schema_accepts_solution_epoch_shape():
++    assert SolutionEpoch.from_dict(valid_dict()).horizontal_velocity_ned_mps == (4.0, 5.0)
++
++
++def test_schema_requires_accuracy():
++    value = valid_dict()
++    del value["horiz_accuracy_m"]
++    with pytest.raises(KeyError):
++        SolutionEpoch.from_dict(value)
++
+diff --git a/tools/sitl/.gitignore b/tools/sitl/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..820d2bc4f1bd6ac541035c9daca4cf01131088ee
+--- /dev/null
++++ b/tools/sitl/.gitignore
+@@ -0,0 +1,3 @@
++/ardupilot/
++/evidence/
++
+diff --git a/tools/sitl/README.md b/tools/sitl/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..74544e17de3b1cfd2bb9651dfc1660c7aa195d8e
+--- /dev/null
++++ b/tools/sitl/README.md
+@@ -0,0 +1,27 @@
++# ArduPilot Rover SITL acceptance harness
++
++The harness pins the official ArduPilot `Rover-4.6.3` tag at commit
++`3fc7011a7d3dc047cbb17d8bd98ee94577d144c6`. `build.sh` performs a detached checkout,
++initialises the pinned tree's submodules, builds Rover SITL, and writes the resulting
++binary's SHA-256 to `ardurover.sha256`. The artifact checksum is machine/build dependent,
++so the checked-in report records the checksum observed by this unit rather than claiming a
++universal upstream binary checksum.
++
++Run from the repository root:
++
++```sh
++tools/sitl/build.sh
++tools/sitl/run.sh --duration 45 --speed-mps 0.1 --tolerance-m 10
++```
++
++The runner wipes SITL state, loads and confirms `FRAME_CLASS=2`, `GPS1_TYPE=14`, and
++`GPS2_TYPE=0` at startup, and injects a 5 Hz, 0.1 m/s straight-leg stream through
++the same mapping/send code used by the stdin bridge. It fails unless:
++
++- EKF_STATUS_REPORT has the absolute-horizontal-position bit and not constant-position mode;
++- GLOBAL_POSITION_INT finishes within 10 m of the injected position; and
++- GPS_RAW_INT exposes injected fix type 3 and the injected 0.8 m horizontal accuracy as 800 mm.
++
++Evidence is written to ignored `tools/sitl/evidence/sitl.log` and `mavlink.jsonl`. The
++expected final stdout is one JSON `ACCEPTANCE` record. Until a run succeeds, these outputs
++must be labelled `[UNVERIFIED — not run here]`; the runner never synthesises a passing log.
+diff --git a/tools/sitl/build.sh b/tools/sitl/build.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..091b9a7f9e2bc3fd24e6de5b0476a6353ba323fd
+--- /dev/null
++++ b/tools/sitl/build.sh
+@@ -0,0 +1,22 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++SOURCE_DIR="$SCRIPT_DIR/ardupilot"
++PYTHON="$SCRIPT_DIR/../.venv/bin/python"
++PIN="3fc7011a7d3dc047cbb17d8bd98ee94577d144c6"
++
++if [[ ! -d "$SOURCE_DIR/.git" ]]; then
++    git clone --filter=blob:none --no-checkout https://github.com/ArduPilot/ardupilot.git "$SOURCE_DIR"
++fi
++git -C "$SOURCE_DIR" fetch --depth=1 origin "$PIN"
++git -C "$SOURCE_DIR" checkout --detach "$PIN"
++git -C "$SOURCE_DIR" submodule update --init --recursive --depth=1
++(
++    cd "$SOURCE_DIR"
++    "$PYTHON" ./waf configure --board sitl
++    "$PYTHON" ./waf rover
++)
++ARTIFACT="$SOURCE_DIR/build/sitl/bin/ardurover"
++test -x "$ARTIFACT"
++sha256sum "$ARTIFACT" | tee "$SCRIPT_DIR/ardurover.sha256"
+diff --git a/tools/sitl/params.parm b/tools/sitl/params.parm
+new file mode 100644
+index 0000000000000000000000000000000000000000..8223e0b442c82ba07039b621af20e2092d60bc1d
+--- /dev/null
++++ b/tools/sitl/params.parm
+@@ -0,0 +1,7 @@
++# External MAVLink GPS and Rover boat frame required by U-M1.
++FRAME_CLASS 2
++GPS1_TYPE 14
++GPS2_TYPE 0
++AHRS_EKF_TYPE 3
++EK3_ENABLE 1
++
+diff --git a/tools/sitl/run.sh b/tools/sitl/run.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb073b672d56b08944ba0feb702eeebdb662e260
+--- /dev/null
++++ b/tools/sitl/run.sh
+@@ -0,0 +1,6 @@
++#!/usr/bin/env bash
++set -euo pipefail
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++export PYTHONPATH="$SCRIPT_DIR/../mavlink_bridge${PYTHONPATH:+:$PYTHONPATH}"
++exec "$SCRIPT_DIR/../.venv/bin/python" "$SCRIPT_DIR/run_acceptance.py" "$@"
++
+diff --git a/tools/sitl/run_acceptance.py b/tools/sitl/run_acceptance.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..e7cbe1cb93aefeea1dd11e9a2b8fa73b0d343d28
+--- /dev/null
++++ b/tools/sitl/run_acceptance.py
+@@ -0,0 +1,144 @@
++#!/usr/bin/env python3
++"""Launch pinned Rover SITL, inject bridge messages, and assert observable acceptance."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import math
++from pathlib import Path
++import subprocess
++import sys
++import time
++
++from pymavlink import mavutil
++
++from mavlink_bridge.mapping import map_epoch
++from mavlink_bridge.synthetic import generate
++
++EKF_POS_HORIZ_ABS = 1 << 4
++EKF_CONST_POS_MODE = 1 << 7
++
++
++def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
++    radius = 6_371_008.8
++    p1, p2 = math.radians(lat1), math.radians(lat2)
++    dp = p2 - p1
++    dl = math.radians(lon2 - lon1)
++    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
++    return 2 * radius * math.asin(math.sqrt(a))
++
++
++def set_param(connection, name: str, value: float) -> None:
++    connection.mav.param_set_send(
++        connection.target_system,
++        connection.target_component,
++        name.encode(),
++        value,
++        mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
++    )
++    deadline = time.monotonic() + 8
++    while time.monotonic() < deadline:
++        reply = connection.recv_match(type="PARAM_VALUE", blocking=True, timeout=1)
++        if reply and reply.param_id == name and abs(reply.param_value - value) < 0.01:
++            return
++    raise AssertionError(f"SITL did not confirm {name}={value}")
++
++
++def run(binary: Path, evidence: Path, duration: float, tolerance_m: float, speed_mps: float) -> None:
++    evidence.mkdir(parents=True, exist_ok=True)
++    sitl_log = (evidence / "sitl.log").open("w", encoding="utf-8")
++    process = subprocess.Popen(
++        [
++            str(binary),
++            "--model",
++            "rover",
++            "--speedup",
++            "1",
++            "--wipe",
++            "--defaults",
++            str(Path(__file__).resolve().parent / "params.parm"),
++        ],
++        cwd=evidence,
++        stdout=sitl_log,
++        stderr=subprocess.STDOUT,
++    )
++    records = []
++    try:
++        connection = mavutil.mavlink_connection("tcp:127.0.0.1:5760", source_system=245)
++        if not connection.wait_heartbeat(timeout=30):
++            raise AssertionError("no SITL heartbeat within 30 seconds")
++        for name, value in (("FRAME_CLASS", 2), ("GPS1_TYPE", 14), ("GPS2_TYPE", 0)):
++            set_param(connection, name, value)
++
++        epochs = generate(-35.363261, 149.165230, 584.0, speed_mps, math.ceil(duration * 5))
++        latest_global = None
++        ekf_flags = 0
++        raw_accuracy_seen = False
++        started = time.monotonic()
++        final_epoch = None
++        for index, epoch_dict in enumerate(epochs):
++            deadline = started + index / 5
++            time.sleep(max(0.0, deadline - time.monotonic()))
++            from mavlink_bridge.mapping import SolutionEpoch
++
++            final_epoch = SolutionEpoch.from_dict(epoch_dict)
++            gps = map_epoch(final_epoch, final_epoch.monotonic_ns)
++            gps.send(connection)
++            while True:
++                message = connection.recv_match(blocking=False)
++                if message is None:
++                    break
++                kind = message.get_type()
++                if kind == "GLOBAL_POSITION_INT":
++                    latest_global = (message.lat / 1e7, message.lon / 1e7)
++                elif kind == "EKF_STATUS_REPORT":
++                    ekf_flags = int(message.flags)
++                elif kind == "GPS_RAW_INT":
++                    h_acc = getattr(message, "h_acc", 0)
++                    raw_accuracy_seen |= message.fix_type == 3 and 700 <= h_acc <= 900
++                    records.append({"type": kind, "fix_type": message.fix_type, "h_acc": h_acc})
++        if final_epoch is None or latest_global is None:
++            raise AssertionError("no injected epoch or GLOBAL_POSITION_INT observed")
++        expected = map_epoch(final_epoch, final_epoch.monotonic_ns)
++        error = distance_m(expected.lat / 1e7, expected.lon / 1e7, *latest_global)
++        records.append({"type": "OBSERVED", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        if error > tolerance_m:
++            raise AssertionError(f"position error {error:.2f} m exceeds {tolerance_m:.2f} m")
++        if not (ekf_flags & EKF_POS_HORIZ_ABS) or ekf_flags & EKF_CONST_POS_MODE:
++            raise AssertionError(f"EKF did not report absolute horizontal position: flags={ekf_flags}")
++        if not raw_accuracy_seen:
++            raise AssertionError("GPS_RAW_INT did not expose injected fix_type=3 and h_acc=800 mm")
++        records.append({"type": "ACCEPTANCE", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        print(json.dumps(records[-1], sort_keys=True))
++    finally:
++        process.terminate()
++        try:
++            process.wait(timeout=10)
++        except subprocess.TimeoutExpired:
++            process.kill()
++        sitl_log.close()
++
++
++def main() -> None:
++    here = Path(__file__).resolve().parent
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--binary", type=Path, default=here / "ardupilot/build/sitl/bin/ardurover")
++    parser.add_argument("--evidence", type=Path, default=here / "evidence")
++    parser.add_argument("--duration", type=float, default=45)
++    parser.add_argument("--tolerance-m", type=float, default=10)
++    parser.add_argument("--speed-mps", type=float, default=0.1)
++    args = parser.parse_args()
++    if not args.binary.is_file():
++        sys.exit(f"missing SITL binary: run {here / 'build.sh'} first")
++    run(args.binary, args.evidence, args.duration, args.tolerance_m, args.speed_mps)
++
++
++if __name__ == "__main__":
++    main()
+
+diff --git a/tools/mavlink_bridge/README.md b/tools/mavlink_bridge/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2a4d2f7c5242398368ac3de8d997d94f3a49035c
+--- /dev/null
++++ b/tools/mavlink_bridge/README.md
+@@ -0,0 +1,60 @@
++# MAVLink GPS_INPUT bridge
++
++This Python 3 package consumes one JSON object per line on standard input and emits
++MAVLink 2 `GPS_INPUT` (message 232) at 5 Hz. It uses `pymavlink` 2.4.43 for transport and
++`pymap3d` 3.2.0 for WGS 84 (EPSG:4978 ECEF to EPSG:4979 geodetic) conversion. The ECEF
++ellipsoid height is deliberately discarded: `alt` is the estimator's separate
++MSL-constrained `msl_alt_m` value. Velocity is NED and `vd` is always zero.
++
++The [MAVLink common message specification](https://mavlink.io/en/messages/common.html#GPS_INPUT)
++defines `yaw` as clockwise from Earth north in centidegrees: zero means unavailable and
++36000 must represent north. This bridge uses 65535 when a configured heading is temporarily
++unavailable, as prescribed by the current extension-field definition. ArduPilot documents
++that [GPS1_TYPE must be 14](https://ardupilot.org/mavproxy/docs/modules/GPSInput.html).
++
++## Input schema
++
++Every line has this exact shape (JSON numbers must be finite):
++
++```json
++{
++  "monotonic_ns": 123456789000,
++  "state": {
++    "position_ecef_m": [-4479000.0, 2670000.0, -3660000.0],
++    "horizontal_velocity_ned_mps": [1.0, 0.0],
++    "heading_rad": 0.0,
++    "receiver_clock_bias_m": 0.0,
++    "receiver_clock_drift_mps": 0.0
++  },
++  "steering_authorised": true,
++  "horiz_accuracy_m": 0.8,
++  "speed_accuracy_mps": 0.1,
++  "vert_accuracy_m": 1.5,
++  "msl_alt_m": 584.0
++}
++```
++
++The first three fields mirror v2 `SolutionEpoch` and all five `FilterState` members are
++carried in the JSON contract (the bridge currently needs position, horizontal velocity and
++heading). `heading_rad` may be `null`. The three positive accuracy fields and MSL altitude
++extend the current Rust type pending the estimator unit; all are required. Accuracy means
++a one-standard-deviation bound in the units named by the field.
++
++Fresh authorised epochs claim fix type 3. After 1 second without a new epoch the repeated
++fill degrades to fix type 2; after 3 seconds it reports no fix, ignores horizontal velocity,
++and marks yaw unavailable. A revoked `steering_authorised` value reports no fix immediately.
++Horizontal and vertical position accuracy grow by 2 m/s of age and speed accuracy by
++0.25 m/s per second of age. Publication itself continues, preventing transport silence;
++the default 5 Hz interval is far inside the baseline's estimated 4-second timeout.
++HDOP/VDOP are ignored. Vertical velocity is supplied as zero, exactly as required by the
++baseline. `ODOMETRY` is never emitted.
++
++## Run and test
++
++```sh
++DISABLE_MAVNATIVE=1 tools/.venv/bin/pip install -e tools/mavlink_bridge
++tools/.venv/bin/pytest tools/mavlink_bridge
++tools/.venv/bin/ruff check tools/mavlink_bridge
++tools/.venv/bin/python -m mavlink_bridge.synthetic --realtime --duration 30 |
++  tools/.venv/bin/python -m mavlink_bridge.cli --connect udpout:127.0.0.1:14550 --stop-after-eof 4
++```
+diff --git a/tools/mavlink_bridge/mavlink_bridge/__init__.py b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8153c35c8375b57ab98cbe200dc3d7bbb936b823
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+@@ -0,0 +1,6 @@
++"""LEO PNT SolutionEpoch to MAVLink GPS_INPUT bridge."""
++
++from .mapping import GpsInput, SolutionEpoch, map_epoch
++
++__all__ = ["GpsInput", "SolutionEpoch", "map_epoch"]
++
+diff --git a/tools/mavlink_bridge/mavlink_bridge/cli.py b/tools/mavlink_bridge/mavlink_bridge/cli.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..61b8566245297d0a33e475c9ddeebefe5da375cd
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/cli.py
+@@ -0,0 +1,67 @@
++from __future__ import annotations
++
++import argparse
++import json
++import selectors
++import sys
++import time
++
++from pymavlink import mavutil
++
++from .mapping import SolutionEpoch, map_epoch
++
++
++def parser() -> argparse.ArgumentParser:
++    result = argparse.ArgumentParser(description="Publish JSON SolutionEpoch lines as GPS_INPUT")
++    result.add_argument("--connect", default="udpout:127.0.0.1:14550")
++    result.add_argument("--rate-hz", type=float, default=5.0)
++    result.add_argument("--gps-id", type=int, default=0)
++    result.add_argument("--stop-after-eof", type=float, metavar="SECONDS")
++    return result
++
++
++def run(args: argparse.Namespace) -> int:
++    if args.rate_hz <= 0:
++        raise ValueError("--rate-hz must be greater than zero")
++    connection = mavutil.mavlink_connection(args.connect, source_system=245, source_component=191)
++    selector = selectors.DefaultSelector()
++    selector.register(sys.stdin, selectors.EVENT_READ)
++    latest = None
++    eof_at = None
++    interval = 1.0 / args.rate_hz
++    next_send = time.monotonic()
++    while True:
++        timeout = max(0.0, next_send - time.monotonic())
++        if eof_at is None:
++            for key, _mask in selector.select(timeout):
++                line = key.fileobj.readline()
++                if line:
++                    try:
++                        latest = SolutionEpoch.from_dict(json.loads(line))
++                    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
++                        print(f"rejected input: {error}", file=sys.stderr)
++                else:
++                    eof_at = time.monotonic()
++                    selector.unregister(sys.stdin)
++        else:
++            time.sleep(min(timeout, 0.02))
++        now = time.monotonic()
++        if now >= next_send:
++            if latest is not None:
++                message = map_epoch(latest, time.monotonic_ns(), args.gps_id)
++                message.send(connection)
++                print(json.dumps(message.__dict__, sort_keys=True), file=sys.stderr, flush=True)
++            next_send += interval
++            if next_send < now:
++                next_send = now + interval
++        if eof_at is not None and args.stop_after_eof is not None:
++            if now - eof_at >= args.stop_after_eof:
++                return 0
++
++
++def main() -> None:
++    raise SystemExit(run(parser().parse_args()))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/mavlink_bridge/mapping.py b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a4a1a675c505dd70b174aac0b6981aa99edd86f4
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+@@ -0,0 +1,142 @@
++"""Pure mapping and staleness policy for MAVLink GPS_INPUT (message 232)."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++import math
++from typing import Any
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++
++NANOSECONDS = 1_000_000_000
++FRESH_NS = NANOSECONDS
++NO_FIX_NS = 3 * NANOSECONDS
++ACCURACY_GROWTH_MPS = 2.0
++SPEED_ACCURACY_GROWTH_MPS2 = 0.25
++
++
++@dataclass(frozen=True)
++class SolutionEpoch:
++    monotonic_ns: int
++    position_ecef_m: tuple[float, float, float]
++    horizontal_velocity_ned_mps: tuple[float, float]
++    heading_rad: float | None
++    steering_authorised: bool
++    horiz_accuracy_m: float
++    speed_accuracy_mps: float
++    vert_accuracy_m: float
++    msl_alt_m: float
++
++    @classmethod
++    def from_dict(cls, value: dict[str, Any]) -> SolutionEpoch:
++        state = value["state"]
++        epoch = cls(
++            monotonic_ns=int(value["monotonic_ns"]),
++            position_ecef_m=_vector(state["position_ecef_m"], 3, "position_ecef_m"),
++            horizontal_velocity_ned_mps=_vector(
++                state["horizontal_velocity_ned_mps"], 2, "horizontal_velocity_ned_mps"
++            ),
++            heading_rad=None if state.get("heading_rad") is None else float(state["heading_rad"]),
++            steering_authorised=bool(value["steering_authorised"]),
++            horiz_accuracy_m=float(value["horiz_accuracy_m"]),
++            speed_accuracy_mps=float(value["speed_accuracy_mps"]),
++            vert_accuracy_m=float(value["vert_accuracy_m"]),
++            msl_alt_m=float(value["msl_alt_m"]),
++        )
++        epoch.validate()
++        return epoch
++
++    def validate(self) -> None:
++        scalars = (*self.position_ecef_m, *self.horizontal_velocity_ned_mps, self.msl_alt_m)
++        if not all(math.isfinite(item) for item in scalars):
++            raise ValueError("position, velocity, and altitude must be finite")
++        if self.heading_rad is not None and not math.isfinite(self.heading_rad):
++            raise ValueError("heading_rad must be finite or null")
++        for name in ("horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"):
++            value = getattr(self, name)
++            if not math.isfinite(value) or value <= 0:
++                raise ValueError(f"{name} must be finite and greater than zero")
++
++
++def _vector(value: Any, length: int, name: str) -> tuple:
++    if not isinstance(value, (list, tuple)) or len(value) != length:
++        raise ValueError(f"{name} must contain exactly {length} numbers")
++    return tuple(float(item) for item in value)
++
++
++@dataclass(frozen=True)
++class GpsInput:
++    time_usec: int
++    gps_id: int
++    ignore_flags: int
++    time_week_ms: int
++    time_week: int
++    fix_type: int
++    lat: int
++    lon: int
++    alt: float
++    hdop: float
++    vdop: float
++    vn: float
++    ve: float
++    vd: float
++    speed_accuracy: float
++    horiz_accuracy: float
++    vert_accuracy: float
++    satellites_visible: int
++    yaw: int
++
++    def send(self, connection: Any) -> None:
++        connection.mav.gps_input_send(**self.__dict__)
++
++
++def encode_yaw(heading_rad: float | None) -> int:
++    """Encode radians clockwise from north as MAVLink centidegrees."""
++    if heading_rad is None:
++        return 65535
++    centidegrees = round(math.degrees(heading_rad) % 360.0 * 100.0)
++    if centidegrees in (0, 36000):
++        return 36000
++    return centidegrees
++
++
++def map_epoch(epoch: SolutionEpoch, now_monotonic_ns: int, gps_id: int = 0) -> GpsInput:
++    epoch.validate()
++    age_ns = max(0, now_monotonic_ns - epoch.monotonic_ns)
++    age_s = age_ns / NANOSECONDS
++    lat_deg, lon_deg, _ellipsoid_alt_m = pm.ecef2geodetic(*epoch.position_ecef_m, deg=True)
++    ignore = (
++        mavlink2.GPS_INPUT_IGNORE_FLAG_HDOP
++        | mavlink2.GPS_INPUT_IGNORE_FLAG_VDOP
++    )
++    fix_type = 3 if epoch.steering_authorised else 1
++    yaw = encode_yaw(epoch.heading_rad)
++    if age_ns > FRESH_NS:
++        fix_type = min(fix_type, 2)
++    if age_ns > NO_FIX_NS:
++        fix_type = 1
++        ignore |= mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++        yaw = 65535
++
++    return GpsInput(
++        time_usec=now_monotonic_ns // 1000,
++        gps_id=gps_id,
++        ignore_flags=ignore,
++        time_week_ms=0,
++        time_week=0,
++        fix_type=fix_type,
++        lat=round(lat_deg * 10_000_000),
++        lon=round(lon_deg * 10_000_000),
++        alt=epoch.msl_alt_m,
++        hdop=65535.0,
++        vdop=65535.0,
++        vn=epoch.horizontal_velocity_ned_mps[0],
++        ve=epoch.horizontal_velocity_ned_mps[1],
++        vd=0.0,
++        speed_accuracy=epoch.speed_accuracy_mps + SPEED_ACCURACY_GROWTH_MPS2 * age_s,
++        horiz_accuracy=epoch.horiz_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        vert_accuracy=epoch.vert_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        satellites_visible=10 if fix_type >= 3 else 0,
++        yaw=yaw,
++    )
+diff --git a/tools/mavlink_bridge/mavlink_bridge/synthetic.py b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..3e89e052d21a55709ac497495901a98052673220
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+@@ -0,0 +1,55 @@
++from __future__ import annotations
++
++import argparse
++import json
++import math
++import time
++
++import pymap3d as pm
++
++
++def generate(lat_deg: float, lon_deg: float, alt_m: float, speed_mps: float, count: int):
++    start_ns = time.monotonic_ns()
++    for index in range(count):
++        elapsed = index / 5.0
++        north_m = speed_mps * elapsed
++        lat, lon, ellipsoid_alt = pm.enu2geodetic(
++            0.0, north_m, 0.0, lat_deg, lon_deg, alt_m, deg=True
++        )
++        ecef = pm.geodetic2ecef(lat, lon, ellipsoid_alt, deg=True)
++        yield {
++            "monotonic_ns": start_ns + round(elapsed * 1_000_000_000),
++            "state": {
++                "position_ecef_m": list(ecef),
++                "horizontal_velocity_ned_mps": [speed_mps, 0.0],
++                "heading_rad": 0.0,
++                "receiver_clock_bias_m": 0.0,
++                "receiver_clock_drift_mps": 0.0,
++            },
++            "steering_authorised": True,
++            "horiz_accuracy_m": 0.8,
++            "speed_accuracy_mps": 0.1,
++            "vert_accuracy_m": 1.5,
++            "msl_alt_m": alt_m,
++        }
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description="Generate a 5 Hz straight north trajectory")
++    parser.add_argument("--lat", type=float, default=-35.363261)
++    parser.add_argument("--lon", type=float, default=149.165230)
++    parser.add_argument("--alt", type=float, default=584.0)
++    parser.add_argument("--speed", type=float, default=1.0)
++    parser.add_argument("--duration", type=float, default=30.0)
++    parser.add_argument("--realtime", action="store_true")
++    args = parser.parse_args()
++    count = math.ceil(args.duration * 5)
++    started = time.monotonic()
++    for index, epoch in enumerate(generate(args.lat, args.lon, args.alt, args.speed, count)):
++        if args.realtime:
++            time.sleep(max(0, started + index / 5.0 - time.monotonic()))
++        print(json.dumps(epoch), flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/pyproject.toml b/tools/mavlink_bridge/pyproject.toml
+new file mode 100644
+index 0000000000000000000000000000000000000000..e9f3deef99fe8b0cb89edede8eda056922c472e3
+--- /dev/null
++++ b/tools/mavlink_bridge/pyproject.toml
+@@ -0,0 +1,23 @@
++[build-system]
++requires = ["setuptools>=68"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "leo-pnt-mavlink-bridge"
++version = "0.1.0"
++requires-python = ">=3.10"
++dependencies = ["pymap3d==3.2.0", "pymavlink==2.4.43"]
++
++[project.scripts]
++leo-pnt-mavlink-bridge = "mavlink_bridge.cli:main"
++leo-pnt-synthetic-trajectory = "mavlink_bridge.synthetic:main"
++
++[tool.setuptools]
++packages = ["mavlink_bridge"]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++
++[tool.ruff]
++line-length = 100
++
+diff --git a/tools/mavlink_bridge/tests/test_mapping.py b/tools/mavlink_bridge/tests/test_mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a08fb1d8ac350d18c80cdf40e2f941ff3ffdaef
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_mapping.py
+@@ -0,0 +1,75 @@
++import math
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch, encode_yaw, map_epoch
++
++
++def epoch(**changes):
++    ecef = pm.geodetic2ecef(51.4778, -0.0014, 45.0, deg=True)
++    values = {
++        "monotonic_ns": 10_000_000_000,
++        "position_ecef_m": tuple(ecef),
++        "horizontal_velocity_ned_mps": (2.5, -1.25),
++        "heading_rad": math.radians(90),
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1.2,
++        "speed_accuracy_mps": 0.15,
++        "vert_accuracy_m": 2.4,
++        "msl_alt_m": 7.5,
++    }
++    values.update(changes)
++    return SolutionEpoch(**values)
++
++
++def test_ecef_is_wgs84_and_altitude_is_explicit_msl():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert message.lat == pytest.approx(51.4778e7, abs=1)
++    assert message.lon == pytest.approx(-0.0014e7, abs=1)
++    assert message.alt == 7.5  # never substitute the 45 m ellipsoid height
++
++
++def test_ned_velocity_accuracy_and_vertical_policy_map_independently():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert (message.vn, message.ve, message.vd) == (2.5, -1.25, 0.0)
++    assert message.horiz_accuracy == 1.2
++    assert message.speed_accuracy == 0.15
++    assert message.vert_accuracy == 2.4
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_VERT
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++
++
++@pytest.mark.parametrize(
++    ("radians", "encoded"),
++    [(0.0, 36000), (2 * math.pi, 36000), (-2 * math.pi, 36000), (math.pi / 2, 9000), (None, 65535)],
++)
++def test_yaw_encoding_including_north_wrap(radians, encoded):
++    assert encode_yaw(radians) == encoded
++
++
++def test_stale_fill_inflates_uncertainty_and_degrades_fix():
++    stale = map_epoch(epoch(), 12_000_000_000)
++    assert stale.fix_type == 2
++    assert stale.horiz_accuracy == pytest.approx(5.2)
++    assert stale.speed_accuracy == pytest.approx(0.65)
++    assert stale.vert_accuracy == pytest.approx(6.4)
++    assert stale.lat == map_epoch(epoch(), 10_000_000_000).lat
++
++
++def test_expired_fill_is_no_fix_and_marks_velocity_and_yaw_unavailable():
++    expired = map_epoch(epoch(), 14_000_000_001)
++    assert expired.fix_type == 1
++    assert expired.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++    assert expired.yaw == 65535
++
++
++def test_revoked_authority_never_claims_a_fix():
++    assert map_epoch(epoch(steering_authorised=False), 10_000_000_000).fix_type == 1
++
++
++@pytest.mark.parametrize("name", ["horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"])
++def test_required_accuracies_must_be_positive(name):
++    with pytest.raises(ValueError, match=name):
++        epoch(**{name: 0.0}).validate()
+diff --git a/tools/mavlink_bridge/tests/test_schema.py b/tools/mavlink_bridge/tests/test_schema.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..01570830aa4a0c387a1be07f102f431f743a0e86
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_schema.py
+@@ -0,0 +1,33 @@
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch
++
++
++def valid_dict():
++    return {
++        "monotonic_ns": 42,
++        "state": {
++            "position_ecef_m": [1, 2, 3],
++            "horizontal_velocity_ned_mps": [4, 5],
++            "heading_rad": 0,
++            "receiver_clock_bias_m": 6,
++            "receiver_clock_drift_mps": 7,
++        },
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1,
++        "speed_accuracy_mps": 2,
++        "vert_accuracy_m": 3,
++        "msl_alt_m": 4,
++    }
++
++
++def test_schema_accepts_solution_epoch_shape():
++    assert SolutionEpoch.from_dict(valid_dict()).horizontal_velocity_ned_mps == (4.0, 5.0)
++
++
++def test_schema_requires_accuracy():
++    value = valid_dict()
++    del value["horiz_accuracy_m"]
++    with pytest.raises(KeyError):
++        SolutionEpoch.from_dict(value)
++
+diff --git a/tools/sitl/.gitignore b/tools/sitl/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..820d2bc4f1bd6ac541035c9daca4cf01131088ee
+--- /dev/null
++++ b/tools/sitl/.gitignore
+@@ -0,0 +1,3 @@
++/ardupilot/
++/evidence/
++
+diff --git a/tools/sitl/README.md b/tools/sitl/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..74544e17de3b1cfd2bb9651dfc1660c7aa195d8e
+--- /dev/null
++++ b/tools/sitl/README.md
+@@ -0,0 +1,27 @@
++# ArduPilot Rover SITL acceptance harness
++
++The harness pins the official ArduPilot `Rover-4.6.3` tag at commit
++`3fc7011a7d3dc047cbb17d8bd98ee94577d144c6`. `build.sh` performs a detached checkout,
++initialises the pinned tree's submodules, builds Rover SITL, and writes the resulting
++binary's SHA-256 to `ardurover.sha256`. The artifact checksum is machine/build dependent,
++so the checked-in report records the checksum observed by this unit rather than claiming a
++universal upstream binary checksum.
++
++Run from the repository root:
++
++```sh
++tools/sitl/build.sh
++tools/sitl/run.sh --duration 45 --speed-mps 0.1 --tolerance-m 10
++```
++
++The runner wipes SITL state, loads and confirms `FRAME_CLASS=2`, `GPS1_TYPE=14`, and
++`GPS2_TYPE=0` at startup, and injects a 5 Hz, 0.1 m/s straight-leg stream through
++the same mapping/send code used by the stdin bridge. It fails unless:
++
++- EKF_STATUS_REPORT has the absolute-horizontal-position bit and not constant-position mode;
++- GLOBAL_POSITION_INT finishes within 10 m of the injected position; and
++- GPS_RAW_INT exposes injected fix type 3 and the injected 0.8 m horizontal accuracy as 800 mm.
++
++Evidence is written to ignored `tools/sitl/evidence/sitl.log` and `mavlink.jsonl`. The
++expected final stdout is one JSON `ACCEPTANCE` record. Until a run succeeds, these outputs
++must be labelled `[UNVERIFIED — not run here]`; the runner never synthesises a passing log.
+diff --git a/tools/sitl/build.sh b/tools/sitl/build.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..091b9a7f9e2bc3fd24e6de5b0476a6353ba323fd
+--- /dev/null
++++ b/tools/sitl/build.sh
+@@ -0,0 +1,22 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++SOURCE_DIR="$SCRIPT_DIR/ardupilot"
++PYTHON="$SCRIPT_DIR/../.venv/bin/python"
++PIN="3fc7011a7d3dc047cbb17d8bd98ee94577d144c6"
++
++if [[ ! -d "$SOURCE_DIR/.git" ]]; then
++    git clone --filter=blob:none --no-checkout https://github.com/ArduPilot/ardupilot.git "$SOURCE_DIR"
++fi
++git -C "$SOURCE_DIR" fetch --depth=1 origin "$PIN"
++git -C "$SOURCE_DIR" checkout --detach "$PIN"
++git -C "$SOURCE_DIR" submodule update --init --recursive --depth=1
++(
++    cd "$SOURCE_DIR"
++    "$PYTHON" ./waf configure --board sitl
++    "$PYTHON" ./waf rover
++)
++ARTIFACT="$SOURCE_DIR/build/sitl/bin/ardurover"
++test -x "$ARTIFACT"
++sha256sum "$ARTIFACT" | tee "$SCRIPT_DIR/ardurover.sha256"
+diff --git a/tools/sitl/params.parm b/tools/sitl/params.parm
+new file mode 100644
+index 0000000000000000000000000000000000000000..8223e0b442c82ba07039b621af20e2092d60bc1d
+--- /dev/null
++++ b/tools/sitl/params.parm
+@@ -0,0 +1,7 @@
++# External MAVLink GPS and Rover boat frame required by U-M1.
++FRAME_CLASS 2
++GPS1_TYPE 14
++GPS2_TYPE 0
++AHRS_EKF_TYPE 3
++EK3_ENABLE 1
++
+diff --git a/tools/sitl/run.sh b/tools/sitl/run.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb073b672d56b08944ba0feb702eeebdb662e260
+--- /dev/null
++++ b/tools/sitl/run.sh
+@@ -0,0 +1,6 @@
++#!/usr/bin/env bash
++set -euo pipefail
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++export PYTHONPATH="$SCRIPT_DIR/../mavlink_bridge${PYTHONPATH:+:$PYTHONPATH}"
++exec "$SCRIPT_DIR/../.venv/bin/python" "$SCRIPT_DIR/run_acceptance.py" "$@"
++
+diff --git a/tools/sitl/run_acceptance.py b/tools/sitl/run_acceptance.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..e7cbe1cb93aefeea1dd11e9a2b8fa73b0d343d28
+--- /dev/null
++++ b/tools/sitl/run_acceptance.py
+@@ -0,0 +1,144 @@
++#!/usr/bin/env python3
++"""Launch pinned Rover SITL, inject bridge messages, and assert observable acceptance."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import math
++from pathlib import Path
++import subprocess
++import sys
++import time
++
++from pymavlink import mavutil
++
++from mavlink_bridge.mapping import map_epoch
++from mavlink_bridge.synthetic import generate
++
++EKF_POS_HORIZ_ABS = 1 << 4
++EKF_CONST_POS_MODE = 1 << 7
++
++
++def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
++    radius = 6_371_008.8
++    p1, p2 = math.radians(lat1), math.radians(lat2)
++    dp = p2 - p1
++    dl = math.radians(lon2 - lon1)
++    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
++    return 2 * radius * math.asin(math.sqrt(a))
++
++
++def set_param(connection, name: str, value: float) -> None:
++    connection.mav.param_set_send(
++        connection.target_system,
++        connection.target_component,
++        name.encode(),
++        value,
++        mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
++    )
++    deadline = time.monotonic() + 8
++    while time.monotonic() < deadline:
++        reply = connection.recv_match(type="PARAM_VALUE", blocking=True, timeout=1)
++        if reply and reply.param_id == name and abs(reply.param_value - value) < 0.01:
++            return
++    raise AssertionError(f"SITL did not confirm {name}={value}")
++
++
++def run(binary: Path, evidence: Path, duration: float, tolerance_m: float, speed_mps: float) -> None:
++    evidence.mkdir(parents=True, exist_ok=True)
++    sitl_log = (evidence / "sitl.log").open("w", encoding="utf-8")
++    process = subprocess.Popen(
++        [
++            str(binary),
++            "--model",
++            "rover",
++            "--speedup",
++            "1",
++            "--wipe",
++            "--defaults",
++            str(Path(__file__).resolve().parent / "params.parm"),
++        ],
++        cwd=evidence,
++        stdout=sitl_log,
++        stderr=subprocess.STDOUT,
++    )
++    records = []
++    try:
++        connection = mavutil.mavlink_connection("tcp:127.0.0.1:5760", source_system=245)
++        if not connection.wait_heartbeat(timeout=30):
++            raise AssertionError("no SITL heartbeat within 30 seconds")
++        for name, value in (("FRAME_CLASS", 2), ("GPS1_TYPE", 14), ("GPS2_TYPE", 0)):
++            set_param(connection, name, value)
++
++        epochs = generate(-35.363261, 149.165230, 584.0, speed_mps, math.ceil(duration * 5))
++        latest_global = None
++        ekf_flags = 0
++        raw_accuracy_seen = False
++        started = time.monotonic()
++        final_epoch = None
++        for index, epoch_dict in enumerate(epochs):
++            deadline = started + index / 5
++            time.sleep(max(0.0, deadline - time.monotonic()))
++            from mavlink_bridge.mapping import SolutionEpoch
++
++            final_epoch = SolutionEpoch.from_dict(epoch_dict)
++            gps = map_epoch(final_epoch, final_epoch.monotonic_ns)
++            gps.send(connection)
++            while True:
++                message = connection.recv_match(blocking=False)
++                if message is None:
++                    break
++                kind = message.get_type()
++                if kind == "GLOBAL_POSITION_INT":
++                    latest_global = (message.lat / 1e7, message.lon / 1e7)
++                elif kind == "EKF_STATUS_REPORT":
++                    ekf_flags = int(message.flags)
++                elif kind == "GPS_RAW_INT":
++                    h_acc = getattr(message, "h_acc", 0)
++                    raw_accuracy_seen |= message.fix_type == 3 and 700 <= h_acc <= 900
++                    records.append({"type": kind, "fix_type": message.fix_type, "h_acc": h_acc})
++        if final_epoch is None or latest_global is None:
++            raise AssertionError("no injected epoch or GLOBAL_POSITION_INT observed")
++        expected = map_epoch(final_epoch, final_epoch.monotonic_ns)
++        error = distance_m(expected.lat / 1e7, expected.lon / 1e7, *latest_global)
++        records.append({"type": "OBSERVED", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        if error > tolerance_m:
++            raise AssertionError(f"position error {error:.2f} m exceeds {tolerance_m:.2f} m")
++        if not (ekf_flags & EKF_POS_HORIZ_ABS) or ekf_flags & EKF_CONST_POS_MODE:
++            raise AssertionError(f"EKF did not report absolute horizontal position: flags={ekf_flags}")
++        if not raw_accuracy_seen:
++            raise AssertionError("GPS_RAW_INT did not expose injected fix_type=3 and h_acc=800 mm")
++        records.append({"type": "ACCEPTANCE", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        print(json.dumps(records[-1], sort_keys=True))
++    finally:
++        process.terminate()
++        try:
++            process.wait(timeout=10)
++        except subprocess.TimeoutExpired:
++            process.kill()
++        sitl_log.close()
++
++
++def main() -> None:
++    here = Path(__file__).resolve().parent
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--binary", type=Path, default=here / "ardupilot/build/sitl/bin/ardurover")
++    parser.add_argument("--evidence", type=Path, default=here / "evidence")
++    parser.add_argument("--duration", type=float, default=45)
++    parser.add_argument("--tolerance-m", type=float, default=10)
++    parser.add_argument("--speed-mps", type=float, default=0.1)
++    args = parser.parse_args()
++    if not args.binary.is_file():
++        sys.exit(f"missing SITL binary: run {here / 'build.sh'} first")
++    run(args.binary, args.evidence, args.duration, args.tolerance_m, args.speed_mps)
++
++
++if __name__ == "__main__":
++    main()
+
+exec
+/bin/bash -lc 'tools/.venv/bin/pytest -q tools/mavlink_bridge && tools/.venv/bin/ruff check tools/mavlink_bridge tools/sitl && tools/sitl/run.sh --duration 60 --speed-mps 0.1 --tolerance-m 10' in /home/od/work/leo-pnt-wt-UM1
+diff --git a/tools/mavlink_bridge/README.md b/tools/mavlink_bridge/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2a4d2f7c5242398368ac3de8d997d94f3a49035c
+--- /dev/null
++++ b/tools/mavlink_bridge/README.md
+@@ -0,0 +1,60 @@
++# MAVLink GPS_INPUT bridge
++
++This Python 3 package consumes one JSON object per line on standard input and emits
++MAVLink 2 `GPS_INPUT` (message 232) at 5 Hz. It uses `pymavlink` 2.4.43 for transport and
++`pymap3d` 3.2.0 for WGS 84 (EPSG:4978 ECEF to EPSG:4979 geodetic) conversion. The ECEF
++ellipsoid height is deliberately discarded: `alt` is the estimator's separate
++MSL-constrained `msl_alt_m` value. Velocity is NED and `vd` is always zero.
++
++The [MAVLink common message specification](https://mavlink.io/en/messages/common.html#GPS_INPUT)
++defines `yaw` as clockwise from Earth north in centidegrees: zero means unavailable and
++36000 must represent north. This bridge uses 65535 when a configured heading is temporarily
++unavailable, as prescribed by the current extension-field definition. ArduPilot documents
++that [GPS1_TYPE must be 14](https://ardupilot.org/mavproxy/docs/modules/GPSInput.html).
++
++## Input schema
++
++Every line has this exact shape (JSON numbers must be finite):
++
++```json
++{
++  "monotonic_ns": 123456789000,
++  "state": {
++    "position_ecef_m": [-4479000.0, 2670000.0, -3660000.0],
++    "horizontal_velocity_ned_mps": [1.0, 0.0],
++    "heading_rad": 0.0,
++    "receiver_clock_bias_m": 0.0,
++    "receiver_clock_drift_mps": 0.0
++  },
++  "steering_authorised": true,
++  "horiz_accuracy_m": 0.8,
++  "speed_accuracy_mps": 0.1,
++  "vert_accuracy_m": 1.5,
++  "msl_alt_m": 584.0
++}
++```
++
++The first three fields mirror v2 `SolutionEpoch` and all five `FilterState` members are
++carried in the JSON contract (the bridge currently needs position, horizontal velocity and
++heading). `heading_rad` may be `null`. The three positive accuracy fields and MSL altitude
++extend the current Rust type pending the estimator unit; all are required. Accuracy means
++a one-standard-deviation bound in the units named by the field.
++
++Fresh authorised epochs claim fix type 3. After 1 second without a new epoch the repeated
++fill degrades to fix type 2; after 3 seconds it reports no fix, ignores horizontal velocity,
++and marks yaw unavailable. A revoked `steering_authorised` value reports no fix immediately.
++Horizontal and vertical position accuracy grow by 2 m/s of age and speed accuracy by
++0.25 m/s per second of age. Publication itself continues, preventing transport silence;
++the default 5 Hz interval is far inside the baseline's estimated 4-second timeout.
++HDOP/VDOP are ignored. Vertical velocity is supplied as zero, exactly as required by the
++baseline. `ODOMETRY` is never emitted.
++
++## Run and test
++
++```sh
++DISABLE_MAVNATIVE=1 tools/.venv/bin/pip install -e tools/mavlink_bridge
++tools/.venv/bin/pytest tools/mavlink_bridge
++tools/.venv/bin/ruff check tools/mavlink_bridge
++tools/.venv/bin/python -m mavlink_bridge.synthetic --realtime --duration 30 |
++  tools/.venv/bin/python -m mavlink_bridge.cli --connect udpout:127.0.0.1:14550 --stop-after-eof 4
++```
+diff --git a/tools/mavlink_bridge/mavlink_bridge/__init__.py b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8153c35c8375b57ab98cbe200dc3d7bbb936b823
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+@@ -0,0 +1,6 @@
++"""LEO PNT SolutionEpoch to MAVLink GPS_INPUT bridge."""
++
++from .mapping import GpsInput, SolutionEpoch, map_epoch
++
++__all__ = ["GpsInput", "SolutionEpoch", "map_epoch"]
++
+diff --git a/tools/mavlink_bridge/mavlink_bridge/cli.py b/tools/mavlink_bridge/mavlink_bridge/cli.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..61b8566245297d0a33e475c9ddeebefe5da375cd
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/cli.py
+@@ -0,0 +1,67 @@
++from __future__ import annotations
++
++import argparse
++import json
++import selectors
++import sys
++import time
++
++from pymavlink import mavutil
++
++from .mapping import SolutionEpoch, map_epoch
++
++
++def parser() -> argparse.ArgumentParser:
++    result = argparse.ArgumentParser(description="Publish JSON SolutionEpoch lines as GPS_INPUT")
++    result.add_argument("--connect", default="udpout:127.0.0.1:14550")
++    result.add_argument("--rate-hz", type=float, default=5.0)
++    result.add_argument("--gps-id", type=int, default=0)
++    result.add_argument("--stop-after-eof", type=float, metavar="SECONDS")
++    return result
++
++
++def run(args: argparse.Namespace) -> int:
++    if args.rate_hz <= 0:
++        raise ValueError("--rate-hz must be greater than zero")
++    connection = mavutil.mavlink_connection(args.connect, source_system=245, source_component=191)
++    selector = selectors.DefaultSelector()
++    selector.register(sys.stdin, selectors.EVENT_READ)
++    latest = None
++    eof_at = None
++    interval = 1.0 / args.rate_hz
++    next_send = time.monotonic()
++    while True:
++        timeout = max(0.0, next_send - time.monotonic())
++        if eof_at is None:
++            for key, _mask in selector.select(timeout):
++                line = key.fileobj.readline()
++                if line:
++                    try:
++                        latest = SolutionEpoch.from_dict(json.loads(line))
++                    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
++                        print(f"rejected input: {error}", file=sys.stderr)
++                else:
++                    eof_at = time.monotonic()
++                    selector.unregister(sys.stdin)
++        else:
++            time.sleep(min(timeout, 0.02))
++        now = time.monotonic()
++        if now >= next_send:
++            if latest is not None:
++                message = map_epoch(latest, time.monotonic_ns(), args.gps_id)
++                message.send(connection)
++                print(json.dumps(message.__dict__, sort_keys=True), file=sys.stderr, flush=True)
++            next_send += interval
++            if next_send < now:
++                next_send = now + interval
++        if eof_at is not None and args.stop_after_eof is not None:
++            if now - eof_at >= args.stop_after_eof:
++                return 0
++
++
++def main() -> None:
++    raise SystemExit(run(parser().parse_args()))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/mavlink_bridge/mapping.py b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a4a1a675c505dd70b174aac0b6981aa99edd86f4
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+@@ -0,0 +1,142 @@
++"""Pure mapping and staleness policy for MAVLink GPS_INPUT (message 232)."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++import math
++from typing import Any
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++
++NANOSECONDS = 1_000_000_000
++FRESH_NS = NANOSECONDS
++NO_FIX_NS = 3 * NANOSECONDS
++ACCURACY_GROWTH_MPS = 2.0
++SPEED_ACCURACY_GROWTH_MPS2 = 0.25
++
++
++@dataclass(frozen=True)
++class SolutionEpoch:
++    monotonic_ns: int
++    position_ecef_m: tuple[float, float, float]
++    horizontal_velocity_ned_mps: tuple[float, float]
++    heading_rad: float | None
++    steering_authorised: bool
++    horiz_accuracy_m: float
++    speed_accuracy_mps: float
++    vert_accuracy_m: float
++    msl_alt_m: float
++
++    @classmethod
++    def from_dict(cls, value: dict[str, Any]) -> SolutionEpoch:
++        state = value["state"]
++        epoch = cls(
++            monotonic_ns=int(value["monotonic_ns"]),
++            position_ecef_m=_vector(state["position_ecef_m"], 3, "position_ecef_m"),
++            horizontal_velocity_ned_mps=_vector(
++                state["horizontal_velocity_ned_mps"], 2, "horizontal_velocity_ned_mps"
++            ),
++            heading_rad=None if state.get("heading_rad") is None else float(state["heading_rad"]),
++            steering_authorised=bool(value["steering_authorised"]),
++            horiz_accuracy_m=float(value["horiz_accuracy_m"]),
++            speed_accuracy_mps=float(value["speed_accuracy_mps"]),
++            vert_accuracy_m=float(value["vert_accuracy_m"]),
++            msl_alt_m=float(value["msl_alt_m"]),
++        )
++        epoch.validate()
++        return epoch
++
++    def validate(self) -> None:
++        scalars = (*self.position_ecef_m, *self.horizontal_velocity_ned_mps, self.msl_alt_m)
++        if not all(math.isfinite(item) for item in scalars):
++            raise ValueError("position, velocity, and altitude must be finite")
++        if self.heading_rad is not None and not math.isfinite(self.heading_rad):
++            raise ValueError("heading_rad must be finite or null")
++        for name in ("horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"):
++            value = getattr(self, name)
++            if not math.isfinite(value) or value <= 0:
++                raise ValueError(f"{name} must be finite and greater than zero")
++
++
++def _vector(value: Any, length: int, name: str) -> tuple:
++    if not isinstance(value, (list, tuple)) or len(value) != length:
++        raise ValueError(f"{name} must contain exactly {length} numbers")
++    return tuple(float(item) for item in value)
++
++
++@dataclass(frozen=True)
++class GpsInput:
++    time_usec: int
++    gps_id: int
++    ignore_flags: int
++    time_week_ms: int
++    time_week: int
++    fix_type: int
++    lat: int
++    lon: int
++    alt: float
++    hdop: float
++    vdop: float
++    vn: float
++    ve: float
++    vd: float
++    speed_accuracy: float
++    horiz_accuracy: float
++    vert_accuracy: float
++    satellites_visible: int
++    yaw: int
++
++    def send(self, connection: Any) -> None:
++        connection.mav.gps_input_send(**self.__dict__)
++
++
++def encode_yaw(heading_rad: float | None) -> int:
++    """Encode radians clockwise from north as MAVLink centidegrees."""
++    if heading_rad is None:
++        return 65535
++    centidegrees = round(math.degrees(heading_rad) % 360.0 * 100.0)
++    if centidegrees in (0, 36000):
++        return 36000
++    return centidegrees
++
++
++def map_epoch(epoch: SolutionEpoch, now_monotonic_ns: int, gps_id: int = 0) -> GpsInput:
++    epoch.validate()
++    age_ns = max(0, now_monotonic_ns - epoch.monotonic_ns)
++    age_s = age_ns / NANOSECONDS
++    lat_deg, lon_deg, _ellipsoid_alt_m = pm.ecef2geodetic(*epoch.position_ecef_m, deg=True)
++    ignore = (
++        mavlink2.GPS_INPUT_IGNORE_FLAG_HDOP
++        | mavlink2.GPS_INPUT_IGNORE_FLAG_VDOP
++    )
++    fix_type = 3 if epoch.steering_authorised else 1
++    yaw = encode_yaw(epoch.heading_rad)
++    if age_ns > FRESH_NS:
++        fix_type = min(fix_type, 2)
++    if age_ns > NO_FIX_NS:
++        fix_type = 1
++        ignore |= mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++        yaw = 65535
++
++    return GpsInput(
++        time_usec=now_monotonic_ns // 1000,
++        gps_id=gps_id,
++        ignore_flags=ignore,
++        time_week_ms=0,
++        time_week=0,
++        fix_type=fix_type,
++        lat=round(lat_deg * 10_000_000),
++        lon=round(lon_deg * 10_000_000),
++        alt=epoch.msl_alt_m,
++        hdop=65535.0,
++        vdop=65535.0,
++        vn=epoch.horizontal_velocity_ned_mps[0],
++        ve=epoch.horizontal_velocity_ned_mps[1],
++        vd=0.0,
++        speed_accuracy=epoch.speed_accuracy_mps + SPEED_ACCURACY_GROWTH_MPS2 * age_s,
++        horiz_accuracy=epoch.horiz_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        vert_accuracy=epoch.vert_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        satellites_visible=10 if fix_type >= 3 else 0,
++        yaw=yaw,
++    )
+diff --git a/tools/mavlink_bridge/mavlink_bridge/synthetic.py b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..3e89e052d21a55709ac497495901a98052673220
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+@@ -0,0 +1,55 @@
++from __future__ import annotations
++
++import argparse
++import json
++import math
++import time
++
++import pymap3d as pm
++
++
++def generate(lat_deg: float, lon_deg: float, alt_m: float, speed_mps: float, count: int):
++    start_ns = time.monotonic_ns()
++    for index in range(count):
++        elapsed = index / 5.0
++        north_m = speed_mps * elapsed
++        lat, lon, ellipsoid_alt = pm.enu2geodetic(
++            0.0, north_m, 0.0, lat_deg, lon_deg, alt_m, deg=True
++        )
++        ecef = pm.geodetic2ecef(lat, lon, ellipsoid_alt, deg=True)
++        yield {
++            "monotonic_ns": start_ns + round(elapsed * 1_000_000_000),
++            "state": {
++                "position_ecef_m": list(ecef),
++                "horizontal_velocity_ned_mps": [speed_mps, 0.0],
++                "heading_rad": 0.0,
++                "receiver_clock_bias_m": 0.0,
++                "receiver_clock_drift_mps": 0.0,
++            },
++            "steering_authorised": True,
++            "horiz_accuracy_m": 0.8,
++            "speed_accuracy_mps": 0.1,
++            "vert_accuracy_m": 1.5,
++            "msl_alt_m": alt_m,
++        }
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description="Generate a 5 Hz straight north trajectory")
++    parser.add_argument("--lat", type=float, default=-35.363261)
++    parser.add_argument("--lon", type=float, default=149.165230)
++    parser.add_argument("--alt", type=float, default=584.0)
++    parser.add_argument("--speed", type=float, default=1.0)
++    parser.add_argument("--duration", type=float, default=30.0)
++    parser.add_argument("--realtime", action="store_true")
++    args = parser.parse_args()
++    count = math.ceil(args.duration * 5)
++    started = time.monotonic()
++    for index, epoch in enumerate(generate(args.lat, args.lon, args.alt, args.speed, count)):
++        if args.realtime:
++            time.sleep(max(0, started + index / 5.0 - time.monotonic()))
++        print(json.dumps(epoch), flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/pyproject.toml b/tools/mavlink_bridge/pyproject.toml
+new file mode 100644
+index 0000000000000000000000000000000000000000..e9f3deef99fe8b0cb89edede8eda056922c472e3
+--- /dev/null
++++ b/tools/mavlink_bridge/pyproject.toml
+@@ -0,0 +1,23 @@
++[build-system]
++requires = ["setuptools>=68"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "leo-pnt-mavlink-bridge"
++version = "0.1.0"
++requires-python = ">=3.10"
++dependencies = ["pymap3d==3.2.0", "pymavlink==2.4.43"]
++
++[project.scripts]
++leo-pnt-mavlink-bridge = "mavlink_bridge.cli:main"
++leo-pnt-synthetic-trajectory = "mavlink_bridge.synthetic:main"
++
++[tool.setuptools]
++packages = ["mavlink_bridge"]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++
++[tool.ruff]
++line-length = 100
++
+diff --git a/tools/mavlink_bridge/tests/test_mapping.py b/tools/mavlink_bridge/tests/test_mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a08fb1d8ac350d18c80cdf40e2f941ff3ffdaef
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_mapping.py
+@@ -0,0 +1,75 @@
++import math
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch, encode_yaw, map_epoch
++
++
++def epoch(**changes):
++    ecef = pm.geodetic2ecef(51.4778, -0.0014, 45.0, deg=True)
++    values = {
++        "monotonic_ns": 10_000_000_000,
++        "position_ecef_m": tuple(ecef),
++        "horizontal_velocity_ned_mps": (2.5, -1.25),
++        "heading_rad": math.radians(90),
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1.2,
++        "speed_accuracy_mps": 0.15,
++        "vert_accuracy_m": 2.4,
++        "msl_alt_m": 7.5,
++    }
++    values.update(changes)
++    return SolutionEpoch(**values)
++
++
++def test_ecef_is_wgs84_and_altitude_is_explicit_msl():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert message.lat == pytest.approx(51.4778e7, abs=1)
++    assert message.lon == pytest.approx(-0.0014e7, abs=1)
++    assert message.alt == 7.5  # never substitute the 45 m ellipsoid height
++
++
++def test_ned_velocity_accuracy_and_vertical_policy_map_independently():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert (message.vn, message.ve, message.vd) == (2.5, -1.25, 0.0)
++    assert message.horiz_accuracy == 1.2
++    assert message.speed_accuracy == 0.15
++    assert message.vert_accuracy == 2.4
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_VERT
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++
++
++@pytest.mark.parametrize(
++    ("radians", "encoded"),
++    [(0.0, 36000), (2 * math.pi, 36000), (-2 * math.pi, 36000), (math.pi / 2, 9000), (None, 65535)],
++)
++def test_yaw_encoding_including_north_wrap(radians, encoded):
++    assert encode_yaw(radians) == encoded
++
++
++def test_stale_fill_inflates_uncertainty_and_degrades_fix():
++    stale = map_epoch(epoch(), 12_000_000_000)
++    assert stale.fix_type == 2
++    assert stale.horiz_accuracy == pytest.approx(5.2)
++    assert stale.speed_accuracy == pytest.approx(0.65)
++    assert stale.vert_accuracy == pytest.approx(6.4)
++    assert stale.lat == map_epoch(epoch(), 10_000_000_000).lat
++
++
++def test_expired_fill_is_no_fix_and_marks_velocity_and_yaw_unavailable():
++    expired = map_epoch(epoch(), 14_000_000_001)
++    assert expired.fix_type == 1
++    assert expired.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++    assert expired.yaw == 65535
++
++
++def test_revoked_authority_never_claims_a_fix():
++    assert map_epoch(epoch(steering_authorised=False), 10_000_000_000).fix_type == 1
++
++
++@pytest.mark.parametrize("name", ["horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"])
++def test_required_accuracies_must_be_positive(name):
++    with pytest.raises(ValueError, match=name):
++        epoch(**{name: 0.0}).validate()
+diff --git a/tools/mavlink_bridge/tests/test_schema.py b/tools/mavlink_bridge/tests/test_schema.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..01570830aa4a0c387a1be07f102f431f743a0e86
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_schema.py
+@@ -0,0 +1,33 @@
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch
++
++
++def valid_dict():
++    return {
++        "monotonic_ns": 42,
++        "state": {
++            "position_ecef_m": [1, 2, 3],
++            "horizontal_velocity_ned_mps": [4, 5],
++            "heading_rad": 0,
++            "receiver_clock_bias_m": 6,
++            "receiver_clock_drift_mps": 7,
++        },
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1,
++        "speed_accuracy_mps": 2,
++        "vert_accuracy_m": 3,
++        "msl_alt_m": 4,
++    }
++
++
++def test_schema_accepts_solution_epoch_shape():
++    assert SolutionEpoch.from_dict(valid_dict()).horizontal_velocity_ned_mps == (4.0, 5.0)
++
++
++def test_schema_requires_accuracy():
++    value = valid_dict()
++    del value["horiz_accuracy_m"]
++    with pytest.raises(KeyError):
++        SolutionEpoch.from_dict(value)
++
+diff --git a/tools/sitl/.gitignore b/tools/sitl/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..820d2bc4f1bd6ac541035c9daca4cf01131088ee
+--- /dev/null
++++ b/tools/sitl/.gitignore
+@@ -0,0 +1,3 @@
++/ardupilot/
++/evidence/
++
+diff --git a/tools/sitl/README.md b/tools/sitl/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..74544e17de3b1cfd2bb9651dfc1660c7aa195d8e
+--- /dev/null
++++ b/tools/sitl/README.md
+@@ -0,0 +1,27 @@
++# ArduPilot Rover SITL acceptance harness
++
++The harness pins the official ArduPilot `Rover-4.6.3` tag at commit
++`3fc7011a7d3dc047cbb17d8bd98ee94577d144c6`. `build.sh` performs a detached checkout,
++initialises the pinned tree's submodules, builds Rover SITL, and writes the resulting
++binary's SHA-256 to `ardurover.sha256`. The artifact checksum is machine/build dependent,
++so the checked-in report records the checksum observed by this unit rather than claiming a
++universal upstream binary checksum.
++
++Run from the repository root:
++
++```sh
++tools/sitl/build.sh
++tools/sitl/run.sh --duration 45 --speed-mps 0.1 --tolerance-m 10
++```
++
++The runner wipes SITL state, loads and confirms `FRAME_CLASS=2`, `GPS1_TYPE=14`, and
++`GPS2_TYPE=0` at startup, and injects a 5 Hz, 0.1 m/s straight-leg stream through
++the same mapping/send code used by the stdin bridge. It fails unless:
++
++- EKF_STATUS_REPORT has the absolute-horizontal-position bit and not constant-position mode;
++- GLOBAL_POSITION_INT finishes within 10 m of the injected position; and
++- GPS_RAW_INT exposes injected fix type 3 and the injected 0.8 m horizontal accuracy as 800 mm.
++
++Evidence is written to ignored `tools/sitl/evidence/sitl.log` and `mavlink.jsonl`. The
++expected final stdout is one JSON `ACCEPTANCE` record. Until a run succeeds, these outputs
++must be labelled `[UNVERIFIED — not run here]`; the runner never synthesises a passing log.
+diff --git a/tools/sitl/build.sh b/tools/sitl/build.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..091b9a7f9e2bc3fd24e6de5b0476a6353ba323fd
+--- /dev/null
++++ b/tools/sitl/build.sh
+@@ -0,0 +1,22 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++SOURCE_DIR="$SCRIPT_DIR/ardupilot"
++PYTHON="$SCRIPT_DIR/../.venv/bin/python"
++PIN="3fc7011a7d3dc047cbb17d8bd98ee94577d144c6"
++
++if [[ ! -d "$SOURCE_DIR/.git" ]]; then
++    git clone --filter=blob:none --no-checkout https://github.com/ArduPilot/ardupilot.git "$SOURCE_DIR"
++fi
++git -C "$SOURCE_DIR" fetch --depth=1 origin "$PIN"
++git -C "$SOURCE_DIR" checkout --detach "$PIN"
++git -C "$SOURCE_DIR" submodule update --init --recursive --depth=1
++(
++    cd "$SOURCE_DIR"
++    "$PYTHON" ./waf configure --board sitl
++    "$PYTHON" ./waf rover
++)
++ARTIFACT="$SOURCE_DIR/build/sitl/bin/ardurover"
++test -x "$ARTIFACT"
++sha256sum "$ARTIFACT" | tee "$SCRIPT_DIR/ardurover.sha256"
+diff --git a/tools/sitl/params.parm b/tools/sitl/params.parm
+new file mode 100644
+index 0000000000000000000000000000000000000000..8223e0b442c82ba07039b621af20e2092d60bc1d
+--- /dev/null
++++ b/tools/sitl/params.parm
+@@ -0,0 +1,7 @@
++# External MAVLink GPS and Rover boat frame required by U-M1.
++FRAME_CLASS 2
++GPS1_TYPE 14
++GPS2_TYPE 0
++AHRS_EKF_TYPE 3
++EK3_ENABLE 1
++
+diff --git a/tools/sitl/run.sh b/tools/sitl/run.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb073b672d56b08944ba0feb702eeebdb662e260
+--- /dev/null
++++ b/tools/sitl/run.sh
+@@ -0,0 +1,6 @@
++#!/usr/bin/env bash
++set -euo pipefail
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++export PYTHONPATH="$SCRIPT_DIR/../mavlink_bridge${PYTHONPATH:+:$PYTHONPATH}"
++exec "$SCRIPT_DIR/../.venv/bin/python" "$SCRIPT_DIR/run_acceptance.py" "$@"
++
+diff --git a/tools/sitl/run_acceptance.py b/tools/sitl/run_acceptance.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..e7cbe1cb93aefeea1dd11e9a2b8fa73b0d343d28
+--- /dev/null
++++ b/tools/sitl/run_acceptance.py
+@@ -0,0 +1,144 @@
++#!/usr/bin/env python3
++"""Launch pinned Rover SITL, inject bridge messages, and assert observable acceptance."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import math
++from pathlib import Path
++import subprocess
++import sys
++import time
++
++from pymavlink import mavutil
++
++from mavlink_bridge.mapping import map_epoch
++from mavlink_bridge.synthetic import generate
++
++EKF_POS_HORIZ_ABS = 1 << 4
++EKF_CONST_POS_MODE = 1 << 7
++
++
++def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
++    radius = 6_371_008.8
++    p1, p2 = math.radians(lat1), math.radians(lat2)
++    dp = p2 - p1
++    dl = math.radians(lon2 - lon1)
++    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
++    return 2 * radius * math.asin(math.sqrt(a))
++
++
++def set_param(connection, name: str, value: float) -> None:
++    connection.mav.param_set_send(
++        connection.target_system,
++        connection.target_component,
++        name.encode(),
++        value,
++        mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
++    )
++    deadline = time.monotonic() + 8
++    while time.monotonic() < deadline:
++        reply = connection.recv_match(type="PARAM_VALUE", blocking=True, timeout=1)
++        if reply and reply.param_id == name and abs(reply.param_value - value) < 0.01:
++            return
++    raise AssertionError(f"SITL did not confirm {name}={value}")
++
++
++def run(binary: Path, evidence: Path, duration: float, tolerance_m: float, speed_mps: float) -> None:
++    evidence.mkdir(parents=True, exist_ok=True)
++    sitl_log = (evidence / "sitl.log").open("w", encoding="utf-8")
++    process = subprocess.Popen(
++        [
++            str(binary),
++            "--model",
++            "rover",
++            "--speedup",
++            "1",
++            "--wipe",
++            "--defaults",
++            str(Path(__file__).resolve().parent / "params.parm"),
++        ],
++        cwd=evidence,
++        stdout=sitl_log,
++        stderr=subprocess.STDOUT,
++    )
++    records = []
++    try:
++        connection = mavutil.mavlink_connection("tcp:127.0.0.1:5760", source_system=245)
++        if not connection.wait_heartbeat(timeout=30):
++            raise AssertionError("no SITL heartbeat within 30 seconds")
++        for name, value in (("FRAME_CLASS", 2), ("GPS1_TYPE", 14), ("GPS2_TYPE", 0)):
++            set_param(connection, name, value)
++
++        epochs = generate(-35.363261, 149.165230, 584.0, speed_mps, math.ceil(duration * 5))
++        latest_global = None
++        ekf_flags = 0
++        raw_accuracy_seen = False
++        started = time.monotonic()
++        final_epoch = None
++        for index, epoch_dict in enumerate(epochs):
++            deadline = started + index / 5
++            time.sleep(max(0.0, deadline - time.monotonic()))
++            from mavlink_bridge.mapping import SolutionEpoch
++
++            final_epoch = SolutionEpoch.from_dict(epoch_dict)
++            gps = map_epoch(final_epoch, final_epoch.monotonic_ns)
++            gps.send(connection)
++            while True:
++                message = connection.recv_match(blocking=False)
++                if message is None:
++                    break
++                kind = message.get_type()
++                if kind == "GLOBAL_POSITION_INT":
++                    latest_global = (message.lat / 1e7, message.lon / 1e7)
++                elif kind == "EKF_STATUS_REPORT":
++                    ekf_flags = int(message.flags)
++                elif kind == "GPS_RAW_INT":
++                    h_acc = getattr(message, "h_acc", 0)
++                    raw_accuracy_seen |= message.fix_type == 3 and 700 <= h_acc <= 900
++                    records.append({"type": kind, "fix_type": message.fix_type, "h_acc": h_acc})
++        if final_epoch is None or latest_global is None:
++            raise AssertionError("no injected epoch or GLOBAL_POSITION_INT observed")
++        expected = map_epoch(final_epoch, final_epoch.monotonic_ns)
++        error = distance_m(expected.lat / 1e7, expected.lon / 1e7, *latest_global)
++        records.append({"type": "OBSERVED", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        if error > tolerance_m:
++            raise AssertionError(f"position error {error:.2f} m exceeds {tolerance_m:.2f} m")
++        if not (ekf_flags & EKF_POS_HORIZ_ABS) or ekf_flags & EKF_CONST_POS_MODE:
++            raise AssertionError(f"EKF did not report absolute horizontal position: flags={ekf_flags}")
++        if not raw_accuracy_seen:
++            raise AssertionError("GPS_RAW_INT did not expose injected fix_type=3 and h_acc=800 mm")
++        records.append({"type": "ACCEPTANCE", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        print(json.dumps(records[-1], sort_keys=True))
++    finally:
++        process.terminate()
++        try:
++            process.wait(timeout=10)
++        except subprocess.TimeoutExpired:
++            process.kill()
++        sitl_log.close()
++
++
++def main() -> None:
++    here = Path(__file__).resolve().parent
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--binary", type=Path, default=here / "ardupilot/build/sitl/bin/ardurover")
++    parser.add_argument("--evidence", type=Path, default=here / "evidence")
++    parser.add_argument("--duration", type=float, default=45)
++    parser.add_argument("--tolerance-m", type=float, default=10)
++    parser.add_argument("--speed-mps", type=float, default=0.1)
++    args = parser.parse_args()
++    if not args.binary.is_file():
++        sys.exit(f"missing SITL binary: run {here / 'build.sh'} first")
++    run(args.binary, args.evidence, args.duration, args.tolerance_m, args.speed_mps)
++
++
++if __name__ == "__main__":
++    main()
+
+diff --git a/tools/mavlink_bridge/README.md b/tools/mavlink_bridge/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2a4d2f7c5242398368ac3de8d997d94f3a49035c
+--- /dev/null
++++ b/tools/mavlink_bridge/README.md
+@@ -0,0 +1,60 @@
++# MAVLink GPS_INPUT bridge
++
++This Python 3 package consumes one JSON object per line on standard input and emits
++MAVLink 2 `GPS_INPUT` (message 232) at 5 Hz. It uses `pymavlink` 2.4.43 for transport and
++`pymap3d` 3.2.0 for WGS 84 (EPSG:4978 ECEF to EPSG:4979 geodetic) conversion. The ECEF
++ellipsoid height is deliberately discarded: `alt` is the estimator's separate
++MSL-constrained `msl_alt_m` value. Velocity is NED and `vd` is always zero.
++
++The [MAVLink common message specification](https://mavlink.io/en/messages/common.html#GPS_INPUT)
++defines `yaw` as clockwise from Earth north in centidegrees: zero means unavailable and
++36000 must represent north. This bridge uses 65535 when a configured heading is temporarily
++unavailable, as prescribed by the current extension-field definition. ArduPilot documents
++that [GPS1_TYPE must be 14](https://ardupilot.org/mavproxy/docs/modules/GPSInput.html).
++
++## Input schema
++
++Every line has this exact shape (JSON numbers must be finite):
++
++```json
++{
++  "monotonic_ns": 123456789000,
++  "state": {
++    "position_ecef_m": [-4479000.0, 2670000.0, -3660000.0],
++    "horizontal_velocity_ned_mps": [1.0, 0.0],
++    "heading_rad": 0.0,
++    "receiver_clock_bias_m": 0.0,
++    "receiver_clock_drift_mps": 0.0
++  },
++  "steering_authorised": true,
++  "horiz_accuracy_m": 0.8,
++  "speed_accuracy_mps": 0.1,
++  "vert_accuracy_m": 1.5,
++  "msl_alt_m": 584.0
++}
++```
++
++The first three fields mirror v2 `SolutionEpoch` and all five `FilterState` members are
++carried in the JSON contract (the bridge currently needs position, horizontal velocity and
++heading). `heading_rad` may be `null`. The three positive accuracy fields and MSL altitude
++extend the current Rust type pending the estimator unit; all are required. Accuracy means
++a one-standard-deviation bound in the units named by the field.
++
++Fresh authorised epochs claim fix type 3. After 1 second without a new epoch the repeated
++fill degrades to fix type 2; after 3 seconds it reports no fix, ignores horizontal velocity,
++and marks yaw unavailable. A revoked `steering_authorised` value reports no fix immediately.
++Horizontal and vertical position accuracy grow by 2 m/s of age and speed accuracy by
++0.25 m/s per second of age. Publication itself continues, preventing transport silence;
++the default 5 Hz interval is far inside the baseline's estimated 4-second timeout.
++HDOP/VDOP are ignored. Vertical velocity is supplied as zero, exactly as required by the
++baseline. `ODOMETRY` is never emitted.
++
++## Run and test
++
++```sh
++DISABLE_MAVNATIVE=1 tools/.venv/bin/pip install -e tools/mavlink_bridge
++tools/.venv/bin/pytest tools/mavlink_bridge
++tools/.venv/bin/ruff check tools/mavlink_bridge
++tools/.venv/bin/python -m mavlink_bridge.synthetic --realtime --duration 30 |
++  tools/.venv/bin/python -m mavlink_bridge.cli --connect udpout:127.0.0.1:14550 --stop-after-eof 4
++```
+diff --git a/tools/mavlink_bridge/mavlink_bridge/__init__.py b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8153c35c8375b57ab98cbe200dc3d7bbb936b823
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/__init__.py
+@@ -0,0 +1,6 @@
++"""LEO PNT SolutionEpoch to MAVLink GPS_INPUT bridge."""
++
++from .mapping import GpsInput, SolutionEpoch, map_epoch
++
++__all__ = ["GpsInput", "SolutionEpoch", "map_epoch"]
++
+diff --git a/tools/mavlink_bridge/mavlink_bridge/cli.py b/tools/mavlink_bridge/mavlink_bridge/cli.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..61b8566245297d0a33e475c9ddeebefe5da375cd
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/cli.py
+@@ -0,0 +1,67 @@
++from __future__ import annotations
++
++import argparse
++import json
++import selectors
++import sys
++import time
++
++from pymavlink import mavutil
++
++from .mapping import SolutionEpoch, map_epoch
++
++
++def parser() -> argparse.ArgumentParser:
++    result = argparse.ArgumentParser(description="Publish JSON SolutionEpoch lines as GPS_INPUT")
++    result.add_argument("--connect", default="udpout:127.0.0.1:14550")
++    result.add_argument("--rate-hz", type=float, default=5.0)
++    result.add_argument("--gps-id", type=int, default=0)
++    result.add_argument("--stop-after-eof", type=float, metavar="SECONDS")
++    return result
++
++
++def run(args: argparse.Namespace) -> int:
++    if args.rate_hz <= 0:
++        raise ValueError("--rate-hz must be greater than zero")
++    connection = mavutil.mavlink_connection(args.connect, source_system=245, source_component=191)
++    selector = selectors.DefaultSelector()
++    selector.register(sys.stdin, selectors.EVENT_READ)
++    latest = None
++    eof_at = None
++    interval = 1.0 / args.rate_hz
++    next_send = time.monotonic()
++    while True:
++        timeout = max(0.0, next_send - time.monotonic())
++        if eof_at is None:
++            for key, _mask in selector.select(timeout):
++                line = key.fileobj.readline()
++                if line:
++                    try:
++                        latest = SolutionEpoch.from_dict(json.loads(line))
++                    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
++                        print(f"rejected input: {error}", file=sys.stderr)
++                else:
++                    eof_at = time.monotonic()
++                    selector.unregister(sys.stdin)
++        else:
++            time.sleep(min(timeout, 0.02))
++        now = time.monotonic()
++        if now >= next_send:
++            if latest is not None:
++                message = map_epoch(latest, time.monotonic_ns(), args.gps_id)
++                message.send(connection)
++                print(json.dumps(message.__dict__, sort_keys=True), file=sys.stderr, flush=True)
++            next_send += interval
++            if next_send < now:
++                next_send = now + interval
++        if eof_at is not None and args.stop_after_eof is not None:
++            if now - eof_at >= args.stop_after_eof:
++                return 0
++
++
++def main() -> None:
++    raise SystemExit(run(parser().parse_args()))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/mavlink_bridge/mapping.py b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a4a1a675c505dd70b174aac0b6981aa99edd86f4
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/mapping.py
+@@ -0,0 +1,142 @@
++"""Pure mapping and staleness policy for MAVLink GPS_INPUT (message 232)."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++import math
++from typing import Any
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++
++NANOSECONDS = 1_000_000_000
++FRESH_NS = NANOSECONDS
++NO_FIX_NS = 3 * NANOSECONDS
++ACCURACY_GROWTH_MPS = 2.0
++SPEED_ACCURACY_GROWTH_MPS2 = 0.25
++
++
++@dataclass(frozen=True)
++class SolutionEpoch:
++    monotonic_ns: int
++    position_ecef_m: tuple[float, float, float]
++    horizontal_velocity_ned_mps: tuple[float, float]
++    heading_rad: float | None
++    steering_authorised: bool
++    horiz_accuracy_m: float
++    speed_accuracy_mps: float
++    vert_accuracy_m: float
++    msl_alt_m: float
++
++    @classmethod
++    def from_dict(cls, value: dict[str, Any]) -> SolutionEpoch:
++        state = value["state"]
++        epoch = cls(
++            monotonic_ns=int(value["monotonic_ns"]),
++            position_ecef_m=_vector(state["position_ecef_m"], 3, "position_ecef_m"),
++            horizontal_velocity_ned_mps=_vector(
++                state["horizontal_velocity_ned_mps"], 2, "horizontal_velocity_ned_mps"
++            ),
++            heading_rad=None if state.get("heading_rad") is None else float(state["heading_rad"]),
++            steering_authorised=bool(value["steering_authorised"]),
++            horiz_accuracy_m=float(value["horiz_accuracy_m"]),
++            speed_accuracy_mps=float(value["speed_accuracy_mps"]),
++            vert_accuracy_m=float(value["vert_accuracy_m"]),
++            msl_alt_m=float(value["msl_alt_m"]),
++        )
++        epoch.validate()
++        return epoch
++
++    def validate(self) -> None:
++        scalars = (*self.position_ecef_m, *self.horizontal_velocity_ned_mps, self.msl_alt_m)
++        if not all(math.isfinite(item) for item in scalars):
++            raise ValueError("position, velocity, and altitude must be finite")
++        if self.heading_rad is not None and not math.isfinite(self.heading_rad):
++            raise ValueError("heading_rad must be finite or null")
++        for name in ("horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"):
++            value = getattr(self, name)
++            if not math.isfinite(value) or value <= 0:
++                raise ValueError(f"{name} must be finite and greater than zero")
++
++
++def _vector(value: Any, length: int, name: str) -> tuple:
++    if not isinstance(value, (list, tuple)) or len(value) != length:
++        raise ValueError(f"{name} must contain exactly {length} numbers")
++    return tuple(float(item) for item in value)
++
++
++@dataclass(frozen=True)
++class GpsInput:
++    time_usec: int
++    gps_id: int
++    ignore_flags: int
++    time_week_ms: int
++    time_week: int
++    fix_type: int
++    lat: int
++    lon: int
++    alt: float
++    hdop: float
++    vdop: float
++    vn: float
++    ve: float
++    vd: float
++    speed_accuracy: float
++    horiz_accuracy: float
++    vert_accuracy: float
++    satellites_visible: int
++    yaw: int
++
++    def send(self, connection: Any) -> None:
++        connection.mav.gps_input_send(**self.__dict__)
++
++
++def encode_yaw(heading_rad: float | None) -> int:
++    """Encode radians clockwise from north as MAVLink centidegrees."""
++    if heading_rad is None:
++        return 65535
++    centidegrees = round(math.degrees(heading_rad) % 360.0 * 100.0)
++    if centidegrees in (0, 36000):
++        return 36000
++    return centidegrees
++
++
++def map_epoch(epoch: SolutionEpoch, now_monotonic_ns: int, gps_id: int = 0) -> GpsInput:
++    epoch.validate()
++    age_ns = max(0, now_monotonic_ns - epoch.monotonic_ns)
++    age_s = age_ns / NANOSECONDS
++    lat_deg, lon_deg, _ellipsoid_alt_m = pm.ecef2geodetic(*epoch.position_ecef_m, deg=True)
++    ignore = (
++        mavlink2.GPS_INPUT_IGNORE_FLAG_HDOP
++        | mavlink2.GPS_INPUT_IGNORE_FLAG_VDOP
++    )
++    fix_type = 3 if epoch.steering_authorised else 1
++    yaw = encode_yaw(epoch.heading_rad)
++    if age_ns > FRESH_NS:
++        fix_type = min(fix_type, 2)
++    if age_ns > NO_FIX_NS:
++        fix_type = 1
++        ignore |= mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++        yaw = 65535
++
++    return GpsInput(
++        time_usec=now_monotonic_ns // 1000,
++        gps_id=gps_id,
++        ignore_flags=ignore,
++        time_week_ms=0,
++        time_week=0,
++        fix_type=fix_type,
++        lat=round(lat_deg * 10_000_000),
++        lon=round(lon_deg * 10_000_000),
++        alt=epoch.msl_alt_m,
++        hdop=65535.0,
++        vdop=65535.0,
++        vn=epoch.horizontal_velocity_ned_mps[0],
++        ve=epoch.horizontal_velocity_ned_mps[1],
++        vd=0.0,
++        speed_accuracy=epoch.speed_accuracy_mps + SPEED_ACCURACY_GROWTH_MPS2 * age_s,
++        horiz_accuracy=epoch.horiz_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        vert_accuracy=epoch.vert_accuracy_m + ACCURACY_GROWTH_MPS * age_s,
++        satellites_visible=10 if fix_type >= 3 else 0,
++        yaw=yaw,
++    )
+diff --git a/tools/mavlink_bridge/mavlink_bridge/synthetic.py b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..3e89e052d21a55709ac497495901a98052673220
+--- /dev/null
++++ b/tools/mavlink_bridge/mavlink_bridge/synthetic.py
+@@ -0,0 +1,55 @@
++from __future__ import annotations
++
++import argparse
++import json
++import math
++import time
++
++import pymap3d as pm
++
++
++def generate(lat_deg: float, lon_deg: float, alt_m: float, speed_mps: float, count: int):
++    start_ns = time.monotonic_ns()
++    for index in range(count):
++        elapsed = index / 5.0
++        north_m = speed_mps * elapsed
++        lat, lon, ellipsoid_alt = pm.enu2geodetic(
++            0.0, north_m, 0.0, lat_deg, lon_deg, alt_m, deg=True
++        )
++        ecef = pm.geodetic2ecef(lat, lon, ellipsoid_alt, deg=True)
++        yield {
++            "monotonic_ns": start_ns + round(elapsed * 1_000_000_000),
++            "state": {
++                "position_ecef_m": list(ecef),
++                "horizontal_velocity_ned_mps": [speed_mps, 0.0],
++                "heading_rad": 0.0,
++                "receiver_clock_bias_m": 0.0,
++                "receiver_clock_drift_mps": 0.0,
++            },
++            "steering_authorised": True,
++            "horiz_accuracy_m": 0.8,
++            "speed_accuracy_mps": 0.1,
++            "vert_accuracy_m": 1.5,
++            "msl_alt_m": alt_m,
++        }
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description="Generate a 5 Hz straight north trajectory")
++    parser.add_argument("--lat", type=float, default=-35.363261)
++    parser.add_argument("--lon", type=float, default=149.165230)
++    parser.add_argument("--alt", type=float, default=584.0)
++    parser.add_argument("--speed", type=float, default=1.0)
++    parser.add_argument("--duration", type=float, default=30.0)
++    parser.add_argument("--realtime", action="store_true")
++    args = parser.parse_args()
++    count = math.ceil(args.duration * 5)
++    started = time.monotonic()
++    for index, epoch in enumerate(generate(args.lat, args.lon, args.alt, args.speed, count)):
++        if args.realtime:
++            time.sleep(max(0, started + index / 5.0 - time.monotonic()))
++        print(json.dumps(epoch), flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mavlink_bridge/pyproject.toml b/tools/mavlink_bridge/pyproject.toml
+new file mode 100644
+index 0000000000000000000000000000000000000000..e9f3deef99fe8b0cb89edede8eda056922c472e3
+--- /dev/null
++++ b/tools/mavlink_bridge/pyproject.toml
+@@ -0,0 +1,23 @@
++[build-system]
++requires = ["setuptools>=68"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "leo-pnt-mavlink-bridge"
++version = "0.1.0"
++requires-python = ">=3.10"
++dependencies = ["pymap3d==3.2.0", "pymavlink==2.4.43"]
++
++[project.scripts]
++leo-pnt-mavlink-bridge = "mavlink_bridge.cli:main"
++leo-pnt-synthetic-trajectory = "mavlink_bridge.synthetic:main"
++
++[tool.setuptools]
++packages = ["mavlink_bridge"]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++
++[tool.ruff]
++line-length = 100
++
+diff --git a/tools/mavlink_bridge/tests/test_mapping.py b/tools/mavlink_bridge/tests/test_mapping.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a08fb1d8ac350d18c80cdf40e2f941ff3ffdaef
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_mapping.py
+@@ -0,0 +1,75 @@
++import math
++
++import pymap3d as pm
++from pymavlink.dialects.v20 import common as mavlink2
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch, encode_yaw, map_epoch
++
++
++def epoch(**changes):
++    ecef = pm.geodetic2ecef(51.4778, -0.0014, 45.0, deg=True)
++    values = {
++        "monotonic_ns": 10_000_000_000,
++        "position_ecef_m": tuple(ecef),
++        "horizontal_velocity_ned_mps": (2.5, -1.25),
++        "heading_rad": math.radians(90),
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1.2,
++        "speed_accuracy_mps": 0.15,
++        "vert_accuracy_m": 2.4,
++        "msl_alt_m": 7.5,
++    }
++    values.update(changes)
++    return SolutionEpoch(**values)
++
++
++def test_ecef_is_wgs84_and_altitude_is_explicit_msl():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert message.lat == pytest.approx(51.4778e7, abs=1)
++    assert message.lon == pytest.approx(-0.0014e7, abs=1)
++    assert message.alt == 7.5  # never substitute the 45 m ellipsoid height
++
++
++def test_ned_velocity_accuracy_and_vertical_policy_map_independently():
++    message = map_epoch(epoch(), 10_000_000_000)
++    assert (message.vn, message.ve, message.vd) == (2.5, -1.25, 0.0)
++    assert message.horiz_accuracy == 1.2
++    assert message.speed_accuracy == 0.15
++    assert message.vert_accuracy == 2.4
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_VERT
++    assert not message.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++
++
++@pytest.mark.parametrize(
++    ("radians", "encoded"),
++    [(0.0, 36000), (2 * math.pi, 36000), (-2 * math.pi, 36000), (math.pi / 2, 9000), (None, 65535)],
++)
++def test_yaw_encoding_including_north_wrap(radians, encoded):
++    assert encode_yaw(radians) == encoded
++
++
++def test_stale_fill_inflates_uncertainty_and_degrades_fix():
++    stale = map_epoch(epoch(), 12_000_000_000)
++    assert stale.fix_type == 2
++    assert stale.horiz_accuracy == pytest.approx(5.2)
++    assert stale.speed_accuracy == pytest.approx(0.65)
++    assert stale.vert_accuracy == pytest.approx(6.4)
++    assert stale.lat == map_epoch(epoch(), 10_000_000_000).lat
++
++
++def test_expired_fill_is_no_fix_and_marks_velocity_and_yaw_unavailable():
++    expired = map_epoch(epoch(), 14_000_000_001)
++    assert expired.fix_type == 1
++    assert expired.ignore_flags & mavlink2.GPS_INPUT_IGNORE_FLAG_VEL_HORIZ
++    assert expired.yaw == 65535
++
++
++def test_revoked_authority_never_claims_a_fix():
++    assert map_epoch(epoch(steering_authorised=False), 10_000_000_000).fix_type == 1
++
++
++@pytest.mark.parametrize("name", ["horiz_accuracy_m", "speed_accuracy_mps", "vert_accuracy_m"])
++def test_required_accuracies_must_be_positive(name):
++    with pytest.raises(ValueError, match=name):
++        epoch(**{name: 0.0}).validate()
+diff --git a/tools/mavlink_bridge/tests/test_schema.py b/tools/mavlink_bridge/tests/test_schema.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..01570830aa4a0c387a1be07f102f431f743a0e86
+--- /dev/null
++++ b/tools/mavlink_bridge/tests/test_schema.py
+@@ -0,0 +1,33 @@
++import pytest
++
++from mavlink_bridge.mapping import SolutionEpoch
++
++
++def valid_dict():
++    return {
++        "monotonic_ns": 42,
++        "state": {
++            "position_ecef_m": [1, 2, 3],
++            "horizontal_velocity_ned_mps": [4, 5],
++            "heading_rad": 0,
++            "receiver_clock_bias_m": 6,
++            "receiver_clock_drift_mps": 7,
++        },
++        "steering_authorised": True,
++        "horiz_accuracy_m": 1,
++        "speed_accuracy_mps": 2,
++        "vert_accuracy_m": 3,
++        "msl_alt_m": 4,
++    }
++
++
++def test_schema_accepts_solution_epoch_shape():
++    assert SolutionEpoch.from_dict(valid_dict()).horizontal_velocity_ned_mps == (4.0, 5.0)
++
++
++def test_schema_requires_accuracy():
++    value = valid_dict()
++    del value["horiz_accuracy_m"]
++    with pytest.raises(KeyError):
++        SolutionEpoch.from_dict(value)
++
+diff --git a/tools/sitl/.gitignore b/tools/sitl/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..820d2bc4f1bd6ac541035c9daca4cf01131088ee
+--- /dev/null
++++ b/tools/sitl/.gitignore
+@@ -0,0 +1,3 @@
++/ardupilot/
++/evidence/
++
+diff --git a/tools/sitl/README.md b/tools/sitl/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..74544e17de3b1cfd2bb9651dfc1660c7aa195d8e
+--- /dev/null
++++ b/tools/sitl/README.md
+@@ -0,0 +1,27 @@
++# ArduPilot Rover SITL acceptance harness
++
++The harness pins the official ArduPilot `Rover-4.6.3` tag at commit
++`3fc7011a7d3dc047cbb17d8bd98ee94577d144c6`. `build.sh` performs a detached checkout,
++initialises the pinned tree's submodules, builds Rover SITL, and writes the resulting
++binary's SHA-256 to `ardurover.sha256`. The artifact checksum is machine/build dependent,
++so the checked-in report records the checksum observed by this unit rather than claiming a
++universal upstream binary checksum.
++
++Run from the repository root:
++
++```sh
++tools/sitl/build.sh
++tools/sitl/run.sh --duration 45 --speed-mps 0.1 --tolerance-m 10
++```
++
++The runner wipes SITL state, loads and confirms `FRAME_CLASS=2`, `GPS1_TYPE=14`, and
++`GPS2_TYPE=0` at startup, and injects a 5 Hz, 0.1 m/s straight-leg stream through
++the same mapping/send code used by the stdin bridge. It fails unless:
++
++- EKF_STATUS_REPORT has the absolute-horizontal-position bit and not constant-position mode;
++- GLOBAL_POSITION_INT finishes within 10 m of the injected position; and
++- GPS_RAW_INT exposes injected fix type 3 and the injected 0.8 m horizontal accuracy as 800 mm.
++
++Evidence is written to ignored `tools/sitl/evidence/sitl.log` and `mavlink.jsonl`. The
++expected final stdout is one JSON `ACCEPTANCE` record. Until a run succeeds, these outputs
++must be labelled `[UNVERIFIED — not run here]`; the runner never synthesises a passing log.
+diff --git a/tools/sitl/build.sh b/tools/sitl/build.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..091b9a7f9e2bc3fd24e6de5b0476a6353ba323fd
+--- /dev/null
++++ b/tools/sitl/build.sh
+@@ -0,0 +1,22 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++SOURCE_DIR="$SCRIPT_DIR/ardupilot"
++PYTHON="$SCRIPT_DIR/../.venv/bin/python"
++PIN="3fc7011a7d3dc047cbb17d8bd98ee94577d144c6"
++
++if [[ ! -d "$SOURCE_DIR/.git" ]]; then
++    git clone --filter=blob:none --no-checkout https://github.com/ArduPilot/ardupilot.git "$SOURCE_DIR"
++fi
++git -C "$SOURCE_DIR" fetch --depth=1 origin "$PIN"
++git -C "$SOURCE_DIR" checkout --detach "$PIN"
++git -C "$SOURCE_DIR" submodule update --init --recursive --depth=1
++(
++    cd "$SOURCE_DIR"
++    "$PYTHON" ./waf configure --board sitl
++    "$PYTHON" ./waf rover
++)
++ARTIFACT="$SOURCE_DIR/build/sitl/bin/ardurover"
++test -x "$ARTIFACT"
++sha256sum "$ARTIFACT" | tee "$SCRIPT_DIR/ardurover.sha256"
+diff --git a/tools/sitl/params.parm b/tools/sitl/params.parm
+new file mode 100644
+index 0000000000000000000000000000000000000000..8223e0b442c82ba07039b621af20e2092d60bc1d
+--- /dev/null
++++ b/tools/sitl/params.parm
+@@ -0,0 +1,7 @@
++# External MAVLink GPS and Rover boat frame required by U-M1.
++FRAME_CLASS 2
++GPS1_TYPE 14
++GPS2_TYPE 0
++AHRS_EKF_TYPE 3
++EK3_ENABLE 1
++
+diff --git a/tools/sitl/run.sh b/tools/sitl/run.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb073b672d56b08944ba0feb702eeebdb662e260
+--- /dev/null
++++ b/tools/sitl/run.sh
+@@ -0,0 +1,6 @@
++#!/usr/bin/env bash
++set -euo pipefail
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++export PYTHONPATH="$SCRIPT_DIR/../mavlink_bridge${PYTHONPATH:+:$PYTHONPATH}"
++exec "$SCRIPT_DIR/../.venv/bin/python" "$SCRIPT_DIR/run_acceptance.py" "$@"
++
+diff --git a/tools/sitl/run_acceptance.py b/tools/sitl/run_acceptance.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..e7cbe1cb93aefeea1dd11e9a2b8fa73b0d343d28
+--- /dev/null
++++ b/tools/sitl/run_acceptance.py
+@@ -0,0 +1,144 @@
++#!/usr/bin/env python3
++"""Launch pinned Rover SITL, inject bridge messages, and assert observable acceptance."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import math
++from pathlib import Path
++import subprocess
++import sys
++import time
++
++from pymavlink import mavutil
++
++from mavlink_bridge.mapping import map_epoch
++from mavlink_bridge.synthetic import generate
++
++EKF_POS_HORIZ_ABS = 1 << 4
++EKF_CONST_POS_MODE = 1 << 7
++
++
++def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
++    radius = 6_371_008.8
++    p1, p2 = math.radians(lat1), math.radians(lat2)
++    dp = p2 - p1
++    dl = math.radians(lon2 - lon1)
++    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
++    return 2 * radius * math.asin(math.sqrt(a))
++
++
++def set_param(connection, name: str, value: float) -> None:
++    connection.mav.param_set_send(
++        connection.target_system,
++        connection.target_component,
++        name.encode(),
++        value,
++        mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
++    )
++    deadline = time.monotonic() + 8
++    while time.monotonic() < deadline:
++        reply = connection.recv_match(type="PARAM_VALUE", blocking=True, timeout=1)
++        if reply and reply.param_id == name and abs(reply.param_value - value) < 0.01:
++            return
++    raise AssertionError(f"SITL did not confirm {name}={value}")
++
++
++def run(binary: Path, evidence: Path, duration: float, tolerance_m: float, speed_mps: float) -> None:
++    evidence.mkdir(parents=True, exist_ok=True)
++    sitl_log = (evidence / "sitl.log").open("w", encoding="utf-8")
++    process = subprocess.Popen(
++        [
++            str(binary),
++            "--model",
++            "rover",
++            "--speedup",
++            "1",
++            "--wipe",
++            "--defaults",
++            str(Path(__file__).resolve().parent / "params.parm"),
++        ],
++        cwd=evidence,
++        stdout=sitl_log,
++        stderr=subprocess.STDOUT,
++    )
++    records = []
++    try:
++        connection = mavutil.mavlink_connection("tcp:127.0.0.1:5760", source_system=245)
++        if not connection.wait_heartbeat(timeout=30):
++            raise AssertionError("no SITL heartbeat within 30 seconds")
++        for name, value in (("FRAME_CLASS", 2), ("GPS1_TYPE", 14), ("GPS2_TYPE", 0)):
++            set_param(connection, name, value)
++
++        epochs = generate(-35.363261, 149.165230, 584.0, speed_mps, math.ceil(duration * 5))
++        latest_global = None
++        ekf_flags = 0
++        raw_accuracy_seen = False
++        started = time.monotonic()
++        final_epoch = None
++        for index, epoch_dict in enumerate(epochs):
++            deadline = started + index / 5
++            time.sleep(max(0.0, deadline - time.monotonic()))
++            from mavlink_bridge.mapping import SolutionEpoch
++
++            final_epoch = SolutionEpoch.from_dict(epoch_dict)
++            gps = map_epoch(final_epoch, final_epoch.monotonic_ns)
++            gps.send(connection)
++            while True:
++                message = connection.recv_match(blocking=False)
++                if message is None:
++                    break
++                kind = message.get_type()
++                if kind == "GLOBAL_POSITION_INT":
++                    latest_global = (message.lat / 1e7, message.lon / 1e7)
++                elif kind == "EKF_STATUS_REPORT":
++                    ekf_flags = int(message.flags)
++                elif kind == "GPS_RAW_INT":
++                    h_acc = getattr(message, "h_acc", 0)
++                    raw_accuracy_seen |= message.fix_type == 3 and 700 <= h_acc <= 900
++                    records.append({"type": kind, "fix_type": message.fix_type, "h_acc": h_acc})
++        if final_epoch is None or latest_global is None:
++            raise AssertionError("no injected epoch or GLOBAL_POSITION_INT observed")
++        expected = map_epoch(final_epoch, final_epoch.monotonic_ns)
++        error = distance_m(expected.lat / 1e7, expected.lon / 1e7, *latest_global)
++        records.append({"type": "OBSERVED", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        if error > tolerance_m:
++            raise AssertionError(f"position error {error:.2f} m exceeds {tolerance_m:.2f} m")
++        if not (ekf_flags & EKF_POS_HORIZ_ABS) or ekf_flags & EKF_CONST_POS_MODE:
++            raise AssertionError(f"EKF did not report absolute horizontal position: flags={ekf_flags}")
++        if not raw_accuracy_seen:
++            raise AssertionError("GPS_RAW_INT did not expose injected fix_type=3 and h_acc=800 mm")
++        records.append({"type": "ACCEPTANCE", "position_error_m": error, "ekf_flags": ekf_flags})
++        (evidence / "mavlink.jsonl").write_text(
++            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8"
++        )
++        print(json.dumps(records[-1], sort_keys=True))
++    finally:
++        process.terminate()
++        try:
++            process.wait(timeout=10)
++        except subprocess.TimeoutExpired:
++            process.kill()
++        sitl_log.close()
++
++
++def main() -> None:
++    here = Path(__file__).resolve().parent
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--binary", type=Path, default=here / "ardupilot/build/sitl/bin/ardurover")
++    parser.add_argument("--evidence", type=Path, default=here / "evidence")
++    parser.add_argument("--duration", type=float, default=45)
++    parser.add_argument("--tolerance-m", type=float, default=10)
++    parser.add_argument("--speed-mps", type=float, default=0.1)
++    args = parser.parse_args()
++    if not args.binary.is_file():
++        sys.exit(f"missing SITL binary: run {here / 'build.sh'} first")
++    run(args.binary, args.evidence, args.duration, args.tolerance_m, args.speed_mps)
++
++
++if __name__ == "__main__":
++    main()
+

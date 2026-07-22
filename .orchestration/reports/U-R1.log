@@ -1,1 +1,18 @@
-I'll start by reading the contract and checking the docs layout, then run live web research for the bladeRF/LNB market brief.Running parallel live web searches across the six research questions.Fetching remaining price, software, LNB, and USB-throughput sources in parallel.I have enough verified sources. Writing the research doc and unit report.
+I'll start by reading the contract and checking the docs layout, then run live web research for the bladeRF/LNB market brief.Running parallel live web searches across the six research questions.Fetching remaining price, software, LNB, and USB-throughput sources in parallel.I have enough verified sources. Writing the research doc and unit report.## U-R1 complete
+
+Live web research is in `docs/research/R1-bladerf-market.md` and the unit report in `.orchestration/reports/U-R1.md`. Contract **v1**. No git commit.
+
+### Headline results (access date 2026-07-22)
+
+| Topic | Finding |
+|--------|---------|
+| **Nuand direct** | xA4 **USD 540**, xA9 **USD 860**, both in stock, 1–2 day ship |
+| **EU retail** | SDRstore: xA4 **~€1 001**, xA9 **~€1 214**, in stock; Lab401 EU packs |
+| **Specs** | 2×2 MIMO, 10 MHz ref-in, 47 MHz–6 GHz (RX table 70–6000), 61.44 MSPS (opt. 122.88), USB 3.0 — confirmed on Nuand pages |
+| **FPGA** | xA4 49 kLE (~32 free) vs xA9 301 kLE (~292 free); RF identical; no stock DSP IP |
+| **USB** | Mission rates (few MSPS) fine; full dual 61.44 SC16 host-dependent; buffer knobs matter |
+| **Rust** | `bladerf` 0.1.2 (2024, thin FFI); `libbladerf-rs` 0.4.1 active but **BladeRF1 only** |
+| **LNB** | True ext-ref: **hamparts MK3 ~€168** (10 MHz→25 MHz); Bullseye ~€62 TCXO (ref **out**, not in) |
+| **Clock** | FE-5680A often 10 MHz but options include 5/15/50.255…; EU OCXO board ~€51 |
+
+Prefer EU stock for logistics; **xA4** unless FPGA correlators are committed; lock LNB + bladeRF to the same free-running 10 MHz via MK3-class path, not GPSDO.

@@ -321,8 +321,7 @@ mod tests {
         let covariance_ecef = [[9.0, 1.5, -0.5], [1.5, 16.0, 2.0], [-0.5, 2.0, 25.0]];
         for (row, covariance_row) in covariance_ecef.iter().enumerate() {
             for (column, value) in covariance_row.iter().enumerate() {
-                state.covariance[row * FilterState::CORE_DIMENSION + column] =
-                    *value;
+                state.covariance[row * FilterState::CORE_DIMENSION + column] = *value;
                 state.covariance[(row + 3) * FilterState::CORE_DIMENSION + column + 3] =
                     value / 100.0;
             }

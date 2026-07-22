@@ -1,0 +1,2140 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.5
+--------
+workdir: /home/od/work/leo-pnt
+model: gpt-5.6-sol
+provider: openai
+approval: on-request
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 019f8b87-1ddd-7df1-9905-8196f267f6b8
+--------
+user
+You are a fresh-context adversarial reviewer of a safety-critical document. Read, in order: docs/HANDOFF_PROMPT_BLADERF.md (esp. failure mode 9), docs/design/DESIGN_BASELINE.md, docs/design/ARCHITECTURE.md, .orchestration/briefs/U-S1.md, then the document under review docs/design/SAFETY_CASE.md and its report .orchestration/reports/U-S1.md. Review passes: (a) correctness — are the authority-grant conjunction, revocation semantics, watchdog/lease timing (esp. the claim it must beat ArduPilot GPS_TIMEOUT_MS 4000 ms), and escalation ladder internally consistent and consistent with the baseline's degradation table and GPS_INPUT interface? (b) coverage — every brief requirement and all seven mandated hazards present and testably stated? (c) the safety inversion — verify software never auto-manoeuvres AND a real backstop chain exists (watchdog, escalation, physical kill-cord). Report EVERY finding: severity (blocker/major/minor), confidence, file:line, claim, HOW TO VERIFY. No self-filtering; style nits never block. Final line: PASS or FAIL.
+codex
+I’ll perform a read-only, line-referenced audit in the exact order requested, then cross-check every brief requirement and mandated hazard before issuing PASS/FAIL.
+exec
+/bin/bash -lc 'nl -ba docs/HANDOFF_PROMPT_BLADERF.md && nl -ba docs/design/DESIGN_BASELINE.md && nl -ba docs/design/ARCHITECTURE.md && nl -ba .orchestration/briefs/U-S1.md && nl -ba docs/design/SAFETY_CASE.md && nl -ba .orchestration/reports/U-S1.md' in /home/od/work/leo-pnt
+ succeeded in 0ms:
+     1	# Handoff prompt — GPS-denied maritime PNT from LEO signals of opportunity (bladeRF)
+     2	
+     3	
+     4	
+     5	---
+     6	
+     7	You are designing and building a **GPS-denied maritime positioning system** that navigates
+     8	from **LEO satellite signals of opportunity** (Starlink, OneWeb, Iridium, Orbcomm), using
+     9	**Nuand bladeRF 2.0 micro** SDRs. Work to production engineering standards: this steers a
+    10	boat.
+    11	
+    12	## Mission
+    13	
+    14	Measure position, velocity and heading on a moving vessel **without GNSS**, from Doppler
+    15	(range-rate) observations of LEO downlinks, and fuse them with inertial, speed-log and
+    16	heading sensors into a navigation solution good enough to feed an autopilot.
+    17	
+    18	The honest framing: this is simultaneously a **research instrument** (can LEO SoOP navigate
+    19	a boat without GNSS, and how well?) and an **operational navigator**. Those two goals fight
+    20	each other. Resolve that tension explicitly and early — see "Failure modes" below.
+    21	
+    22	## Fixed constraints
+    23	
+    24	- **SDR: Nuand bladeRF 2.0 micro (xA4 or xA9).** Verify current specs, price and EU
+    25	  availability yourself — do not trust my numbers. The properties that matter here:
+    26	  - **2×2 coherent MIMO.** Two RX channels on a shared clock. This is the reason to pick
+    27	    this radio: RX0 can take the Ku IF (Starlink/OneWeb behind an LNB) while RX1 takes
+    28	    L-band (Iridium 1616–1626.5 MHz) **coherently**, eliminating the multi-dongle,
+    29	    multi-clock mess that plagues cheaper builds. Exploit this deliberately.
+    30	  - **Native 10 MHz external reference input.** Critical — see the clock constraint below.
+    31	  - 47 MHz–6 GHz tuning, 12-bit ADC, up to ~61.44 MSPS, USB 3.0, Cyclone V FPGA.
+    32	  - Ku band (10.7–12.75 GHz) still requires an LNB to downconvert to the ~950–2150 MHz
+    33	    L-band IF. That IF is comfortably inside bladeRF range.
+    34	- **Frequency reference: free-running, no GNSS discipline.** A GPSDO defeats the entire
+    35	  premise. Use a surplus rubidium (FE-5680A class) or a good OCXO, calibrated
+    36	  pre-deployment only. The position solver must carry receiver clock bias and drift as
+    37	  estimated states.
+    38	- **The vessel is manned.** A qualified person is aboard with a physical manual override.
+    39	  This is not a detail — it dissolves the COLREGs Rule 5 lookout obligation that makes an
+    40	  unmanned build legally intractable, and it is what makes sea trials possible at all.
+    41	- **Autopilot: ArduPilot Rover, boat frame** (`FRAME_CLASS=2`). PX4 has no boat frame and
+    42	  its EKF2 external-vision path demands 30–50 Hz or it will not fuse.
+    43	
+    44	## What is already known — do not rediscover these
+    45	
+    46	These were established by prior work at real cost. Verify anything you intend to rely on,
+    47	but start from here rather than from zero.
+    48	
+    49	**Signal layer**
+    50	- The Starlink Ku **tone comb degraded fleet-wide after 2023** (~50 → ~20 dB-Hz). Do not
+    51	  architect around tones. The tractable observable is **beacon / PSS-SSS correlation
+    52	  Doppler** at 2.5–5 MHz bandwidth. The sync sequences are published.
+    53	- Use **CelesTrak supplemental ephemerides (SupGP)**, not plain TLEs. Confirmed full-fleet
+    54	  for Starlink and OneWeb. SGP4 error grows roughly 0.94 km at 6 h, ~2.6 km at 1 day,
+    55	  38.5 km at 7 days — cache before going offline and gate on age.
+    56	- **Orbcomm (137 MHz) is the best value per dollar** in the constellation set: continuous,
+    57	  cheap to receive, deep published SoOP pedigree, and it decorrelates a front end that is
+    58	  otherwise entirely dependent on one LNB.
+    59	- **OneWeb earns its place on geometry, not on signal count — but it is conditional.**
+    60	  At high latitude Starlink's 53° shells produce mostly east–west passes, so the east error
+    61	  axis stays poorly observed however many Starlink satellites you track. OneWeb's near-polar
+    62	  87.9° orbits run within ~4° of due north–south, near-orthogonal to Starlink: published
+    63	  OneWeb-only east sigma of 636.7 m collapses to 3.5 m fused, and single-constellation 2-D
+    64	  errors of 30–35 m each fuse to ~5 m with eight satellites (a truth-aided ceiling, but the
+    65	  direction is real). Marginal hardware cost is ~zero — same Ku band, same LNB, same IF;
+    66	  active channels 11.075/11.325 GHz land at 1325/1575 MHz, and unlike a 1700 MHz-limited
+    67	  receiver the bladeRF also reaches 11.575 GHz (IF 1825 MHz).
+    68	  **The catch:** there is no demand-proof narrowband OneWeb observable. The trackable 10 ms
+    69	  beacon is the demand-dependent default-payload repetition, and beam activity at a fixed
+    70	  site pulses in roughly 20-second windows on alternating channels. Energy detection is
+    71	  near-certain; continuous trackability is not. **Gate all OneWeb tracker work behind a
+    72	  24-hour channel-occupancy survey at the actual operating location** — measure real
+    73	  correlation gain before writing a tracker.
+    74	- **Spend the second coherent RX channel deliberately, and let that survey decide it.**
+    75	  Ku + L-band (Starlink/OneWeb on RX0, Iridium on RX1) maximises constellation diversity and
+    76	  decorrelates the front end, since Iridium bypasses the LNB entirely — no shared bias tee,
+    77	  no common rain-fade mode. Dual-Ku (two OneWeb channels at once) instead defeats the
+    78	  alternating-channel pulsing and roughly doubles OneWeb's usable duty cycle. If OneWeb
+    79	  proves reliably present on one channel, take the first option; if it pulses across
+    80	  channels as the evidence suggests, take the second and time-share Iridium.
+    81	
+    82	**Estimation layer — the single most important fact**
+    83	- **On a moving receiver, LEO Doppler is a velocity instrument first and a position
+    84	  instrument only by accumulation.** Receiver velocity enters range-rate at unit magnitude
+    85	  every sample; position enters only through line-of-sight *direction*, suppressed by
+    86	  1/range (550–1200 km), and is recoverable only from how the Doppler curve evolves over
+    87	  **10–20 minutes**. Every manoeuvre resets convergence. Design the test campaign around
+    88	  long constant-heading legs or you will never observe position at all.
+    89	- Expect **0.7–4 cm/s per-axis velocity** accuracy and, satellite-only, **~100–200 m
+    90	  position** — not the metre-level figures in the literature, which were all obtained with
+    91	  **GPS-disciplined** lab receivers.
+    92	- **Marine dead-reckoning error is dominated by current set and drift** (0.2–1.0 kn
+    93	  typical, 2–4 kn in Danish straits), which is 1.5–6× the heading term. A speed log
+    94	  measures speed *through water*; Doppler measures speed *over ground*; differencing them
+    95	  yields the current vector directly. This is the strongest argument for LEO Doppler on a
+    96	  boat, and it is a **velocity** argument.
+    97	- **Heading is the weakest link**, and GNSS compasses are excluded by the premise. Budget
+    98	  for it properly: calibrated dual magnetometers including a propulsion-current deviation
+    99	  term, and consider a solar/sky-polarisation compass (absolute, non-magnetic, passive).
+   100	- **Do not buy a tactical IMU expecting it to carry a passage.** Even navigation-grade
+   101	  drifts ~1 km/hour free-inertial. A boat *measures* heading rather than integrating it,
+   102	  which breaks the classic inertial divergence mode. The IMU keeps the dynamics model
+   103	  honest through turns; it does not carry position.
+   104	
+   105	**Autopilot integration**
+   106	- Inject the solution as **`GPS_INPUT` (MAVLink msg 232, `GPS1_TYPE=14`) at ~5 Hz**, not
+   107	  `ODOMETRY`. Reason, verified in ArduPilot source: `handle_odometry()` hard-codes the
+   108	  velocity error argument to literal `0` and the decoded velocity covariance is floored to
+   109	  a constant, so ODOMETRY **cannot** transport per-epoch velocity uncertainty. Since your
+   110	  solution is good in velocity and poor in position, that distinction is decisive.
+   111	  `GPS_INPUT` carries `horiz_accuracy` and `speed_accuracy` independently.
+   112	- **ArduPilot clamps reported horizontal accuracy at 100 m internally.** Its EKF variance
+   113	  is therefore a censored view. The real uncertainty monitor and the steering gate must
+   114	  live in your companion process, upstream of MAVLink. This is not tunable away.
+   115	- Publish continuously with dead-reckoned fill between absolute fixes; `GPS_TIMEOUT_MS` is
+   116	  4000 ms, so fixes arriving minutes apart cannot be published raw.
+   117	
+   118	**Hardware**
+   119	- The frequency reference's enemy at sea is **sustained mean tilt, not wave motion**.
+   120	  Oscillatory FM is suppressed as 1/(π·f·τ); a sustained heel is a *step* the linear drift
+   121	  model cannot absorb. Free ~11× mitigation: mount the resultant g-sensitivity vector
+   122	  vertical. If the hull planes and slams, re-derive this — the analysis above assumed a
+   123	  displacement hull.
+   124	
+   125	## Required deliverables
+   126	
+   127	1. **A normative design baseline** — one document, one language, stating the vessel, the
+   128	   sensors, the rate contract, the degradation model and the acceptance criteria. Everything
+   129	   else is subordinate to it and says so.
+   130	2. **A decision log** recording every load-bearing constraint change with its rationale.
+   131	3. **Architecture** — module boundaries, the measurement bus, on-disk formats, and an
+   132	   explicit statement of which module owns time.
+   133	4. **Implementation**, with the estimator actually wired end to end (see failure modes).
+   134	5. **A bill of materials** with live-verified EU pricing and availability.
+   135	6. **A safety case** — what grants steering authority, what revokes it, and what the
+   136	   backstop is when the human does not respond.
+   137	
+   138	## Verification discipline
+   139	
+   140	- Write tests first; loop on `cargo test`/`pytest` and the linter until both pass cleanly.
+   141	- **Verify Jacobians numerically against finite differences.** A wrong Jacobian is silent —
+   142	  the filter still runs and still produces a covariance, just the wrong one, and that
+   143	  covariance gates steering authority.
+   144	- Prove the estimator on **replayed real captures** before trusting it, and run the same
+   145	  raw log twice — once GNSS-aided, once GNSS-withheld. That delta is the headline result.
+   146	- Use **ArduPilot SITL** to validate the MAVLink path against pinned firmware, recording
+   147	  the commit hash and artifact checksum.
+   148	- Cite sources for factual claims. Mark estimates as estimates. Separate what you measured
+   149	  from what you inferred.
+   150	
+   151	## Failure modes to actively avoid
+   152	
+   153	These are the specific ways the prior attempt went wrong. Guard against each explicitly.
+   154	
+   155	1. **GNSS quietly absorbing the project.** If a GNSS receiver is present as a production
+   156	   source, the GNSS-denied path becomes a fallback nobody validates, and the research
+   157	   question is never answered. Fix: a single `gnss_authority` config key with
+   158	   `production | recorded_only | off`, enforced in the fusion path, where `recorded_only`
+   159	   routes GNSS to the truth journal and nothing else. Same code in every mode — a research
+   160	   mode running different code does not validate the operational mode. An unrecognised
+   161	   value must raise, never default to `production`.
+   162	2. **Acceptance limits that make the research result fail by construction.** A single 25 m
+   163	   position limit is correct operationally and impossible for satellite-only navigation.
+   164	   Split acceptance into **aided** and **denied** profiles with limits drawn from the
+   165	   literature for each.
+   166	3. **A dead-reckoning timeout that forbids convergence.** A 30-second DR gate is right for
+   167	   *authority* and fatal for an estimator that needs 10–20 minutes to observe position.
+   168	   Let the gate govern authority only, never estimator execution.
+   169	4. **Unit-tested modules that are never connected.** The prior build had a filter, a bus, an
+   170	   integrity monitor and a supervisor, each with passing tests, and **nothing wired them
+   171	   together** — no fusion executive existed. Build the executive first and grow modules into
+   172	   it, not the other way round.
+   173	5. **Forgetting to propagate.** Related and worse: ensure the filter is actually
+   174	   time-propagated from IMU input in the running loop, not only updated when measurements
+   175	   arrive. Otherwise the covariance never grows with motion and every uncertainty gate
+   176	   reads optimistically.
+   177	6. **Building the reject gate before the producer.** A gate that scores observations against
+   178	   a prediction nobody produces is decoration. Build the ephemeris propagator and Doppler
+   179	   predictor before the gate that consumes them.
+   180	7. **Circular validation.** If the LEO residual is scored against a state estimate driven by
+   181	   GNSS, accepted residuals measure agreement-with-GNSS, and exactly the measurements that
+   182	   would reveal a LEO bias get rejected as outliers. Compute LEO performance statistics only
+   183	   from GNSS-withheld runs, offline.
+   184	8. **Declaring states you never observe.** Do not carry filter states with no measurement
+   185	   path — they accrue process noise unbounded and inflate the state vector without
+   186	   informing it. Either implement the update or delete the state.
+   187	9. **A safety inversion without a backstop.** On a manned fast boat it is correct that
+   188	   software never auto-selects RTL/Loiter/disarm — an unannounced manoeuvre at speed is
+   189	   itself the hazard. But "never manoeuvre" must not become "no backstop": give the
+   190	   supervisor its own monotonic watchdog so authority cannot outlive the solution, make
+   191	   un-acknowledged alarms escalate, and ensure a physical, controller-independent override
+   192	   exists (a helm kill-cord is cheap and standard).
+   193	10. **Documentation drift.** When the design changes, mark the superseded documents as
+   194	    superseded *in the documents themselves*. A demotion recorded only in the new file's
+   195	    preamble is invisible to anyone reading top-down — including your future self.
+   196	
+   197	## Open questions to resolve with live research
+   198	
+   199	- bladeRF 2.0 micro: current price, EU availability, xA4 vs xA9 FPGA sizing for on-board
+   200	  channelisation, sustained USB 3.0 throughput on your chosen host, and the maturity of
+   201	  Rust bindings versus going through SoapySDR.
+   202	- Whether the two coherent RX channels are better spent on Ku + L-band simultaneity, on two
+   203	  Ku channels for OneWeb's alternating allocation, or on an interferometric baseline.
+   204	- **Iridium STL (Satelles)** — a commercial receive-only GNSS-alternative PNT service on
+   205	  Iridium, ~20 m and sub-100 ns timing. If purchasable at a sane price it changes the
+   206	  build-versus-buy calculation substantially. Get a quote.
+   207	- Whether your intended operating area has terrestrial signals of opportunity worth using
+   208	  (DVB-T2, cellular, R-Mode) — they are static emitters at known positions, so they yield
+   209	  fixes in seconds rather than the minutes LEO needs. Note the trap: DVB-T single-frequency
+   210	  networks are usually GNSS-disciplined, so they may degrade under the very jamming that
+   211	  motivated the project.
+   212	- Local regulations for autonomous or semi-autonomous vessel operation, and what a manned
+   213	  test platform is permitted to do.
+   214	
+   215	## Working style
+   216	
+   217	Research before designing; design before implementing. Where evidence contradicts an
+   218	assumption in this brief, say so directly and recommend the change rather than complying
+   219	silently. State what you did not verify.
+     1	# Design Baseline
+     2	
+     3	Status: **normative**
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	This is the single normative design document for the LEO signals-of-opportunity maritime
+     7	PNT system. Every other project document, including `ARCHITECTURE.md`, is subordinate to
+     8	this baseline. If another document conflicts with it, this document governs until this
+     9	baseline is explicitly revised; superseded documents must be marked in their own text.
+    10	
+    11	## Mission and operating assumptions
+    12	
+    13	The system shall estimate position, velocity, heading, receiver clock bias and receiver
+    14	clock drift on a moving, **manned displacement-hull vessel**, without GNSS, and provide a
+    15	navigation solution to ArduPilot Rover in boat frame (`FRAME_CLASS=2`). A qualified person
+    16	shall remain aboard with a physical, controller-independent manual override.
+    17	
+    18	The intended operating area is assumed to be the Danish straits. This is a **working
+    19	assumption**, not a verified deployment decision. The displacement-hull assumption is also
+    20	load-bearing: if the vessel planes or slams, the frequency-reference mounting and dynamics
+    21	analysis shall be revisited.
+    22	
+    23	The system is both a research instrument and an operational navigator. It shall resolve
+    24	that tension with one executable code path and one configuration key, `gnss_authority`:
+    25	
+    26	- `production`: GNSS measurements may enter fusion and are also journalled as truth.
+    27	- `recorded_only`: GNSS measurements go only to the truth journal and never enter fusion.
+    28	- `off`: GNSS is neither fused nor recorded as truth.
+    29	- Any other value shall raise an error; it shall never fall back to `production`.
+    30	
+    31	Mode selection changes measurement authority, not implementation. The **aided** acceptance
+    32	profile applies to `production`; the **denied** profile applies to `recorded_only` and
+    33	`off`. Headline LEO performance statistics shall be computed offline from GNSS-withheld
+    34	runs, never from a state estimate driven by GNSS.
+    35	
+    36	## Vessel equipment and sensor baseline
+    37	
+    38	The baseline sensor and interface set is:
+    39	
+    40	| Source | Required role | Baseline |
+    41	|---|---|---|
+    42	| Nuand bladeRF 2.0 micro xA4 or xA9 | Coherent RF sampling | Two coherent RX channels on one external reference. RX allocation is survey-dependent. |
+    43	| Ku LNB and antenna | Starlink and conditional OneWeb reception | 10.7--12.75 GHz downconverted to approximately 950--2150 MHz IF. Track beacon/PSS-SSS correlation Doppler at 2.5--5 MHz bandwidth; do not depend on the degraded tone comb. |
+    44	| L-band antenna | Iridium reception | Direct 1616--1626.5 MHz reception, bypassing the Ku LNB. |
+    45	| 137 MHz antenna/front end and independent low-cost receiver | Orbcomm reception | A separate, non-coherent receiver provides continuous constellation/front-end diversity without consuming either bladeRF coherent RX channel; exact receiver is a BOM dependency `[UNVERIFIED]`. |
+    46	| Free-running rubidium (FE-5680A class) or good OCXO | SDR frequency reference | 10 MHz external reference, calibrated only before deployment; no GNSS discipline. Mount its resultant acceleration-sensitivity vector vertically under the displacement-hull assumption. |
+    47	| IMU | Propagation and turn dynamics | Drives every estimator propagation; it does not carry passage-scale position unaided. |
+    48	| Two calibrated magnetometers | Heading measurement and redundancy | Calibration includes a propulsion-current deviation term. |
+    49	| Speed log | Speed through water | Compared with LEO-derived speed over ground to estimate current set and drift. |
+    50	| GNSS receiver | Aiding or truth, by explicit authority | Its path is controlled only by `gnss_authority`. |
+    51	| Optional solar/sky-polarisation compass | Independent absolute heading | Candidate mitigation for magnetic heading weakness; not required until selected and verified. |
+    52	| Companion computer monotonic clock | Runtime ordering and watchdogs | Time ownership is defined in the subordinate architecture. |
+    53	| ArduPilot Rover autopilot | Navigation consumer | Receives MAVLink `GPS_INPUT` (message 232, `GPS1_TYPE=14`). |
+    54	
+    55	OneWeb tracker implementation is forbidden until a 24-hour channel-occupancy survey at the
+    56	actual operating location demonstrates useful correlation gain. The survey shall decide
+    57	whether the second coherent receiver is Ku + L-band (diverse simultaneous tracking) or
+    58	dual Ku (alternating OneWeb channel coverage, with Iridium time-shared). Interferometric
+    59	use remains an open research option and is not baseline functionality.
+    60	
+    61	Orbcomm shall remain simultaneous through its separate receiver in either bladeRF allocation.
+    62	Its samples are not coherent with the bladeRF channels; this is intentional because it
+    63	preserves both bladeRF channels and decorrelates receiver-clock and front-end failure modes.
+    64	
+    65	Ephemerides shall be cached CelesTrak supplemental ephemerides (SupGP), not plain TLEs,
+    66	with an explicit age gate. The provisional maximum age shall be 6 hours, the first supplied
+    67	error-growth datum (approximately 0.94 km orbit error), rather than one day or seven days;
+    68	the mapping from orbit error to navigation integrity remains `[UNVERIFIED]`, so this limit
+    69	shall be validated or tightened before steering trials.
+    70	
+    71	## Rate contract
+    72	
+    73	All rates below are interface contracts. Values absent from the handoff are deliberately
+    74	marked **estimate** and shall be validated against sensor capability and replay data.
+    75	
+    76	| Interface | Required rate/behaviour |
+    77	|---|---|
+    78	| SDR sample stream | Tracker-selected 2.5--5 MHz processing bandwidth per active correlation channel (stated expectation; sample rate itself remains `[UNVERIFIED]`). |
+    79	| IMU to fusion executive | 100 Hz nominal (**estimate**), with every accepted sample causing time propagation; measurement arrivals shall never be the sole trigger for propagation. |
+    80	| Dual magnetometers to fusion executive | 10 Hz each nominal (**estimate**). |
+    81	| Speed log to fusion executive | 5 Hz nominal (**estimate**). |
+    82	| LEO Doppler observations | Event-driven at each valid correlation solution; target 1 Hz per tracked signal (**estimate**). No synthetic observation is emitted to satisfy a rate. |
+    83	| GNSS measurement/truth input | Native receiver rate, at least 1 Hz (**estimate**); routing is determined before fusion by `gnss_authority`. |
+    84	| Navigation/integrity solution | 5 Hz nominal (**estimate**), using propagated dead-reckoned fill between absolute observations. |
+    85	| MAVLink `GPS_INPUT` output | 5 Hz nominal (handoff requirement: approximately 5 Hz), continuously while the process is healthy, subject to steering-authority gating. |
+    86	| Journal writes | Every input, decision and output event, preserving native rate; batched disk flush is allowed only if crash-loss bounds are explicitly configured (**estimate**). |
+    87	
+    88	The four-second `GPS_TIMEOUT_MS` motivates continuous output but does not define estimator
+    89	validity. Any dead-reckoning timeout shall govern **steering authority only**. It shall never
+    90	stop propagation, observation processing, journalling, or the 10--20 minute position
+    91	convergence process.
+    92	
+    93	## Estimator and degradation contract
+    94	
+    95	LEO Doppler shall be treated primarily as a velocity/range-rate observation. Position is
+    96	recovered through the evolution of line-of-sight geometry over 10--20 minute,
+    97	constant-heading legs, and manoeuvres reset convergence expectations. The estimator shall
+    98	carry only states with implemented measurement paths. At minimum these are position,
+    99	horizontal velocity, attitude/heading, receiver clock bias and receiver clock drift;
+   100	position is 3-D with the vertical component constrained as specified below, and vertical
+   101	velocity is not a baseline state. Additional
+   102	states may be enabled only with a documented direct or cross-covariance measurement path;
+   103	this permits observable IMU bias states but forbids decorative unobservable states.
+   104	
+   105	The normative LEO observable at the estimator interface is **correlation-peak Doppler**
+   106	from the beacon/PSS-SSS tracker, converted to range rate with its stated nominal carrier;
+   107	raw carrier-frequency Doppler is not the interface observable. Each satellite pass shall
+   108	have a separate transmit-frequency nuisance-bias state, constant over the pass with a
+   109	validated small random-walk model, so a satellite oscillator/carrier offset cannot be
+   110	misinterpreted as receiver velocity or clock drift. The state shall be retired at pass end.
+   111	
+   112	The online estimator shall not carry a water-current state in the baseline. The solution
+   113	module shall derive and journal the horizontal current vector as LEO-derived velocity over
+   114	ground minus the heading-rotated speed-log velocity through water, with covariance
+   115	propagated from both inputs. This makes current observable without enlarging the core state;
+   116	a future first-class current state requires an explicit update model and baseline revision.
+   117	
+   118	Altitude shall be a vertical position state constrained to local mean sea level by a
+   119	sea-surface pseudo-measurement. Its variance shall cover chart/geoid uncertainty plus local
+   120	tide, wave and vessel-motion scale; the numeric model is `[UNVERIFIED]` and shall be frozen
+   121	for the operating area before steering trials. Vertical velocity is excluded from steering
+   122	use: `GPS_INPUT.alt` shall publish the MSL-constrained estimate, `vd` shall be 0, and
+   123	`vert_accuracy` shall report a bound consistent with that pseudo-measurement rather than 0
+   124	or an unconstrained filter covariance.
+   125	
+   126	The antenna phase centres, IMU origin and vessel reference point, including their full
+   127	3-D lever arms and orientations, shall be surveyed calibration inputs. Doppler and inertial
+   128	updates shall compensate rotational lever-arm velocity before fusion. Every affected
+   129	measurement envelope shall reference the calibration ID for these extrinsics; missing or
+   130	mismatched calibration is an integrity fault that forbids steering authority.
+   131	
+   132	Expected degradation is explicit:
+   133	
+   134	| Loss or condition | What remains / required response |
+   135	|---|---|
+   136	| GNSS absent or forbidden | Normal denied operation: IMU propagation, measured heading, speed-through-water and accepted LEO Doppler remain. GNSS cannot quietly re-enter fusion. |
+   137	| One LEO constellation or RF front end lost | Continue with remaining accepted constellations and inertial/marine sensors; geometry and uncertainty shall degrade honestly. Loss of Ku shall not remove independently received Orbcomm, and loss of the LNB shall not remove direct L-band reception when the bladeRF allocation includes it. |
+   138	| All LEO observations lost | Continue IMU propagation plus magnetometer and speed-log updates; covariance grows and current/ground-speed observability degrades. Steering authority expires by the independently enforced authority policy, but the estimator keeps running. |
+   139	| One magnetometer lost/rejected | Continue with the other calibrated magnetometer, IMU turn dynamics and any selected non-magnetic heading sensor; inflate heading uncertainty. |
+   140	| Both magnetometers lost/rejected | Continue short-term attitude propagation and any selected non-magnetic heading measurement. Heading is not passage-capable by inertial integration alone; revoke authority when its bound is exceeded. |
+   141	| Speed log lost | LEO ground velocity and heading/IMU remain; direct water-current separation is unavailable and uncertainty shall reflect it. |
+   142	| IMU stream stale | Time propagation is no longer trustworthy. The supervisor shall revoke steering authority; the estimator shall remain running but shall not fabricate propagation samples, and journalling and recovery may continue. |
+   143	| Frequency reference degrades or sustained heel invalidates its model | Clock bias/drift states may absorb only modelled behaviour. Reject biased Doppler as integrity dictates and revoke authority when solution limits are exceeded. |
+   144	| Sea-surface multipath biases a tracker | Correlation quality and innovation consistency shall drive rejection or uncertainty inflation; persistent constellation-correlated residuals revoke authority when protection limits are exceeded. |
+   145	| Ephemeris missing or too old | Do not form or accept the affected Doppler prediction. Continue with other measurements; never bypass the age gate. |
+   146	| Companion process stalls | Its independent monotonic watchdog shall make steering authority expire. Alarm escalation and the physical override remain available; software shall not autonomously select RTL, Loiter or disarm. |
+   147	
+   148	## Acceptance profiles
+   149	
+   150	These are system-level trial limits, evaluated against an independent truth journal over
+   151	declared test segments. They do not replace per-epoch integrity and authority checks.
+   152	Velocity means horizontal per-axis error; position means horizontal error. Exact percentile,
+   153	window and confidence definitions remain `[UNVERIFIED]` and must be frozen before trials.
+   154	
+   155	| Criterion | Aided (`production`) | Denied (`recorded_only` or `off`) |
+   156	|---|---:|---:|
+   157	| Horizontal position error | <= 25 m (**estimate**, operational-grade target inferred from the handoff's example of a correct operational limit) | <= 200 m after an uninterrupted 20-minute constant-heading convergence leg (**estimate**, conservative edge of the stated approximately 100--200 m expectation) |
+   158	| Horizontal velocity error, each axis | <= 0.02 m/s (**estimate**, operational target within the handoff's 0.007--0.04 m/s expectation) | <= 0.04 m/s (**estimate**, upper edge of the stated 0.7--4 cm/s expectation) |
+   159	| Heading error | <= 2 degrees (**estimate**) | <= 5 degrees (**estimate**) |
+   160	| Horizontal current-vector error | Recorded and scored, but no pass/fail threshold until local truth instrumentation and current variability are characterised (`[UNVERIFIED]`) | Same; omission of a threshold does not make publication optional |
+   161	| Output continuity | Valid `GPS_INPUT` at nominal 5 Hz while healthy; no gap >= 4 s (**estimate** derived from the stated timeout) | Same; dead-reckoned fill is explicitly permitted, with reported uncertainty and authority enforced upstream |
+   162	| GNSS isolation | GNSS fusion is allowed and auditable | Zero GNSS measurements delivered to fusion; `recorded_only` may write truth only |
+   163	| Replay determinism | Same raw log, config, software and deterministic execution settings produces bit-exact journal outputs; explicitly non-deterministic backends require a frozen numeric tolerance `[UNVERIFIED]` | Same, including a paired GNSS-withheld replay used for headline results |
+   164	
+   165	The aided numbers are engineering estimates, not literature-derived guarantees. Here,
+   166	“operational-grade” means satisfying the estimated 25 m position, 0.02 m/s per-axis
+   167	velocity, and 2 degree heading trial targets while integrity permits steering. It does not
+   168	mean certified safety performance. The denied limit intentionally does not inherit the
+   169	aided 25 m position target, which would make the research result fail by construction.
+   170	The 2/5 degree heading gates are provisional engineering targets chosen to bound transverse
+   171	velocity error from heading-rotated speed-log measurements while allowing degraded magnetic
+   172	operation; the handoff supplies no validated heading limit, so both require trial validation
+   173	and are `[UNVERIFIED]`.
+   174	
+   175	The real horizontal and speed uncertainty monitor and every steering gate shall live in
+   176	the companion process upstream of MAVLink, because the handoff states that ArduPilot
+   177	internally clamps reported horizontal accuracy at 100 m. Report `horiz_accuracy` and
+   178	`speed_accuracy` independently in `GPS_INPUT`. Publish fused heading through the
+   179	`GPS_INPUT.yaw` field with its validity governed by the companion integrity gate. `ODOMETRY`
+   180	shall not be used for this navigation injection because its ArduPilot path cannot transport
+   181	the required per-epoch velocity uncertainty.
+   182	
+   183	## Verification obligations
+   184	
+   185	Before steering trials, tests shall demonstrate end-to-end execution from real-capture
+   186	replay through propagation, measurement updates, integrity, authority decision and
+   187	`GPS_INPUT`. Jacobians shall be checked against finite differences. The same raw log shall
+   188	be replayed aided and GNSS-withheld. MAVLink integration shall be checked in ArduPilot SITL
+   189	against a pinned firmware commit and artifact checksum. Measurements, inferences and
+   190	estimates shall remain distinguishable in resulting evidence.
+     1	# Architecture
+     2	
+     3	Status: subordinate to [`DESIGN_BASELINE.md`](DESIGN_BASELINE.md)
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	`DESIGN_BASELINE.md` is the single normative design document. This architecture implements
+     7	it and is subordinate wherever the two differ.
+     8	
+     9	## Runtime shape and module boundaries
+    10	
+    11	The **fusion executive** is the first runnable vertical slice and the only orchestrator.
+    12	It owns the main event loop and connects these bounded modules through typed interfaces:
+    13	
+    14	1. **Configuration and authority** parses configuration, rejects an unknown
+    15	   `gnss_authority`, and constructs the single common processing graph. It applies GNSS
+    16	   routing before any fusion update.
+    17	2. **Clock/time service** owns runtime time (defined below), timestamps ingress, estimates
+    18	   UTC mapping and exposes monotonic deadlines.
+    19	3. **Sensor adapters** convert IMU, magnetometer, speed-log and GNSS device records into
+    20	   bus measurements without estimation policy. The Orbcomm adapter consumes a separate,
+    21	   non-coherent low-cost receiver and does not consume a bladeRF coherent RX channel.
+    22	4. **SDR capture** configures coherent channels and records raw IQ plus capture metadata.
+    23	   It does not decide whether a signal is navigation-safe.
+    24	5. **Signal trackers** turn IQ into Doppler/range-rate candidates with uncertainty and
+    25	   quality metadata. Starlink uses beacon/PSS-SSS correlation; OneWeb remains disabled
+    26	   until its required survey gate passes. Constellation trackers share an observation
+    27	   interface, not hidden state. Their estimator-facing observable is correlation-peak
+    28	   Doppler, never an unspecified raw carrier estimate.
+    29	6. **Ephemeris store and propagator** validates SupGP identity and age, then produces
+    30	   satellite position and velocity at observation time.
+    31	7. **Doppler predictor** combines propagated satellite state, receiver state and clock
+    32	   model to predict a range-rate/Doppler observation and its linearisation.
+    33	8. **Observation integrity gate** compares a tracker observation with a real predictor
+    34	   output, recording accept/reject and rationale. It cannot exist as a functional gate
+    35	   before modules 6 and 7.
+    36	9. **Estimator** propagates on every IMU event and applies only accepted, implemented
+    37	   updates. Its state registry requires a direct or cross-covariance measurement path for
+    38	   every declared state. It creates one per-satellite, per-pass transmit-frequency nuisance
+    39	   bias with a small validated random walk and retires it when the pass ends. It also applies
+    40	   the MSL sea-surface altitude pseudo-measurement; water current is derived downstream and
+    41	   is not a baseline estimator state.
+    42	10. **Solution integrity monitor** derives protection/uncertainty metrics independently
+    43	    of ArduPilot's censored accuracy view.
+    44	11. **Authority supervisor** grants or revokes steering authority from solution health,
+    45	    freshness and uncertainty. Its monotonic watchdog is independent of estimator
+    46	    convergence; expiry cannot stop the estimator. It raises and escalates alarms but does
+    47	    not select RTL, Loiter or disarm.
+    48	12. **MAVLink publisher** emits approximately 5 Hz `GPS_INPUT`, with independent horizontal
+    49	    and speed accuracy, using propagated fill between absolute updates. It publishes fused
+    50	    heading in `yaw`, the MSL-constrained altitude in `alt`, vertical velocity `vd = 0`, and
+    51	    a `vert_accuracy` consistent with the sea-surface constraint; it does not publish
+    52	    `ODOMETRY` as the navigation injection.
+    53	13. **Journal/replay service** writes measurements, truth and decisions and can reproduce
+    54	    the same bus stream from disk. Offline evaluation consumes journals; it does not feed
+    55	    results back into online rejection.
+    56	
+    57	No leaf module communicates directly with another leaf module. It publishes to or is
+    58	called by the executive through explicit ports, which makes the connected running path the
+    59	unit of integration rather than a collection of independently tested parts.
+    60	
+    61	## Measurement bus
+    62	
+    63	The measurement bus is an in-process, bounded, typed event stream owned and drained by the
+    64	fusion executive. Producers submit immutable envelopes; one executive orders, journals and
+    65	dispatches them. Backpressure and overflow are explicit health events, never silent drops.
+    66	
+    67	Every envelope contains: schema version, source ID, sequence number, measurement kind,
+    68	source/sample time, host receive monotonic time, optional UTC time plus its uncertainty,
+    69	payload SI units and frame identifier, covariance/uncertainty, quality flags, calibration
+    70	ID and provenance linking it to a capture or source record. The calibration ID shall resolve
+    71	the surveyed antenna phase-centre, IMU and vessel-reference extrinsics; Doppler and inertial
+    72	updates compensate rotational lever-arm velocity, and a missing/mismatched ID is an
+    73	authority-blocking integrity event. Exact field encoding and frame
+    74	enumeration are v2 contract work; the concepts are binding here.
+    75	
+    76	Ordering uses host monotonic receive time with per-source sequence checks. Measurement time
+    77	is retained for delayed updates. Clock resets, sequence gaps, lateness and queue overflow
+    78	become journalled integrity events. The bus carries at least IMU, heading, speed-through-
+    79	water, GNSS, tracker Doppler, ephemeris state, predicted Doppler, gate decision, estimator
+    80	solution, integrity status, authority status and output status messages.
+    81	
+    82	GNSS routing is enforced at bus ingress: `production` permits a fusion copy and truth copy;
+    83	`recorded_only` permits only the truth-journal route; `off` permits neither. There is no
+    84	downstream switch that can accidentally re-authorise it.
+    85	
+    86	## Time ownership
+    87	
+    88	The **clock/time service is the sole owner of time**. Device adapters may report device
+    89	counters or UTC labels, but may not define ordering, freshness or deadlines. At process
+    90	start the service establishes a host-monotonic epoch; all runtime ordering, stale-data
+    91	checks, authority leases and watchdogs use that monotonic domain. It also maintains an
+    92	explicit, uncertainty-bearing mapping between device time, host monotonic time and UTC for
+    93	ephemeris evaluation and logs. The estimator owns receiver clock bias and drift **states**,
+    94	not system time. GNSS UTC, when present, is a measurement and never silently disciplines
+    95	the SDR reference or runtime clock.
+    96	
+    97	All persistent timestamps include monotonic nanoseconds from the run epoch and, when
+    98	available, UTC as an absolute RFC 3339 timestamp. The clock model and its uncertainty are
+    99	journalled so replay can reconstruct event timing. Nanosecond representation and RFC 3339
+   100	encoding are architecture choices (**estimates**) pending v2 schema review.
+   101	
+   102	## On-disk formats
+   103	
+   104	All formats are append-only and versioned. A run directory has a manifest containing run
+   105	UUID, schema versions, absolute UTC creation time when available, monotonic epoch metadata,
+   106	configuration hash, calibration IDs, software revision, hardware/channel setup, ephemeris
+   107	snapshot identity and file hashes. Atomic segment finalisation and recovery after an
+   108	unclean stop are required; specific container encodings are `[UNVERIFIED]` pending v2.
+   109	
+   110	### Raw IQ capture
+   111	
+   112	IQ is stored in independently recoverable, fixed-duration segments. Each segment contains
+   113	interleaved coherent RX-channel samples without lossy compression plus a sidecar/header
+   114	with sample representation, endianness, sample rate, centre frequency, bandwidth, gain,
+   115	channel allocation, external-reference status, first-sample monotonic and optional UTC
+   116	time, sample count, overrun/gap records and calibration/configuration identity. Raw ADC
+   117	packing versus normalised signed-integer representation is `[UNVERIFIED]`.
+   118	
+   119	### Measurement journal
+   120	
+   121	The measurement journal is a length-delimited binary stream of the exact versioned bus
+   122	envelopes presented to and produced by the executive. Records carry checksums; segments
+   123	carry indexes by monotonic time, source and message kind. It includes raw sensor records,
+   124	tracker observations, ephemeris products, predictions, accept/reject decisions,
+   125	propagations, updates, solutions, integrity and authority transitions, alarms and MAVLink
+   126	publication outcomes, including derived horizontal current vectors and their propagated
+   127	covariance. A replay reader shall preserve values and event ordering and shall
+   128	reject unknown required schema versions rather than guess. The binary codec is
+   129	`[UNVERIFIED]`.
+   130	
+   131	### Truth journal
+   132	
+   133	The truth journal is physically and logically separate from the measurement journal. It
+   134	uses a versioned, length-delimited record model with source ID, source/sample time, host
+   135	monotonic receipt time, optional UTC, position/velocity/heading truth payload, covariance,
+   136	quality and provenance. In `recorded_only`, GNSS can write here but there is no truth-to-bus
+   137	fusion edge. Permissions/API boundaries shall prevent the online estimator and reject gate
+   138	from reading it. Offline evaluation aligns truth after the run and computes aided versus
+   139	withheld results. Codec and access-control mechanism are `[UNVERIFIED]`.
+   140	
+   141	## Build and verification order
+   142	
+   143	Development proceeds as connected vertical slices:
+   144	
+   145	1. Build a minimal fusion executive with clock service, bounded bus, journals/replay, one
+   146	   IMU propagation path, solution output and observable end-to-end integration test.
+   147	2. Add configuration/authority routing and prove that `recorded_only` has no fusion edge
+   148	   and unknown values fail.
+   149	3. Add each marine sensor as adapter, journal record and actual estimator update; do not add
+   150	   a filter state before its update path exists.
+   151	4. Add ephemeris store/propagator, then Doppler predictor, with numeric finite-difference
+   152	   checks for applicable Jacobians.
+   153	5. Add capture and one tracker path through replay into predictor and estimator.
+   154	6. Only now add the observation reject gate, because it has a real prediction producer.
+   155	7. Add integrity, independent monotonic authority watchdog and 5 Hz MAVLink publisher;
+   156	   verify that authority expiry never stops estimator execution.
+   157	8. Expand constellations and receiver allocation only behind their evidence gates.
+   158	9. Prove identical captures through paired aided and GNSS-withheld replay, then validate
+   159	   MAVLink against pinned ArduPilot SITL with commit hash and artifact checksum.
+   160	
+   161	Every slice must demonstrate that the running estimator propagates from IMU input even
+   162	when no measurements update it. Unit success without an executable end-to-end path is not
+   163	completion.
+     1	# Brief U-S1 — Safety case
+     2	
+     3	Contract version: v1. Read first: `.orchestration/CONTRACTS.md`, `docs/HANDOFF_PROMPT_BLADERF.md`
+     4	(especially failure mode 9 and "Fixed constraints"), `docs/design/DESIGN_BASELINE.md`,
+     5	`docs/design/ARCHITECTURE.md` (approved baseline), `.orchestration/DECISIONS.md`.
+     6	
+     7	## Goal
+     8	`docs/design/SAFETY_CASE.md` — handoff deliverable 6. Must state, precisely and testably:
+     9	1. **What grants steering authority**: the full conjunction of conditions (solution integrity
+    10	   within the active profile's protection limits, calibration validity per the baseline's
+    11	   extrinsics rule, watchdog liveness, human arm action) and where each is evaluated
+    12	   (companion process, upstream of MAVLink — ArduPilot's 100 m clamp makes its EKF variance a
+    13	   censored view; restate why the authority gate cannot live in ArduPilot).
+    14	2. **What revokes it**: per degradation row of the baseline; revocation semantics on a manned
+    15	   fast boat (never auto-RTL/Loiter/disarm — an unannounced manoeuvre at speed is the hazard;
+    16	   revocation means stop steering + alarm + hand to helm).
+    17	3. **The backstop when the human does not respond**: supervisor monotonic watchdog so authority
+    18	   cannot outlive the solution; un-acknowledged alarm escalation ladder (state stages, timing,
+    19	   and the terminal state); the physical, controller-independent override (helm kill-cord)
+    20	   as the final layer outside software.
+    21	4. **Hazard table**: hazard → cause → mitigation → residual risk, covering at minimum: stale
+    22	   solution steering, optimistic covariance (wrong-Jacobian class faults), authority flapping,
+    23	   silent estimator halt vs authority-alive inversion, MAVLink link loss mid-authority,
+    24	   GPS_INPUT spoof/failure of the companion process itself, human-override failure.
+    25	Mark anything not derivable from the baseline/handoff as [UNVERIFIED] or estimate. This
+    26	document is subordinate to DESIGN_BASELINE.md and must say so.
+    27	
+    28	## Files owned
+    29	Only: `docs/design/SAFETY_CASE.md`, `.orchestration/reports/U-S1.md`. No code, no git commit, no web research.
+    30	
+    31	## Report
+    32	`.orchestration/reports/U-S1.md`: decisions taken, assumptions, open uncertainties, contract version.
+     1	# Safety Case
+     2	
+     3	Status: **subordinate to [`DESIGN_BASELINE.md`](DESIGN_BASELINE.md)**
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	`DESIGN_BASELINE.md` is the single normative design document. This safety case implements
+     7	and is bounded by it. Where the two differ, the baseline governs until the baseline is
+     8	explicitly revised. This document adds no new sensor, estimator or acceptance requirement;
+     9	it specifies **how steering authority is granted, revoked and backstopped**, deliverable 6
+    10	of `docs/HANDOFF_PROMPT_BLADERF.md`, and it draws every degradation trigger from the
+    11	baseline's degradation contract.
+    12	
+    13	Values that the baseline and handoff do not supply — protection-limit numbers, alarm and
+    14	lease timings, failsafe parameter values — are marked **[UNVERIFIED]** or **estimate** and
+    15	must be frozen before steering trials. They are engineering placeholders, not certified
+    16	safety performance.
+    17	
+    18	---
+    19	
+    20	## 0. Terms, and the three things this case keeps separate
+    21	
+    22	Three limit concepts are deliberately distinct and must not be conflated:
+    23	
+    24	- **Acceptance profile** (baseline §Acceptance profiles): system-level trial statistics
+    25	  (for example ≤ 25 m aided, ≤ 200 m denied horizontal position) computed offline over
+    26	  declared test segments against the truth journal. These grade the *campaign*. The baseline
+    27	  states they **do not replace per-epoch integrity and authority checks**.
+    28	- **Protection limit**: the per-epoch bound the authority supervisor tests each solution
+    29	  against, derived by the solution integrity monitor (architecture module 10) from the
+    30	  filter covariance and integrity state, *independently of ArduPilot*. The baseline does not
+    31	  supply protection-limit numbers; they are **[UNVERIFIED]** and shall be no looser than the
+    32	  active acceptance profile implies.
+    33	- **Active profile**: which limit set applies, selected by `gnss_authority` — the **aided**
+    34	  profile under `production`, the **denied** profile under `recorded_only` and `off`. The
+    35	  selection follows the baseline's mode rule and never changes code path.
+    36	
+    37	Two further terms:
+    38	
+    39	- **Authority** is the companion process's assertion of autonomous steering: whether the
+    40	  fused solution is permitted to steer the vessel via `GPS_INPUT`. It is a *lease*, not a
+    41	  latch — it must be actively and continuously re-earned.
+    42	- **The helm** is the qualified person aboard (baseline: a qualified person shall remain
+    43	  aboard with a physical, controller-independent manual override). The helm is the primary
+    44	  safety actor. Software is subordinate to the helm at all times.
+    45	
+    46	**Vessel-speed caveat.** The baseline vessel is a **displacement-hull** vessel operating
+    47	provisionally in the Danish straits; handoff failure mode 9 frames the hazard as a *manned
+    48	fast boat*. The revocation principle below (revocation is never itself a manoeuvre) holds at
+    49	any speed. The *timing* budgets (lease deadline, acknowledgement window) are sized to the
+    50	vessel's manoeuvre/collision time budget, which shrinks as speed rises. All timing values
+    51	here are conservative estimates for a displacement hull and are **[UNVERIFIED]**; if the
+    52	hull planes or slams they shall be re-derived, consistent with the baseline's load-bearing
+    53	displacement-hull assumption.
+    54	
+    55	---
+    56	
+    57	## 1. What grants steering authority
+    58	
+    59	Steering authority is granted **only while the full conjunction below holds**. It is a
+    60	logical AND: any single false term revokes authority (§2). The companion never self-grants;
+    61	grant is opt-in by the helm and continuously re-earned by the solution.
+    62	
+    63	| # | Grant condition (all must hold) | Testable predicate | Evaluated in |
+    64	|---|---|---|---|
+    65	| G1 | **Human arm action** | The helm has performed a positive, explicit companion-steering arm action, and it has not since been withdrawn. Absence of arm ⇒ no authority; this is the default state at process start. | Companion (authority supervisor, module 11) |
+    66	| G2 | **Solution integrity within the active profile's protection limits** | Horizontal-position, horizontal-velocity and heading protection limits derived by the integrity monitor are each within the active-profile limit set, evaluated per epoch on the true (unclamped) covariance. | Companion (integrity monitor module 10 → supervisor module 11) |
+    67	| G3 | **Calibration validity (baseline extrinsics rule)** | Every measurement feeding the current solution carries a calibration ID that resolves the surveyed antenna-phase-centre / IMU / vessel-reference extrinsics; none is missing or mismatched; the frequency-reference pre-deployment calibration is present and unexpired. Missing/mismatched calibration is an integrity fault. | Companion (bus ingress + integrity monitor) |
+    68	| G4 | **Watchdog liveness** | The supervisor's monotonic authority lease is unexpired, i.e. it has been renewed by a *fresh, integrity-passing* solution within the lease deadline, on the clock service's monotonic domain (architecture §Time ownership). | Companion (supervisor monotonic watchdog) |
+    69	
+    70	Freshness in G4 means the solution's own timestamp/sequence has advanced *and* the solution
+    71	passed G2/G3 this epoch. A frozen or stalled output does not renew the lease (see hazard H4).
+    72	
+    73	### Why the authority gate cannot live in ArduPilot
+    74	
+    75	Every grant condition is evaluated **in the companion process, upstream of MAVLink**,
+    76	because ArduPilot cannot see what the gate must test:
+    77	
+    78	- **The covariance ArduPilot exposes is censored.** The handoff and baseline state ArduPilot
+    79	  clamps reported horizontal accuracy at **100 m** internally; its EKF variance is therefore
+    80	  a *censored view*. A censored 100 m ceiling cannot distinguish a healthy 5 m solution from
+    81	  a 5 km divergence — exactly the discrimination G2 requires. The real, unclamped protection
+    82	  limit exists only upstream, so the gate must live upstream. This is not tunable away.
+    83	- **ArduPilot has no visibility of the LEO-specific integrity state** (calibration-ID match,
+    84	  ephemeris age, per-pass transmit-bias health, innovation consistency) that G2/G3 test.
+    85	- **ArduPilot does not know the companion's liveness** (G4) — a stalled companion still
+    86	  looks, from ArduPilot's side, like a GPS that has merely gone quiet.
+    87	- **`gnss_authority` and the aided/denied profile selection are companion concepts.**
+    88	  ArduPilot cannot select the active protection-limit set.
+    89	
+    90	Consequently ArduPilot is treated as a **downstream actuator that must never be relied on to
+    91	judge navigation integrity**. Its own GPS/EKF failsafe actions are configured so that loss
+    92	or degradation of the injected `GPS_INPUT` **cannot itself command an autonomous manoeuvre**
+    93	(RTL/Loiter/disarm) — because such a manoeuvre is the hazard (§2). The specific ArduPilot
+    94	failsafe parameter values are **[UNVERIFIED]** and are a SITL-validated configuration
+    95	deliverable pinned to a firmware commit and artifact checksum (handoff verification
+    96	discipline).
+    97	
+    98	---
+    99	
+   100	## 2. What revokes steering authority
+   101	
+   102	### 2.1 Revocation semantics on a manned vessel at speed
+   103	
+   104	Revocation is uniform regardless of cause and is **never a manoeuvre**:
+   105	
+   106	> **Revocation = stop steering + alarm + hand to helm.**
+   107	
+   108	Software shall **never** autonomously select RTL, Loiter or disarm (handoff failure mode 9;
+   109	baseline degradation contract, final row). On a manned vessel making way, an *unannounced
+   110	manoeuvre at speed is itself the hazard* — a surprise turn, stop or hold can put the vessel
+   111	beam-on to sea, into traffic, or throw crew. Therefore:
+   112	
+   113	- **Stop steering** means the companion ceases to assert autonomous navigation control. It
+   114	  does not command a course change. Control surfaces are left to the helm; ArduPilot is
+   115	  commanded to (or held in) a manual/helm-controlled state rather than allowed to let a
+   116	  GPS-timeout failsafe fire a surprise manoeuvre.
+   117	- **Alarm** is raised to the helm immediately (§3.2 ladder).
+   118	- **Hand to helm** — the qualified person takes manual control. The helm's physical override
+   119	  mechanically dominates the autopilot at all times (baseline; §3.3).
+   120	
+   121	Revocation is **latched**: once revoked, authority is not re-granted automatically. Re-grant
+   122	requires *all* of §1 true again **and** a fresh explicit human arm action (G1), after a
+   123	stabilisation dwell. This is the primary defence against authority flapping (hazard H3).
+   124	
+   125	Two revocation trigger classes both produce this same action:
+   126	
+   127	- **Integrity/limit breach** — a grant condition (G2 or G3) becomes false: the solution is
+   128	  too uncertain, or calibration/ephemeris integrity fails.
+   129	- **Lease expiry** — G4 fails: no fresh integrity-passing solution renewed the lease within
+   130	  its deadline (covers estimator stall, companion stall, thread death, output freeze).
+   131	
+   132	### 2.2 Revocation mapped to every baseline degradation row
+   133	
+   134	Each row of the baseline degradation contract is mapped to its authority effect. "Continue"
+   135	means the estimator keeps running (baseline: authority expiry never stops the estimator) and
+   136	authority persists **only while §1 still holds**.
+   137	
+   138	| Baseline degradation row | Authority supervisor response | Revocation trigger |
+   139	|---|---|---|
+   140	| GNSS absent or forbidden | Normal denied operation; **denied** protection-limit set active. Not itself a revocation. GNSS cannot re-enter fusion (enforced at bus ingress). | None (mode selection) |
+   141	| One LEO constellation / RF front end lost | Continue; authority persists if protection limits still met; geometry/uncertainty degrade honestly. | G2 if protection limit breached |
+   142	| **All LEO observations lost** | Estimator continues on IMU + magnetometer + speed log; covariance grows. Authority expires as the growing protection limit crosses threshold, or as the lease is no longer renewed by an in-limit solution. | G2, then G4 |
+   143	| One magnetometer lost/rejected | Continue on the other calibrated magnetometer; inflate heading uncertainty. | G2 (heading limit) if breached |
+   144	| **Both magnetometers lost/rejected** | Heading is not passage-capable by inertial integration alone; revoke when the heading protection bound is exceeded. | G2 (heading limit) |
+   145	| Speed log lost | Continue; current separation unavailable; uncertainty reflects it. | G2 if breached |
+   146	| **IMU stream stale** | Time propagation no longer trustworthy → supervisor revokes. Estimator stays running, does not fabricate propagation samples. | G2/G4 (stale-propagation integrity fault) |
+   147	| Frequency reference degrades / sustained heel invalidates its model | Reject biased Doppler per integrity; revoke when solution limits exceeded. | G2 |
+   148	| Sea-surface multipath biases a tracker | Correlation-quality / innovation-consistency rejection or inflation; persistent constellation-correlated residuals revoke when protection limits exceeded. | G2 |
+   149	| Ephemeris missing or too old | Do not form/accept the affected Doppler prediction (never bypass the age gate). Continue on other measurements; revoke only if the surviving solution breaches limits. | G3 (age gate) → G2 |
+   150	| Calibration ID missing/mismatched | Authority-blocking integrity fault (baseline extrinsics rule). | G3 |
+   151	| **Companion process stalls** | Independent monotonic watchdog makes the lease expire → authority revoked. Alarm escalation and physical override remain. Software never selects RTL/Loiter/disarm. | G4 |
+   152	
+   153	The DR (dead-reckoning) timeout is one input to the G2/G4 logic. Per the baseline and
+   154	handoff failure mode 3 it **governs authority only** — it never stops propagation,
+   155	observation processing, journalling, or the 10–20 minute position-convergence process.
+   156	
+   157	---
+   158	
+   159	## 3. The backstop when the human does not respond
+   160	
+   161	Three layers, in order of who acts. Software's automatic layer only *stops asserting* and
+   162	*alerts*; it never manoeuvres. The kinetic final layer is physical and controller-independent.
+   163	
+   164	### 3.1 Layer 1 — supervisor monotonic watchdog (automatic, so authority cannot outlive the solution)
+   165	
+   166	Authority is a **lease** on the clock service's monotonic domain (architecture §Time
+   167	ownership), continuously renewed **only** by a fresh, in-limit, calibration-valid solution
+   168	(G2+G3+G4). If renewal stops for *any* reason — solution unhealthy, integrity fault,
+   169	estimator stall, thread death, whole-companion stall — the lease is not renewed, expires, and
+   170	authority drops to revoked. This is what guarantees **authority cannot outlive the solution**
+   171	(handoff failure mode 9).
+   172	
+   173	Independence properties (from the baseline/architecture, restated as safety requirements):
+   174	
+   175	- The watchdog is **independent of estimator convergence**: its expiry cannot stop the
+   176	  estimator, and the estimator's slow convergence cannot hold the lease open.
+   177	- The lease uses the monotonic clock, not device or UTC time, so a device clock reset or a
+   178	  spoofed UTC label cannot extend it.
+   179	- **Lease deadline `t_lease` shall be shorter than ArduPilot's `GPS_TIMEOUT_MS` (4000 ms)**
+   180	  so the companion always revokes *before* ArduPilot's own GPS timeout could fire a failsafe.
+   181	  Provisional `t_lease` on the order of a few hundred milliseconds to ~1 s (a small multiple
+   182	  of the 5 Hz / 200 ms nominal solution interval) — **[UNVERIFIED] estimate**, frozen before
+   183	  trials against the vessel manoeuvre budget.
+   184	
+   185	### 3.2 Layer 2 — un-acknowledged-alarm escalation ladder (human-in-the-loop)
+   186	
+   187	The ladder exists to *get the helm's attention*, not to substitute for the helm. Because
+   188	software must never manoeuvre, **the terminal state is not kinetic**: it is a latched
+   189	revocation plus maximal alarm, awaiting the human.
+   190	
+   191	| Stage | Entry condition | Authority | Annunciation | Exit / timing |
+   192	|---|---|---|---|---|
+   193	| **S0 NOMINAL** | All §1 conditions hold. | Granted | None. | → S1 when a metric enters the caution band. |
+   194	| **S1 CAUTION** | A protection metric crosses a *caution* threshold set below the revoke threshold (hysteresis band), or a single sensor is lost with margin shrinking. | Granted (still) | Soft visual + audible pre-alert: "solution degrading, prepare to take the helm." | → S0 if metric recovers past the caution threshold; → S2 on any grant condition failing. |
+   195	| **S2 WARNING (REVOKED)** | Any grant condition G1–G4 false. | **Revoked, latched.** Stop steering + hand to helm. | Loud alarm demanding acknowledgement. | Helm acknowledges within `T_ack` → S4; no acknowledgement within `T_ack` → S3. |
+   196	| **S3 ESCALATED** | S2 un-acknowledged for `T_ack`. | Revoked, latched. | Maximal continuous alarm; secondary annunciators engaged (distinct tone; remote/repeater alert if fitted). | Helm acknowledges → S4. Otherwise **remains in S3 indefinitely** (terminal software state). |
+   197	| **S4 LATCHED-SAFE (acknowledged)** | Helm acknowledged S2/S3. | Revoked, latched. | Steady fault indication. | Re-grant requires all §1 true **and** a fresh G1 arm action after a stabilisation dwell. No auto re-grant. |
+   198	
+   199	- `T_ack` (un-acknowledged escalation window): **[UNVERIFIED] estimate**, on the order of a
+   200	  few seconds, sized to the vessel's manoeuvre/collision budget; shorter for a faster hull.
+   201	- **Terminal state = S3 LATCHED-REVOKED + MAX ALARM.** Software performs **no** kinetic
+   202	  action there. If the helm never responds, the vessel continues under its last physical
+   203	  control state (rudder/throttle where the helm left them — the least-surprising outcome, no
+   204	  unannounced manoeuvre) until the helm acts or the physical layer (§3.3) intervenes. This is
+   205	  the deliberate resolution of the safety inversion: an unresponsive human must not trigger a
+   206	  surprise manoeuvre, so the software's terminal behaviour is *alarm, not motion*.
+   207	- Escalation is one-directional under fault: authority is never silently re-granted from any
+   208	  alarm stage.
+   209	
+   210	### 3.3 Layer 3 — physical, controller-independent override (final layer, outside software)
+   211	
+   212	Two physical controls, both independent of the companion computer, ArduPilot and MAVLink,
+   213	and therefore effective even if all of them are faulted:
+   214	
+   215	- **Helm manual override.** The qualified person's steering/throttle mechanically dominates
+   216	  the autopilot's actuator at any time (baseline precondition). This is how "hand to helm"
+   217	  becomes real motion control.
+   218	- **Helm kill-cord.** A physical lanyard on the helm that cuts propulsion (handoff failure
+   219	  mode 9: "a helm kill-cord is cheap and standard"). It fires if the helmsman is *displaced
+   220	  from the helm* (overboard/incapacitated and the lanyard pulls out), stopping the engine
+   221	  without any software involvement. It is the final backstop for the case where the sole
+   222	  safety actor is displaced.
+   223	
+   224	Pre-trial checklist items (operational, not software): kill-cord clipped to the helmsman;
+   225	manual override tested; ArduPilot non-manoeuvre failsafe configuration verified in SITL.
+   226	
+   227	---
+   228	
+   229	## 4. Hazard table
+   230	
+   231	hazard → cause → mitigation → residual risk. Residuals marked **[UNVERIFIED]** are bounded
+   232	only after validation on GNSS-withheld replay against truth and/or SITL, per the handoff
+   233	verification discipline.
+   234	
+   235	| # | Hazard | Cause | Mitigation | Residual risk |
+   236	|---|---|---|---|---|
+   237	| **H1** | **Stale-solution steering** — steering on an old/dead-reckoned solution whose true error has already grown past limits. | Absolute LEO fixes arrive minutes apart; DR fill between; covariance grows with motion. | Covariance is actually time-propagated from IMU every accepted sample (baseline; guards handoff failure modes 5); per-epoch protection-limit gate G2; lease G4 renewed only by a *fresh* in-limit solution; DR timeout governs authority only, `t_lease` < `GPS_TIMEOUT_MS`. | If the covariance *model itself* is optimistic (see H2), a fresh-looking solution can under-report staleness. Bounded by conservative process noise + the human backstop; magnitude **[UNVERIFIED]** until withheld-replay validation. |
+   238	| **H2** | **Optimistic covariance (wrong-Jacobian class)** — filter reports a tight, wrong covariance; authority granted on false confidence. Most dangerous, because the gate *consumes* this covariance. | Wrong Jacobian (silent: filter still runs and produces a covariance — handoff explicitly), missing propagation, mis-modelled process noise. | Numerical Jacobian check vs finite differences before trials (handoff); independent innovation-consistency / NEES-style monitoring in the integrity monitor as a covariance-realism check that does not itself trust the covariance; conservative process noise; headline stats only from GNSS-withheld runs (no circular validation). | Consistency monitors have finite power; a slowly-biasing fault under the low LEO observation rate may evade detection between updates. Real, **[UNVERIFIED]**; bounded by conservative limits and the human backstop. |
+   239	| **H3** | **Authority flapping** — grant/revoke toggling around a threshold, causing repeated stop-steering/hand-to-helm churn (itself a hazard: confuses the helm, injects control discontinuities). | Protection metric noise near the revoke threshold. | Hysteresis band (S1 caution threshold below the revoke threshold); **latched** revocation requiring explicit human re-arm — no automatic re-grant; stabilisation dwell before re-grant. | Mis-tuned hysteresis could still flap or be sluggish; band and dwell values **[UNVERIFIED]**, frozen before trials. |
+   240	| **H4** | **Silent estimator halt vs authority-alive inversion** — estimator stalls / freezes its last output while authority stays granted → steering a frozen fix. | Estimator thread stall, deadlock, or frozen output that still "looks" valid. | Lease G4 renewed **only** by a solution whose timestamp/sequence advanced *and* passed integrity this epoch; a frozen output does not renew → watchdog expires (§3.1). Watchdog is on the independent monotonic clock. The safe half of the inversion (authority dead, estimator alive) is guaranteed by the baseline: watchdog expiry cannot stop the estimator. | If a stalled path re-emits a *stale-but-sequence-advancing* frame (bug), freshness alone would miss it; mitigated by content-change/innovation-liveness checks. Residual **[UNVERIFIED]**. |
+   241	| **H5** | **MAVLink link loss mid-authority** — companion↔ArduPilot link drops while authority granted; risk that ArduPilot's own GPS timeout then fires a surprise failsafe. | Cable/USB/serial fault, connector at sea. | ArduPilot GPS/EKF failsafe pre-configured to **not** auto-manoeuvre on GPS loss (hold/hand-to-manual), SITL-validated; companion detects link loss and treats it as revocation; `t_lease` < `GPS_TIMEOUT_MS` (4000 ms) so the companion revokes first; helm override and kill-cord are link-independent. | An unavoidable window (up to ~4 s) where ArduPilot runs on the last `GPS_INPUT` before its own timeout. Bounded by that window + the non-manoeuvre failsafe config; exact params **[UNVERIFIED]** until SITL-verified. |
+   242	| **H6** | **`GPS_INPUT` spoof / failure of the companion process itself** — a plausible-but-wrong `GPS_INPUT` reaches ArduPilot, from an internal companion fault or an external injection. | (a) Companion software fault/corruption. (b) Unauthenticated MAVLink link; physical access to it. | (a) Same integrity monitor + watchdog + withheld-replay validation; a corrupted solution failing integrity won't renew the lease. (b) Dedicated point-to-point companion↔autopilot link (not shared/networked); companion is the sole authorised source (`GPS1_TYPE=14`); enable MAVLink signing (**[UNVERIFIED]** whether supported on the pinned firmware — recommended). Note the LEO-SoOP premise removes the *RF* GNSS-spoof surface (no GPS to spoof); the MAVLink injection surface remains. | A companion fault that is simultaneously wrong *and* integrity-consistent (correlated fault) is the hard residual; bounded only by the human backstop and the independent kill-cord. **[UNVERIFIED]**. |
+   243	| **H7** | **Human-override failure** — the backstop human fails to respond, is incapacitated/displaced, or the override is unusable. | Human distracted/overboard/incapacitated; kill-cord unclipped; manual override mis-wired. | Escalation ladder (§3.2) to command attention; the deliberate design that software never auto-manoeuvres, so an unresponsive human does not cause a surprise manoeuvre; kill-cord fires if the helm is displaced; pre-trial checklist (kill-cord clipped, override tested); qualified-person-aboard is a baseline precondition. | If the human is incapacitated *at* the helm (kill-cord not pulled) with authority already revoked, the vessel continues at its last physical state until intervention/fuel exhaustion. Irreducible for a manned system whose sole safety actor is unresponsive; out of software scope by design; requires an operational control (e.g. second crew / helm dead-man). **[UNVERIFIED]/accepted**. |
+   244	| **H8** | **Steering on a spoofed/absent frequency-reference or heel-biased solution** (supporting row, from the baseline degradation contract). | Frequency reference degrades or sustained heel steps the drift model beyond what the clock states absorb; both magnetometers lost. | Reject biased Doppler per integrity; revoke via G2 when solution limits exceeded; heading protection bound revokes when both magnetometers are gone; mount the g-sensitivity vector vertical (baseline hardware rule). | Slow, in-model bias below the innovation-detection floor. **[UNVERIFIED]**; bounded by conservative limits and the human backstop. |
+   245	
+   246	---
+   247	
+   248	## 5. Assumptions and the [UNVERIFIED] register
+   249	
+   250	Safety-relevant items this case depends on that are not yet frozen:
+   251	
+   252	- Per-epoch **protection-limit numbers** for horizontal position, horizontal velocity and
+   253	  heading, in both the aided and denied profiles (distinct from the acceptance-profile trial
+   254	  statistics). Must be no looser than the profiles imply.
+   255	- **`t_lease`** (watchdog deadline), constrained `< GPS_TIMEOUT_MS` (4000 ms); provisional
+   256	  few-hundred-ms to ~1 s.
+   257	- **`T_ack`** and the caution-band hysteresis thresholds/dwell for the escalation ladder.
+   258	- ArduPilot **GPS/EKF failsafe parameter values** proving loss/degradation of `GPS_INPUT`
+   259	  cannot auto-manoeuvre; validated in SITL against a pinned firmware commit + artifact
+   260	  checksum.
+   261	- Whether **MAVLink signing** is available on the pinned firmware for the companion link.
+   262	- The mechanism of "stop steering" at the MAVLink boundary (mode command vs fix-validity
+   263	  degrade) that reliably yields helm control **without** provoking an ArduPilot failsafe
+   264	  manoeuvre.
+   265	- All timing budgets assume a **displacement hull**; a planing/slamming hull invalidates them
+   266	  (baseline caveat) and requires re-derivation.
+   267	- Content-liveness (not just sequence-freshness) check to fully close hazard H4.
+   268	
+   269	Assumptions carried from the baseline: manned displacement-hull vessel, Danish straits
+   270	(working assumption), qualified helm aboard with physical controller-independent override,
+   271	`gnss_authority` enforced at bus ingress, and the MAVLink `GPS_INPUT` interface named by the
+   272	baseline. Implementation-level field encodings and parameter names are subordinate v2
+   273	schema/code and configuration work.
+     1	# U-S1 report — safety case
+     2	
+     3	Contract: v1 (2026-07-22)
+     4	
+     5	Deliverable: `docs/design/SAFETY_CASE.md` (handoff deliverable 6). Documentation-only unit;
+     6	no code, no git commit, no web research. Files owned and written: `docs/design/SAFETY_CASE.md`,
+     7	`.orchestration/reports/U-S1.md`.
+     8	
+     9	## Decisions taken
+    10	
+    11	- **Authority is a continuously re-earned lease, not a latch.** Grant is the conjunction of
+    12	  four conditions — human arm action (G1), solution integrity within the active profile's
+    13	  protection limits (G2), calibration validity per the baseline extrinsics rule (G3),
+    14	  watchdog liveness (G4) — evaluated entirely in the companion process upstream of MAVLink.
+    15	  Logical AND: any single false term revokes.
+    16	- **Separated three limit concepts** the brief and baseline risk conflating: acceptance
+    17	  profile (campaign-grading trial statistics), protection limit (per-epoch authority gate),
+    18	  active profile (aided/denied selected by `gnss_authority`). The baseline states acceptance
+    19	  profiles do not replace per-epoch checks, so I defined the per-epoch protection limit as a
+    20	  distinct, currently-[UNVERIFIED] number set, bounded no looser than the profile implies.
+    21	- **Restated why the gate cannot live in ArduPilot** from the 100 m clamp: a censored 100 m
+    22	  ceiling cannot distinguish a 5 m solution from a 5 km divergence, which is exactly the
+    23	  discrimination G2 needs; plus ArduPilot cannot see LEO integrity state, companion liveness,
+    24	  or the `gnss_authority` profile selection.
+    25	- **Revocation semantics = stop steering + alarm + hand to helm, never a manoeuvre**, uniform
+    26	  across all triggers, latched, requiring a fresh human arm action to re-grant (this also
+    27	  answers authority-flapping). Two trigger classes (integrity/limit breach; lease expiry)
+    28	  collapse to one action. Mapped every baseline degradation row to its authority effect.
+    29	- **Backstop is three layered, and the software terminal state is deliberately non-kinetic.**
+    30	  Layer 1 monotonic watchdog (lease renewed only by a fresh, integrity-passing, sequence-
+    31	  advancing solution → authority cannot outlive the solution; `t_lease` constrained shorter
+    32	  than ArduPilot's 4000 ms `GPS_TIMEOUT_MS` so the companion always revokes before ArduPilot
+    33	  could fire its own failsafe). Layer 2 escalation ladder S0→S3 with a terminal
+    34	  latched-revoked + max-alarm state that performs no motion. Layer 3 physical helm override +
+    35	  kill-cord, controller-independent.
+    36	- **Hazard table** covers all seven brief-mandated hazards plus a supporting frequency-
+    37	  reference/heel + heading-loss row, each as hazard → cause → mitigation → residual.
+    38	- Marked the document **subordinate to DESIGN_BASELINE.md** in its header and body, as
+    39	  required.
+    40	
+    41	## Key safety-design judgements (rationale)
+    42	
+    43	- **The "stop" that is safe is a non-manoeuvre.** The core inversion (failure mode 9) is that
+    44	  a manned fast boat's surprise auto-manoeuvre is itself the hazard, so the software terminal
+    45	  state on human non-response must be alarm, not motion; the boat holds its last physical
+    46	  control state (least-surprising) until the helm or the kill-cord acts.
+    47	- **`t_lease` < `GPS_TIMEOUT_MS`** is the load-bearing timing constraint that keeps ArduPilot
+    48	  from ever being the first responder to solution loss; without it, a GPS-timeout failsafe
+    49	  could manoeuvre before the companion revokes.
+    50	- **Freshness must mean advance + integrity-pass, not mere output**, or a frozen estimator
+    51	  renews its own lease (hazard H4). Flagged that sequence-freshness alone is insufficient if a
+    52	  bug re-emits stale-but-advancing frames; a content-liveness check is the residual closer.
+    53	
+    54	## Assumptions
+    55	
+    56	- Manned displacement-hull vessel, Danish straits (working assumption), qualified helm aboard
+    57	  with physical controller-independent override — all carried from the baseline.
+    58	- The MAVLink `GPS_INPUT` / `GPS1_TYPE=14` interface named by the baseline is the actuation
+    59	  boundary; field encodings and ArduPilot parameter names are subordinate v2/config work.
+    60	- The displacement-hull vs "manned fast boat" wording gap (baseline vs handoff failure mode 9)
+    61	  is reconciled by making the revocation *principle* speed-independent and all *timing* budgets
+    62	  speed-dependent estimates that must be re-derived if the hull planes.
+    63	
+    64	## Open uncertainties ([UNVERIFIED], must be frozen before steering trials)
+    65	
+    66	- Per-epoch protection-limit numbers (position/velocity/heading, aided and denied) — the
+    67	  baseline supplies acceptance-profile statistics but no per-epoch gate values.
+    68	- `t_lease` (bounded < 4000 ms), `T_ack`, caution-band hysteresis thresholds and re-grant dwell.
+    69	- ArduPilot GPS/EKF failsafe parameter values proving `GPS_INPUT` loss cannot auto-manoeuvre;
+    70	  SITL-validated against pinned firmware commit + artifact checksum.
+    71	- Whether MAVLink signing is available on the pinned firmware for the companion link.
+    72	- The exact MAVLink-boundary mechanism of "stop steering" (mode command vs fix-validity
+    73	  degrade) that hands control to the helm without provoking an ArduPilot failsafe manoeuvre.
+    74	- Content-liveness (not just sequence-freshness) check to fully close hazard H4.
+    75	- The irreducible H7 residual (human incapacitated at the helm, kill-cord unpulled) needs an
+    76	  operational control (second crew / helm dead-man), out of software scope.
+    77	
+    78	## Evidence
+    79	
+    80	- Read, in the brief's required order: `.orchestration/CONTRACTS.md`,
+    81	  `docs/HANDOFF_PROMPT_BLADERF.md` (failure mode 9 and Fixed constraints in particular),
+    82	  `docs/design/DESIGN_BASELINE.md`, `docs/design/ARCHITECTURE.md`, `.orchestration/DECISIONS.md`.
+    83	  Cross-referenced U-D1.1 report for house style and finding history.
+    84	- Every degradation trigger, the 100 m clamp, the `GPS_INPUT`/`GPS_TIMEOUT_MS` values, the
+    85	  never-auto-RTL/Loiter/disarm rule, the extrinsics/calibration-ID rule and the monotonic-clock
+    86	  ownership are drawn from the baseline/architecture/handoff, not invented.
+    87	- Documentation-only unit: no executable test suite applies. No git commit performed
+    88	  (per D3 and brief).
+
+exec
+/bin/bash -lc 'nl -ba docs/design/DESIGN_BASELINE.md; nl -ba docs/design/ARCHITECTURE.md; nl -ba .orchestration/briefs/U-S1.md; nl -ba docs/design/SAFETY_CASE.md' in /home/od/work/leo-pnt
+ succeeded in 0ms:
+     1	# Design Baseline
+     2	
+     3	Status: **normative**
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	This is the single normative design document for the LEO signals-of-opportunity maritime
+     7	PNT system. Every other project document, including `ARCHITECTURE.md`, is subordinate to
+     8	this baseline. If another document conflicts with it, this document governs until this
+     9	baseline is explicitly revised; superseded documents must be marked in their own text.
+    10	
+    11	## Mission and operating assumptions
+    12	
+    13	The system shall estimate position, velocity, heading, receiver clock bias and receiver
+    14	clock drift on a moving, **manned displacement-hull vessel**, without GNSS, and provide a
+    15	navigation solution to ArduPilot Rover in boat frame (`FRAME_CLASS=2`). A qualified person
+    16	shall remain aboard with a physical, controller-independent manual override.
+    17	
+    18	The intended operating area is assumed to be the Danish straits. This is a **working
+    19	assumption**, not a verified deployment decision. The displacement-hull assumption is also
+    20	load-bearing: if the vessel planes or slams, the frequency-reference mounting and dynamics
+    21	analysis shall be revisited.
+    22	
+    23	The system is both a research instrument and an operational navigator. It shall resolve
+    24	that tension with one executable code path and one configuration key, `gnss_authority`:
+    25	
+    26	- `production`: GNSS measurements may enter fusion and are also journalled as truth.
+    27	- `recorded_only`: GNSS measurements go only to the truth journal and never enter fusion.
+    28	- `off`: GNSS is neither fused nor recorded as truth.
+    29	- Any other value shall raise an error; it shall never fall back to `production`.
+    30	
+    31	Mode selection changes measurement authority, not implementation. The **aided** acceptance
+    32	profile applies to `production`; the **denied** profile applies to `recorded_only` and
+    33	`off`. Headline LEO performance statistics shall be computed offline from GNSS-withheld
+    34	runs, never from a state estimate driven by GNSS.
+    35	
+    36	## Vessel equipment and sensor baseline
+    37	
+    38	The baseline sensor and interface set is:
+    39	
+    40	| Source | Required role | Baseline |
+    41	|---|---|---|
+    42	| Nuand bladeRF 2.0 micro xA4 or xA9 | Coherent RF sampling | Two coherent RX channels on one external reference. RX allocation is survey-dependent. |
+    43	| Ku LNB and antenna | Starlink and conditional OneWeb reception | 10.7--12.75 GHz downconverted to approximately 950--2150 MHz IF. Track beacon/PSS-SSS correlation Doppler at 2.5--5 MHz bandwidth; do not depend on the degraded tone comb. |
+    44	| L-band antenna | Iridium reception | Direct 1616--1626.5 MHz reception, bypassing the Ku LNB. |
+    45	| 137 MHz antenna/front end and independent low-cost receiver | Orbcomm reception | A separate, non-coherent receiver provides continuous constellation/front-end diversity without consuming either bladeRF coherent RX channel; exact receiver is a BOM dependency `[UNVERIFIED]`. |
+    46	| Free-running rubidium (FE-5680A class) or good OCXO | SDR frequency reference | 10 MHz external reference, calibrated only before deployment; no GNSS discipline. Mount its resultant acceleration-sensitivity vector vertically under the displacement-hull assumption. |
+    47	| IMU | Propagation and turn dynamics | Drives every estimator propagation; it does not carry passage-scale position unaided. |
+    48	| Two calibrated magnetometers | Heading measurement and redundancy | Calibration includes a propulsion-current deviation term. |
+    49	| Speed log | Speed through water | Compared with LEO-derived speed over ground to estimate current set and drift. |
+    50	| GNSS receiver | Aiding or truth, by explicit authority | Its path is controlled only by `gnss_authority`. |
+    51	| Optional solar/sky-polarisation compass | Independent absolute heading | Candidate mitigation for magnetic heading weakness; not required until selected and verified. |
+    52	| Companion computer monotonic clock | Runtime ordering and watchdogs | Time ownership is defined in the subordinate architecture. |
+    53	| ArduPilot Rover autopilot | Navigation consumer | Receives MAVLink `GPS_INPUT` (message 232, `GPS1_TYPE=14`). |
+    54	
+    55	OneWeb tracker implementation is forbidden until a 24-hour channel-occupancy survey at the
+    56	actual operating location demonstrates useful correlation gain. The survey shall decide
+    57	whether the second coherent receiver is Ku + L-band (diverse simultaneous tracking) or
+    58	dual Ku (alternating OneWeb channel coverage, with Iridium time-shared). Interferometric
+    59	use remains an open research option and is not baseline functionality.
+    60	
+    61	Orbcomm shall remain simultaneous through its separate receiver in either bladeRF allocation.
+    62	Its samples are not coherent with the bladeRF channels; this is intentional because it
+    63	preserves both bladeRF channels and decorrelates receiver-clock and front-end failure modes.
+    64	
+    65	Ephemerides shall be cached CelesTrak supplemental ephemerides (SupGP), not plain TLEs,
+    66	with an explicit age gate. The provisional maximum age shall be 6 hours, the first supplied
+    67	error-growth datum (approximately 0.94 km orbit error), rather than one day or seven days;
+    68	the mapping from orbit error to navigation integrity remains `[UNVERIFIED]`, so this limit
+    69	shall be validated or tightened before steering trials.
+    70	
+    71	## Rate contract
+    72	
+    73	All rates below are interface contracts. Values absent from the handoff are deliberately
+    74	marked **estimate** and shall be validated against sensor capability and replay data.
+    75	
+    76	| Interface | Required rate/behaviour |
+    77	|---|---|
+    78	| SDR sample stream | Tracker-selected 2.5--5 MHz processing bandwidth per active correlation channel (stated expectation; sample rate itself remains `[UNVERIFIED]`). |
+    79	| IMU to fusion executive | 100 Hz nominal (**estimate**), with every accepted sample causing time propagation; measurement arrivals shall never be the sole trigger for propagation. |
+    80	| Dual magnetometers to fusion executive | 10 Hz each nominal (**estimate**). |
+    81	| Speed log to fusion executive | 5 Hz nominal (**estimate**). |
+    82	| LEO Doppler observations | Event-driven at each valid correlation solution; target 1 Hz per tracked signal (**estimate**). No synthetic observation is emitted to satisfy a rate. |
+    83	| GNSS measurement/truth input | Native receiver rate, at least 1 Hz (**estimate**); routing is determined before fusion by `gnss_authority`. |
+    84	| Navigation/integrity solution | 5 Hz nominal (**estimate**), using propagated dead-reckoned fill between absolute observations. |
+    85	| MAVLink `GPS_INPUT` output | 5 Hz nominal (handoff requirement: approximately 5 Hz), continuously while the process is healthy, subject to steering-authority gating. |
+    86	| Journal writes | Every input, decision and output event, preserving native rate; batched disk flush is allowed only if crash-loss bounds are explicitly configured (**estimate**). |
+    87	
+    88	The four-second `GPS_TIMEOUT_MS` motivates continuous output but does not define estimator
+    89	validity. Any dead-reckoning timeout shall govern **steering authority only**. It shall never
+    90	stop propagation, observation processing, journalling, or the 10--20 minute position
+    91	convergence process.
+    92	
+    93	## Estimator and degradation contract
+    94	
+    95	LEO Doppler shall be treated primarily as a velocity/range-rate observation. Position is
+    96	recovered through the evolution of line-of-sight geometry over 10--20 minute,
+    97	constant-heading legs, and manoeuvres reset convergence expectations. The estimator shall
+    98	carry only states with implemented measurement paths. At minimum these are position,
+    99	horizontal velocity, attitude/heading, receiver clock bias and receiver clock drift;
+   100	position is 3-D with the vertical component constrained as specified below, and vertical
+   101	velocity is not a baseline state. Additional
+   102	states may be enabled only with a documented direct or cross-covariance measurement path;
+   103	this permits observable IMU bias states but forbids decorative unobservable states.
+   104	
+   105	The normative LEO observable at the estimator interface is **correlation-peak Doppler**
+   106	from the beacon/PSS-SSS tracker, converted to range rate with its stated nominal carrier;
+   107	raw carrier-frequency Doppler is not the interface observable. Each satellite pass shall
+   108	have a separate transmit-frequency nuisance-bias state, constant over the pass with a
+   109	validated small random-walk model, so a satellite oscillator/carrier offset cannot be
+   110	misinterpreted as receiver velocity or clock drift. The state shall be retired at pass end.
+   111	
+   112	The online estimator shall not carry a water-current state in the baseline. The solution
+   113	module shall derive and journal the horizontal current vector as LEO-derived velocity over
+   114	ground minus the heading-rotated speed-log velocity through water, with covariance
+   115	propagated from both inputs. This makes current observable without enlarging the core state;
+   116	a future first-class current state requires an explicit update model and baseline revision.
+   117	
+   118	Altitude shall be a vertical position state constrained to local mean sea level by a
+   119	sea-surface pseudo-measurement. Its variance shall cover chart/geoid uncertainty plus local
+   120	tide, wave and vessel-motion scale; the numeric model is `[UNVERIFIED]` and shall be frozen
+   121	for the operating area before steering trials. Vertical velocity is excluded from steering
+   122	use: `GPS_INPUT.alt` shall publish the MSL-constrained estimate, `vd` shall be 0, and
+   123	`vert_accuracy` shall report a bound consistent with that pseudo-measurement rather than 0
+   124	or an unconstrained filter covariance.
+   125	
+   126	The antenna phase centres, IMU origin and vessel reference point, including their full
+   127	3-D lever arms and orientations, shall be surveyed calibration inputs. Doppler and inertial
+   128	updates shall compensate rotational lever-arm velocity before fusion. Every affected
+   129	measurement envelope shall reference the calibration ID for these extrinsics; missing or
+   130	mismatched calibration is an integrity fault that forbids steering authority.
+   131	
+   132	Expected degradation is explicit:
+   133	
+   134	| Loss or condition | What remains / required response |
+   135	|---|---|
+   136	| GNSS absent or forbidden | Normal denied operation: IMU propagation, measured heading, speed-through-water and accepted LEO Doppler remain. GNSS cannot quietly re-enter fusion. |
+   137	| One LEO constellation or RF front end lost | Continue with remaining accepted constellations and inertial/marine sensors; geometry and uncertainty shall degrade honestly. Loss of Ku shall not remove independently received Orbcomm, and loss of the LNB shall not remove direct L-band reception when the bladeRF allocation includes it. |
+   138	| All LEO observations lost | Continue IMU propagation plus magnetometer and speed-log updates; covariance grows and current/ground-speed observability degrades. Steering authority expires by the independently enforced authority policy, but the estimator keeps running. |
+   139	| One magnetometer lost/rejected | Continue with the other calibrated magnetometer, IMU turn dynamics and any selected non-magnetic heading sensor; inflate heading uncertainty. |
+   140	| Both magnetometers lost/rejected | Continue short-term attitude propagation and any selected non-magnetic heading measurement. Heading is not passage-capable by inertial integration alone; revoke authority when its bound is exceeded. |
+   141	| Speed log lost | LEO ground velocity and heading/IMU remain; direct water-current separation is unavailable and uncertainty shall reflect it. |
+   142	| IMU stream stale | Time propagation is no longer trustworthy. The supervisor shall revoke steering authority; the estimator shall remain running but shall not fabricate propagation samples, and journalling and recovery may continue. |
+   143	| Frequency reference degrades or sustained heel invalidates its model | Clock bias/drift states may absorb only modelled behaviour. Reject biased Doppler as integrity dictates and revoke authority when solution limits are exceeded. |
+   144	| Sea-surface multipath biases a tracker | Correlation quality and innovation consistency shall drive rejection or uncertainty inflation; persistent constellation-correlated residuals revoke authority when protection limits are exceeded. |
+   145	| Ephemeris missing or too old | Do not form or accept the affected Doppler prediction. Continue with other measurements; never bypass the age gate. |
+   146	| Companion process stalls | Its independent monotonic watchdog shall make steering authority expire. Alarm escalation and the physical override remain available; software shall not autonomously select RTL, Loiter or disarm. |
+   147	
+   148	## Acceptance profiles
+   149	
+   150	These are system-level trial limits, evaluated against an independent truth journal over
+   151	declared test segments. They do not replace per-epoch integrity and authority checks.
+   152	Velocity means horizontal per-axis error; position means horizontal error. Exact percentile,
+   153	window and confidence definitions remain `[UNVERIFIED]` and must be frozen before trials.
+   154	
+   155	| Criterion | Aided (`production`) | Denied (`recorded_only` or `off`) |
+   156	|---|---:|---:|
+   157	| Horizontal position error | <= 25 m (**estimate**, operational-grade target inferred from the handoff's example of a correct operational limit) | <= 200 m after an uninterrupted 20-minute constant-heading convergence leg (**estimate**, conservative edge of the stated approximately 100--200 m expectation) |
+   158	| Horizontal velocity error, each axis | <= 0.02 m/s (**estimate**, operational target within the handoff's 0.007--0.04 m/s expectation) | <= 0.04 m/s (**estimate**, upper edge of the stated 0.7--4 cm/s expectation) |
+   159	| Heading error | <= 2 degrees (**estimate**) | <= 5 degrees (**estimate**) |
+   160	| Horizontal current-vector error | Recorded and scored, but no pass/fail threshold until local truth instrumentation and current variability are characterised (`[UNVERIFIED]`) | Same; omission of a threshold does not make publication optional |
+   161	| Output continuity | Valid `GPS_INPUT` at nominal 5 Hz while healthy; no gap >= 4 s (**estimate** derived from the stated timeout) | Same; dead-reckoned fill is explicitly permitted, with reported uncertainty and authority enforced upstream |
+   162	| GNSS isolation | GNSS fusion is allowed and auditable | Zero GNSS measurements delivered to fusion; `recorded_only` may write truth only |
+   163	| Replay determinism | Same raw log, config, software and deterministic execution settings produces bit-exact journal outputs; explicitly non-deterministic backends require a frozen numeric tolerance `[UNVERIFIED]` | Same, including a paired GNSS-withheld replay used for headline results |
+   164	
+   165	The aided numbers are engineering estimates, not literature-derived guarantees. Here,
+   166	“operational-grade” means satisfying the estimated 25 m position, 0.02 m/s per-axis
+   167	velocity, and 2 degree heading trial targets while integrity permits steering. It does not
+   168	mean certified safety performance. The denied limit intentionally does not inherit the
+   169	aided 25 m position target, which would make the research result fail by construction.
+   170	The 2/5 degree heading gates are provisional engineering targets chosen to bound transverse
+   171	velocity error from heading-rotated speed-log measurements while allowing degraded magnetic
+   172	operation; the handoff supplies no validated heading limit, so both require trial validation
+   173	and are `[UNVERIFIED]`.
+   174	
+   175	The real horizontal and speed uncertainty monitor and every steering gate shall live in
+   176	the companion process upstream of MAVLink, because the handoff states that ArduPilot
+   177	internally clamps reported horizontal accuracy at 100 m. Report `horiz_accuracy` and
+   178	`speed_accuracy` independently in `GPS_INPUT`. Publish fused heading through the
+   179	`GPS_INPUT.yaw` field with its validity governed by the companion integrity gate. `ODOMETRY`
+   180	shall not be used for this navigation injection because its ArduPilot path cannot transport
+   181	the required per-epoch velocity uncertainty.
+   182	
+   183	## Verification obligations
+   184	
+   185	Before steering trials, tests shall demonstrate end-to-end execution from real-capture
+   186	replay through propagation, measurement updates, integrity, authority decision and
+   187	`GPS_INPUT`. Jacobians shall be checked against finite differences. The same raw log shall
+   188	be replayed aided and GNSS-withheld. MAVLink integration shall be checked in ArduPilot SITL
+   189	against a pinned firmware commit and artifact checksum. Measurements, inferences and
+   190	estimates shall remain distinguishable in resulting evidence.
+     1	# Architecture
+     2	
+     3	Status: subordinate to [`DESIGN_BASELINE.md`](DESIGN_BASELINE.md)
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	`DESIGN_BASELINE.md` is the single normative design document. This architecture implements
+     7	it and is subordinate wherever the two differ.
+     8	
+     9	## Runtime shape and module boundaries
+    10	
+    11	The **fusion executive** is the first runnable vertical slice and the only orchestrator.
+    12	It owns the main event loop and connects these bounded modules through typed interfaces:
+    13	
+    14	1. **Configuration and authority** parses configuration, rejects an unknown
+    15	   `gnss_authority`, and constructs the single common processing graph. It applies GNSS
+    16	   routing before any fusion update.
+    17	2. **Clock/time service** owns runtime time (defined below), timestamps ingress, estimates
+    18	   UTC mapping and exposes monotonic deadlines.
+    19	3. **Sensor adapters** convert IMU, magnetometer, speed-log and GNSS device records into
+    20	   bus measurements without estimation policy. The Orbcomm adapter consumes a separate,
+    21	   non-coherent low-cost receiver and does not consume a bladeRF coherent RX channel.
+    22	4. **SDR capture** configures coherent channels and records raw IQ plus capture metadata.
+    23	   It does not decide whether a signal is navigation-safe.
+    24	5. **Signal trackers** turn IQ into Doppler/range-rate candidates with uncertainty and
+    25	   quality metadata. Starlink uses beacon/PSS-SSS correlation; OneWeb remains disabled
+    26	   until its required survey gate passes. Constellation trackers share an observation
+    27	   interface, not hidden state. Their estimator-facing observable is correlation-peak
+    28	   Doppler, never an unspecified raw carrier estimate.
+    29	6. **Ephemeris store and propagator** validates SupGP identity and age, then produces
+    30	   satellite position and velocity at observation time.
+    31	7. **Doppler predictor** combines propagated satellite state, receiver state and clock
+    32	   model to predict a range-rate/Doppler observation and its linearisation.
+    33	8. **Observation integrity gate** compares a tracker observation with a real predictor
+    34	   output, recording accept/reject and rationale. It cannot exist as a functional gate
+    35	   before modules 6 and 7.
+    36	9. **Estimator** propagates on every IMU event and applies only accepted, implemented
+    37	   updates. Its state registry requires a direct or cross-covariance measurement path for
+    38	   every declared state. It creates one per-satellite, per-pass transmit-frequency nuisance
+    39	   bias with a small validated random walk and retires it when the pass ends. It also applies
+    40	   the MSL sea-surface altitude pseudo-measurement; water current is derived downstream and
+    41	   is not a baseline estimator state.
+    42	10. **Solution integrity monitor** derives protection/uncertainty metrics independently
+    43	    of ArduPilot's censored accuracy view.
+    44	11. **Authority supervisor** grants or revokes steering authority from solution health,
+    45	    freshness and uncertainty. Its monotonic watchdog is independent of estimator
+    46	    convergence; expiry cannot stop the estimator. It raises and escalates alarms but does
+    47	    not select RTL, Loiter or disarm.
+    48	12. **MAVLink publisher** emits approximately 5 Hz `GPS_INPUT`, with independent horizontal
+    49	    and speed accuracy, using propagated fill between absolute updates. It publishes fused
+    50	    heading in `yaw`, the MSL-constrained altitude in `alt`, vertical velocity `vd = 0`, and
+    51	    a `vert_accuracy` consistent with the sea-surface constraint; it does not publish
+    52	    `ODOMETRY` as the navigation injection.
+    53	13. **Journal/replay service** writes measurements, truth and decisions and can reproduce
+    54	    the same bus stream from disk. Offline evaluation consumes journals; it does not feed
+    55	    results back into online rejection.
+    56	
+    57	No leaf module communicates directly with another leaf module. It publishes to or is
+    58	called by the executive through explicit ports, which makes the connected running path the
+    59	unit of integration rather than a collection of independently tested parts.
+    60	
+    61	## Measurement bus
+    62	
+    63	The measurement bus is an in-process, bounded, typed event stream owned and drained by the
+    64	fusion executive. Producers submit immutable envelopes; one executive orders, journals and
+    65	dispatches them. Backpressure and overflow are explicit health events, never silent drops.
+    66	
+    67	Every envelope contains: schema version, source ID, sequence number, measurement kind,
+    68	source/sample time, host receive monotonic time, optional UTC time plus its uncertainty,
+    69	payload SI units and frame identifier, covariance/uncertainty, quality flags, calibration
+    70	ID and provenance linking it to a capture or source record. The calibration ID shall resolve
+    71	the surveyed antenna phase-centre, IMU and vessel-reference extrinsics; Doppler and inertial
+    72	updates compensate rotational lever-arm velocity, and a missing/mismatched ID is an
+    73	authority-blocking integrity event. Exact field encoding and frame
+    74	enumeration are v2 contract work; the concepts are binding here.
+    75	
+    76	Ordering uses host monotonic receive time with per-source sequence checks. Measurement time
+    77	is retained for delayed updates. Clock resets, sequence gaps, lateness and queue overflow
+    78	become journalled integrity events. The bus carries at least IMU, heading, speed-through-
+    79	water, GNSS, tracker Doppler, ephemeris state, predicted Doppler, gate decision, estimator
+    80	solution, integrity status, authority status and output status messages.
+    81	
+    82	GNSS routing is enforced at bus ingress: `production` permits a fusion copy and truth copy;
+    83	`recorded_only` permits only the truth-journal route; `off` permits neither. There is no
+    84	downstream switch that can accidentally re-authorise it.
+    85	
+    86	## Time ownership
+    87	
+    88	The **clock/time service is the sole owner of time**. Device adapters may report device
+    89	counters or UTC labels, but may not define ordering, freshness or deadlines. At process
+    90	start the service establishes a host-monotonic epoch; all runtime ordering, stale-data
+    91	checks, authority leases and watchdogs use that monotonic domain. It also maintains an
+    92	explicit, uncertainty-bearing mapping between device time, host monotonic time and UTC for
+    93	ephemeris evaluation and logs. The estimator owns receiver clock bias and drift **states**,
+    94	not system time. GNSS UTC, when present, is a measurement and never silently disciplines
+    95	the SDR reference or runtime clock.
+    96	
+    97	All persistent timestamps include monotonic nanoseconds from the run epoch and, when
+    98	available, UTC as an absolute RFC 3339 timestamp. The clock model and its uncertainty are
+    99	journalled so replay can reconstruct event timing. Nanosecond representation and RFC 3339
+   100	encoding are architecture choices (**estimates**) pending v2 schema review.
+   101	
+   102	## On-disk formats
+   103	
+   104	All formats are append-only and versioned. A run directory has a manifest containing run
+   105	UUID, schema versions, absolute UTC creation time when available, monotonic epoch metadata,
+   106	configuration hash, calibration IDs, software revision, hardware/channel setup, ephemeris
+   107	snapshot identity and file hashes. Atomic segment finalisation and recovery after an
+   108	unclean stop are required; specific container encodings are `[UNVERIFIED]` pending v2.
+   109	
+   110	### Raw IQ capture
+   111	
+   112	IQ is stored in independently recoverable, fixed-duration segments. Each segment contains
+   113	interleaved coherent RX-channel samples without lossy compression plus a sidecar/header
+   114	with sample representation, endianness, sample rate, centre frequency, bandwidth, gain,
+   115	channel allocation, external-reference status, first-sample monotonic and optional UTC
+   116	time, sample count, overrun/gap records and calibration/configuration identity. Raw ADC
+   117	packing versus normalised signed-integer representation is `[UNVERIFIED]`.
+   118	
+   119	### Measurement journal
+   120	
+   121	The measurement journal is a length-delimited binary stream of the exact versioned bus
+   122	envelopes presented to and produced by the executive. Records carry checksums; segments
+   123	carry indexes by monotonic time, source and message kind. It includes raw sensor records,
+   124	tracker observations, ephemeris products, predictions, accept/reject decisions,
+   125	propagations, updates, solutions, integrity and authority transitions, alarms and MAVLink
+   126	publication outcomes, including derived horizontal current vectors and their propagated
+   127	covariance. A replay reader shall preserve values and event ordering and shall
+   128	reject unknown required schema versions rather than guess. The binary codec is
+   129	`[UNVERIFIED]`.
+   130	
+   131	### Truth journal
+   132	
+   133	The truth journal is physically and logically separate from the measurement journal. It
+   134	uses a versioned, length-delimited record model with source ID, source/sample time, host
+   135	monotonic receipt time, optional UTC, position/velocity/heading truth payload, covariance,
+   136	quality and provenance. In `recorded_only`, GNSS can write here but there is no truth-to-bus
+   137	fusion edge. Permissions/API boundaries shall prevent the online estimator and reject gate
+   138	from reading it. Offline evaluation aligns truth after the run and computes aided versus
+   139	withheld results. Codec and access-control mechanism are `[UNVERIFIED]`.
+   140	
+   141	## Build and verification order
+   142	
+   143	Development proceeds as connected vertical slices:
+   144	
+   145	1. Build a minimal fusion executive with clock service, bounded bus, journals/replay, one
+   146	   IMU propagation path, solution output and observable end-to-end integration test.
+   147	2. Add configuration/authority routing and prove that `recorded_only` has no fusion edge
+   148	   and unknown values fail.
+   149	3. Add each marine sensor as adapter, journal record and actual estimator update; do not add
+   150	   a filter state before its update path exists.
+   151	4. Add ephemeris store/propagator, then Doppler predictor, with numeric finite-difference
+   152	   checks for applicable Jacobians.
+   153	5. Add capture and one tracker path through replay into predictor and estimator.
+   154	6. Only now add the observation reject gate, because it has a real prediction producer.
+   155	7. Add integrity, independent monotonic authority watchdog and 5 Hz MAVLink publisher;
+   156	   verify that authority expiry never stops estimator execution.
+   157	8. Expand constellations and receiver allocation only behind their evidence gates.
+   158	9. Prove identical captures through paired aided and GNSS-withheld replay, then validate
+   159	   MAVLink against pinned ArduPilot SITL with commit hash and artifact checksum.
+   160	
+   161	Every slice must demonstrate that the running estimator propagates from IMU input even
+   162	when no measurements update it. Unit success without an executable end-to-end path is not
+   163	completion.
+     1	# Brief U-S1 — Safety case
+     2	
+     3	Contract version: v1. Read first: `.orchestration/CONTRACTS.md`, `docs/HANDOFF_PROMPT_BLADERF.md`
+     4	(especially failure mode 9 and "Fixed constraints"), `docs/design/DESIGN_BASELINE.md`,
+     5	`docs/design/ARCHITECTURE.md` (approved baseline), `.orchestration/DECISIONS.md`.
+     6	
+     7	## Goal
+     8	`docs/design/SAFETY_CASE.md` — handoff deliverable 6. Must state, precisely and testably:
+     9	1. **What grants steering authority**: the full conjunction of conditions (solution integrity
+    10	   within the active profile's protection limits, calibration validity per the baseline's
+    11	   extrinsics rule, watchdog liveness, human arm action) and where each is evaluated
+    12	   (companion process, upstream of MAVLink — ArduPilot's 100 m clamp makes its EKF variance a
+    13	   censored view; restate why the authority gate cannot live in ArduPilot).
+    14	2. **What revokes it**: per degradation row of the baseline; revocation semantics on a manned
+    15	   fast boat (never auto-RTL/Loiter/disarm — an unannounced manoeuvre at speed is the hazard;
+    16	   revocation means stop steering + alarm + hand to helm).
+    17	3. **The backstop when the human does not respond**: supervisor monotonic watchdog so authority
+    18	   cannot outlive the solution; un-acknowledged alarm escalation ladder (state stages, timing,
+    19	   and the terminal state); the physical, controller-independent override (helm kill-cord)
+    20	   as the final layer outside software.
+    21	4. **Hazard table**: hazard → cause → mitigation → residual risk, covering at minimum: stale
+    22	   solution steering, optimistic covariance (wrong-Jacobian class faults), authority flapping,
+    23	   silent estimator halt vs authority-alive inversion, MAVLink link loss mid-authority,
+    24	   GPS_INPUT spoof/failure of the companion process itself, human-override failure.
+    25	Mark anything not derivable from the baseline/handoff as [UNVERIFIED] or estimate. This
+    26	document is subordinate to DESIGN_BASELINE.md and must say so.
+    27	
+    28	## Files owned
+    29	Only: `docs/design/SAFETY_CASE.md`, `.orchestration/reports/U-S1.md`. No code, no git commit, no web research.
+    30	
+    31	## Report
+    32	`.orchestration/reports/U-S1.md`: decisions taken, assumptions, open uncertainties, contract version.
+     1	# Safety Case
+     2	
+     3	Status: **subordinate to [`DESIGN_BASELINE.md`](DESIGN_BASELINE.md)**
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	`DESIGN_BASELINE.md` is the single normative design document. This safety case implements
+     7	and is bounded by it. Where the two differ, the baseline governs until the baseline is
+     8	explicitly revised. This document adds no new sensor, estimator or acceptance requirement;
+     9	it specifies **how steering authority is granted, revoked and backstopped**, deliverable 6
+    10	of `docs/HANDOFF_PROMPT_BLADERF.md`, and it draws every degradation trigger from the
+    11	baseline's degradation contract.
+    12	
+    13	Values that the baseline and handoff do not supply — protection-limit numbers, alarm and
+    14	lease timings, failsafe parameter values — are marked **[UNVERIFIED]** or **estimate** and
+    15	must be frozen before steering trials. They are engineering placeholders, not certified
+    16	safety performance.
+    17	
+    18	---
+    19	
+    20	## 0. Terms, and the three things this case keeps separate
+    21	
+    22	Three limit concepts are deliberately distinct and must not be conflated:
+    23	
+    24	- **Acceptance profile** (baseline §Acceptance profiles): system-level trial statistics
+    25	  (for example ≤ 25 m aided, ≤ 200 m denied horizontal position) computed offline over
+    26	  declared test segments against the truth journal. These grade the *campaign*. The baseline
+    27	  states they **do not replace per-epoch integrity and authority checks**.
+    28	- **Protection limit**: the per-epoch bound the authority supervisor tests each solution
+    29	  against, derived by the solution integrity monitor (architecture module 10) from the
+    30	  filter covariance and integrity state, *independently of ArduPilot*. The baseline does not
+    31	  supply protection-limit numbers; they are **[UNVERIFIED]** and shall be no looser than the
+    32	  active acceptance profile implies.
+    33	- **Active profile**: which limit set applies, selected by `gnss_authority` — the **aided**
+    34	  profile under `production`, the **denied** profile under `recorded_only` and `off`. The
+    35	  selection follows the baseline's mode rule and never changes code path.
+    36	
+    37	Two further terms:
+    38	
+    39	- **Authority** is the companion process's assertion of autonomous steering: whether the
+    40	  fused solution is permitted to steer the vessel via `GPS_INPUT`. It is a *lease*, not a
+    41	  latch — it must be actively and continuously re-earned.
+    42	- **The helm** is the qualified person aboard (baseline: a qualified person shall remain
+    43	  aboard with a physical, controller-independent manual override). The helm is the primary
+    44	  safety actor. Software is subordinate to the helm at all times.
+    45	
+    46	**Vessel-speed caveat.** The baseline vessel is a **displacement-hull** vessel operating
+    47	provisionally in the Danish straits; handoff failure mode 9 frames the hazard as a *manned
+    48	fast boat*. The revocation principle below (revocation is never itself a manoeuvre) holds at
+    49	any speed. The *timing* budgets (lease deadline, acknowledgement window) are sized to the
+    50	vessel's manoeuvre/collision time budget, which shrinks as speed rises. All timing values
+    51	here are conservative estimates for a displacement hull and are **[UNVERIFIED]**; if the
+    52	hull planes or slams they shall be re-derived, consistent with the baseline's load-bearing
+    53	displacement-hull assumption.
+    54	
+    55	---
+    56	
+    57	## 1. What grants steering authority
+    58	
+    59	Steering authority is granted **only while the full conjunction below holds**. It is a
+    60	logical AND: any single false term revokes authority (§2). The companion never self-grants;
+    61	grant is opt-in by the helm and continuously re-earned by the solution.
+    62	
+    63	| # | Grant condition (all must hold) | Testable predicate | Evaluated in |
+    64	|---|---|---|---|
+    65	| G1 | **Human arm action** | The helm has performed a positive, explicit companion-steering arm action, and it has not since been withdrawn. Absence of arm ⇒ no authority; this is the default state at process start. | Companion (authority supervisor, module 11) |
+    66	| G2 | **Solution integrity within the active profile's protection limits** | Horizontal-position, horizontal-velocity and heading protection limits derived by the integrity monitor are each within the active-profile limit set, evaluated per epoch on the true (unclamped) covariance. | Companion (integrity monitor module 10 → supervisor module 11) |
+    67	| G3 | **Calibration validity (baseline extrinsics rule)** | Every measurement feeding the current solution carries a calibration ID that resolves the surveyed antenna-phase-centre / IMU / vessel-reference extrinsics; none is missing or mismatched; the frequency-reference pre-deployment calibration is present and unexpired. Missing/mismatched calibration is an integrity fault. | Companion (bus ingress + integrity monitor) |
+    68	| G4 | **Watchdog liveness** | The supervisor's monotonic authority lease is unexpired, i.e. it has been renewed by a *fresh, integrity-passing* solution within the lease deadline, on the clock service's monotonic domain (architecture §Time ownership). | Companion (supervisor monotonic watchdog) |
+    69	
+    70	Freshness in G4 means the solution's own timestamp/sequence has advanced *and* the solution
+    71	passed G2/G3 this epoch. A frozen or stalled output does not renew the lease (see hazard H4).
+    72	
+    73	### Why the authority gate cannot live in ArduPilot
+    74	
+    75	Every grant condition is evaluated **in the companion process, upstream of MAVLink**,
+    76	because ArduPilot cannot see what the gate must test:
+    77	
+    78	- **The covariance ArduPilot exposes is censored.** The handoff and baseline state ArduPilot
+    79	  clamps reported horizontal accuracy at **100 m** internally; its EKF variance is therefore
+    80	  a *censored view*. A censored 100 m ceiling cannot distinguish a healthy 5 m solution from
+    81	  a 5 km divergence — exactly the discrimination G2 requires. The real, unclamped protection
+    82	  limit exists only upstream, so the gate must live upstream. This is not tunable away.
+    83	- **ArduPilot has no visibility of the LEO-specific integrity state** (calibration-ID match,
+    84	  ephemeris age, per-pass transmit-bias health, innovation consistency) that G2/G3 test.
+    85	- **ArduPilot does not know the companion's liveness** (G4) — a stalled companion still
+    86	  looks, from ArduPilot's side, like a GPS that has merely gone quiet.
+    87	- **`gnss_authority` and the aided/denied profile selection are companion concepts.**
+    88	  ArduPilot cannot select the active protection-limit set.
+    89	
+    90	Consequently ArduPilot is treated as a **downstream actuator that must never be relied on to
+    91	judge navigation integrity**. Its own GPS/EKF failsafe actions are configured so that loss
+    92	or degradation of the injected `GPS_INPUT` **cannot itself command an autonomous manoeuvre**
+    93	(RTL/Loiter/disarm) — because such a manoeuvre is the hazard (§2). The specific ArduPilot
+    94	failsafe parameter values are **[UNVERIFIED]** and are a SITL-validated configuration
+    95	deliverable pinned to a firmware commit and artifact checksum (handoff verification
+    96	discipline).
+    97	
+    98	---
+    99	
+   100	## 2. What revokes steering authority
+   101	
+   102	### 2.1 Revocation semantics on a manned vessel at speed
+   103	
+   104	Revocation is uniform regardless of cause and is **never a manoeuvre**:
+   105	
+   106	> **Revocation = stop steering + alarm + hand to helm.**
+   107	
+   108	Software shall **never** autonomously select RTL, Loiter or disarm (handoff failure mode 9;
+   109	baseline degradation contract, final row). On a manned vessel making way, an *unannounced
+   110	manoeuvre at speed is itself the hazard* — a surprise turn, stop or hold can put the vessel
+   111	beam-on to sea, into traffic, or throw crew. Therefore:
+   112	
+   113	- **Stop steering** means the companion ceases to assert autonomous navigation control. It
+   114	  does not command a course change. Control surfaces are left to the helm; ArduPilot is
+   115	  commanded to (or held in) a manual/helm-controlled state rather than allowed to let a
+   116	  GPS-timeout failsafe fire a surprise manoeuvre.
+   117	- **Alarm** is raised to the helm immediately (§3.2 ladder).
+   118	- **Hand to helm** — the qualified person takes manual control. The helm's physical override
+   119	  mechanically dominates the autopilot at all times (baseline; §3.3).
+   120	
+   121	Revocation is **latched**: once revoked, authority is not re-granted automatically. Re-grant
+   122	requires *all* of §1 true again **and** a fresh explicit human arm action (G1), after a
+   123	stabilisation dwell. This is the primary defence against authority flapping (hazard H3).
+   124	
+   125	Two revocation trigger classes both produce this same action:
+   126	
+   127	- **Integrity/limit breach** — a grant condition (G2 or G3) becomes false: the solution is
+   128	  too uncertain, or calibration/ephemeris integrity fails.
+   129	- **Lease expiry** — G4 fails: no fresh integrity-passing solution renewed the lease within
+   130	  its deadline (covers estimator stall, companion stall, thread death, output freeze).
+   131	
+   132	### 2.2 Revocation mapped to every baseline degradation row
+   133	
+   134	Each row of the baseline degradation contract is mapped to its authority effect. "Continue"
+   135	means the estimator keeps running (baseline: authority expiry never stops the estimator) and
+   136	authority persists **only while §1 still holds**.
+   137	
+   138	| Baseline degradation row | Authority supervisor response | Revocation trigger |
+   139	|---|---|---|
+   140	| GNSS absent or forbidden | Normal denied operation; **denied** protection-limit set active. Not itself a revocation. GNSS cannot re-enter fusion (enforced at bus ingress). | None (mode selection) |
+   141	| One LEO constellation / RF front end lost | Continue; authority persists if protection limits still met; geometry/uncertainty degrade honestly. | G2 if protection limit breached |
+   142	| **All LEO observations lost** | Estimator continues on IMU + magnetometer + speed log; covariance grows. Authority expires as the growing protection limit crosses threshold, or as the lease is no longer renewed by an in-limit solution. | G2, then G4 |
+   143	| One magnetometer lost/rejected | Continue on the other calibrated magnetometer; inflate heading uncertainty. | G2 (heading limit) if breached |
+   144	| **Both magnetometers lost/rejected** | Heading is not passage-capable by inertial integration alone; revoke when the heading protection bound is exceeded. | G2 (heading limit) |
+   145	| Speed log lost | Continue; current separation unavailable; uncertainty reflects it. | G2 if breached |
+   146	| **IMU stream stale** | Time propagation no longer trustworthy → supervisor revokes. Estimator stays running, does not fabricate propagation samples. | G2/G4 (stale-propagation integrity fault) |
+   147	| Frequency reference degrades / sustained heel invalidates its model | Reject biased Doppler per integrity; revoke when solution limits exceeded. | G2 |
+   148	| Sea-surface multipath biases a tracker | Correlation-quality / innovation-consistency rejection or inflation; persistent constellation-correlated residuals revoke when protection limits exceeded. | G2 |
+   149	| Ephemeris missing or too old | Do not form/accept the affected Doppler prediction (never bypass the age gate). Continue on other measurements; revoke only if the surviving solution breaches limits. | G3 (age gate) → G2 |
+   150	| Calibration ID missing/mismatched | Authority-blocking integrity fault (baseline extrinsics rule). | G3 |
+   151	| **Companion process stalls** | Independent monotonic watchdog makes the lease expire → authority revoked. Alarm escalation and physical override remain. Software never selects RTL/Loiter/disarm. | G4 |
+   152	
+   153	The DR (dead-reckoning) timeout is one input to the G2/G4 logic. Per the baseline and
+   154	handoff failure mode 3 it **governs authority only** — it never stops propagation,
+   155	observation processing, journalling, or the 10–20 minute position-convergence process.
+   156	
+   157	---
+   158	
+   159	## 3. The backstop when the human does not respond
+   160	
+   161	Three layers, in order of who acts. Software's automatic layer only *stops asserting* and
+   162	*alerts*; it never manoeuvres. The kinetic final layer is physical and controller-independent.
+   163	
+   164	### 3.1 Layer 1 — supervisor monotonic watchdog (automatic, so authority cannot outlive the solution)
+   165	
+   166	Authority is a **lease** on the clock service's monotonic domain (architecture §Time
+   167	ownership), continuously renewed **only** by a fresh, in-limit, calibration-valid solution
+   168	(G2+G3+G4). If renewal stops for *any* reason — solution unhealthy, integrity fault,
+   169	estimator stall, thread death, whole-companion stall — the lease is not renewed, expires, and
+   170	authority drops to revoked. This is what guarantees **authority cannot outlive the solution**
+   171	(handoff failure mode 9).
+   172	
+   173	Independence properties (from the baseline/architecture, restated as safety requirements):
+   174	
+   175	- The watchdog is **independent of estimator convergence**: its expiry cannot stop the
+   176	  estimator, and the estimator's slow convergence cannot hold the lease open.
+   177	- The lease uses the monotonic clock, not device or UTC time, so a device clock reset or a
+   178	  spoofed UTC label cannot extend it.
+   179	- **Lease deadline `t_lease` shall be shorter than ArduPilot's `GPS_TIMEOUT_MS` (4000 ms)**
+   180	  so the companion always revokes *before* ArduPilot's own GPS timeout could fire a failsafe.
+   181	  Provisional `t_lease` on the order of a few hundred milliseconds to ~1 s (a small multiple
+   182	  of the 5 Hz / 200 ms nominal solution interval) — **[UNVERIFIED] estimate**, frozen before
+   183	  trials against the vessel manoeuvre budget.
+   184	
+   185	### 3.2 Layer 2 — un-acknowledged-alarm escalation ladder (human-in-the-loop)
+   186	
+   187	The ladder exists to *get the helm's attention*, not to substitute for the helm. Because
+   188	software must never manoeuvre, **the terminal state is not kinetic**: it is a latched
+   189	revocation plus maximal alarm, awaiting the human.
+   190	
+   191	| Stage | Entry condition | Authority | Annunciation | Exit / timing |
+   192	|---|---|---|---|---|
+   193	| **S0 NOMINAL** | All §1 conditions hold. | Granted | None. | → S1 when a metric enters the caution band. |
+   194	| **S1 CAUTION** | A protection metric crosses a *caution* threshold set below the revoke threshold (hysteresis band), or a single sensor is lost with margin shrinking. | Granted (still) | Soft visual + audible pre-alert: "solution degrading, prepare to take the helm." | → S0 if metric recovers past the caution threshold; → S2 on any grant condition failing. |
+   195	| **S2 WARNING (REVOKED)** | Any grant condition G1–G4 false. | **Revoked, latched.** Stop steering + hand to helm. | Loud alarm demanding acknowledgement. | Helm acknowledges within `T_ack` → S4; no acknowledgement within `T_ack` → S3. |
+   196	| **S3 ESCALATED** | S2 un-acknowledged for `T_ack`. | Revoked, latched. | Maximal continuous alarm; secondary annunciators engaged (distinct tone; remote/repeater alert if fitted). | Helm acknowledges → S4. Otherwise **remains in S3 indefinitely** (terminal software state). |
+   197	| **S4 LATCHED-SAFE (acknowledged)** | Helm acknowledged S2/S3. | Revoked, latched. | Steady fault indication. | Re-grant requires all §1 true **and** a fresh G1 arm action after a stabilisation dwell. No auto re-grant. |
+   198	
+   199	- `T_ack` (un-acknowledged escalation window): **[UNVERIFIED] estimate**, on the order of a
+   200	  few seconds, sized to the vessel's manoeuvre/collision budget; shorter for a faster hull.
+   201	- **Terminal state = S3 LATCHED-REVOKED + MAX ALARM.** Software performs **no** kinetic
+   202	  action there. If the helm never responds, the vessel continues under its last physical
+   203	  control state (rudder/throttle where the helm left them — the least-surprising outcome, no
+   204	  unannounced manoeuvre) until the helm acts or the physical layer (§3.3) intervenes. This is
+   205	  the deliberate resolution of the safety inversion: an unresponsive human must not trigger a
+   206	  surprise manoeuvre, so the software's terminal behaviour is *alarm, not motion*.
+   207	- Escalation is one-directional under fault: authority is never silently re-granted from any
+   208	  alarm stage.
+   209	
+   210	### 3.3 Layer 3 — physical, controller-independent override (final layer, outside software)
+   211	
+   212	Two physical controls, both independent of the companion computer, ArduPilot and MAVLink,
+   213	and therefore effective even if all of them are faulted:
+   214	
+   215	- **Helm manual override.** The qualified person's steering/throttle mechanically dominates
+   216	  the autopilot's actuator at any time (baseline precondition). This is how "hand to helm"
+   217	  becomes real motion control.
+   218	- **Helm kill-cord.** A physical lanyard on the helm that cuts propulsion (handoff failure
+   219	  mode 9: "a helm kill-cord is cheap and standard"). It fires if the helmsman is *displaced
+   220	  from the helm* (overboard/incapacitated and the lanyard pulls out), stopping the engine
+   221	  without any software involvement. It is the final backstop for the case where the sole
+   222	  safety actor is displaced.
+   223	
+   224	Pre-trial checklist items (operational, not software): kill-cord clipped to the helmsman;
+   225	manual override tested; ArduPilot non-manoeuvre failsafe configuration verified in SITL.
+   226	
+   227	---
+   228	
+   229	## 4. Hazard table
+   230	
+   231	hazard → cause → mitigation → residual risk. Residuals marked **[UNVERIFIED]** are bounded
+   232	only after validation on GNSS-withheld replay against truth and/or SITL, per the handoff
+   233	verification discipline.
+   234	
+   235	| # | Hazard | Cause | Mitigation | Residual risk |
+   236	|---|---|---|---|---|
+   237	| **H1** | **Stale-solution steering** — steering on an old/dead-reckoned solution whose true error has already grown past limits. | Absolute LEO fixes arrive minutes apart; DR fill between; covariance grows with motion. | Covariance is actually time-propagated from IMU every accepted sample (baseline; guards handoff failure modes 5); per-epoch protection-limit gate G2; lease G4 renewed only by a *fresh* in-limit solution; DR timeout governs authority only, `t_lease` < `GPS_TIMEOUT_MS`. | If the covariance *model itself* is optimistic (see H2), a fresh-looking solution can under-report staleness. Bounded by conservative process noise + the human backstop; magnitude **[UNVERIFIED]** until withheld-replay validation. |
+   238	| **H2** | **Optimistic covariance (wrong-Jacobian class)** — filter reports a tight, wrong covariance; authority granted on false confidence. Most dangerous, because the gate *consumes* this covariance. | Wrong Jacobian (silent: filter still runs and produces a covariance — handoff explicitly), missing propagation, mis-modelled process noise. | Numerical Jacobian check vs finite differences before trials (handoff); independent innovation-consistency / NEES-style monitoring in the integrity monitor as a covariance-realism check that does not itself trust the covariance; conservative process noise; headline stats only from GNSS-withheld runs (no circular validation). | Consistency monitors have finite power; a slowly-biasing fault under the low LEO observation rate may evade detection between updates. Real, **[UNVERIFIED]**; bounded by conservative limits and the human backstop. |
+   239	| **H3** | **Authority flapping** — grant/revoke toggling around a threshold, causing repeated stop-steering/hand-to-helm churn (itself a hazard: confuses the helm, injects control discontinuities). | Protection metric noise near the revoke threshold. | Hysteresis band (S1 caution threshold below the revoke threshold); **latched** revocation requiring explicit human re-arm — no automatic re-grant; stabilisation dwell before re-grant. | Mis-tuned hysteresis could still flap or be sluggish; band and dwell values **[UNVERIFIED]**, frozen before trials. |
+   240	| **H4** | **Silent estimator halt vs authority-alive inversion** — estimator stalls / freezes its last output while authority stays granted → steering a frozen fix. | Estimator thread stall, deadlock, or frozen output that still "looks" valid. | Lease G4 renewed **only** by a solution whose timestamp/sequence advanced *and* passed integrity this epoch; a frozen output does not renew → watchdog expires (§3.1). Watchdog is on the independent monotonic clock. The safe half of the inversion (authority dead, estimator alive) is guaranteed by the baseline: watchdog expiry cannot stop the estimator. | If a stalled path re-emits a *stale-but-sequence-advancing* frame (bug), freshness alone would miss it; mitigated by content-change/innovation-liveness checks. Residual **[UNVERIFIED]**. |
+   241	| **H5** | **MAVLink link loss mid-authority** — companion↔ArduPilot link drops while authority granted; risk that ArduPilot's own GPS timeout then fires a surprise failsafe. | Cable/USB/serial fault, connector at sea. | ArduPilot GPS/EKF failsafe pre-configured to **not** auto-manoeuvre on GPS loss (hold/hand-to-manual), SITL-validated; companion detects link loss and treats it as revocation; `t_lease` < `GPS_TIMEOUT_MS` (4000 ms) so the companion revokes first; helm override and kill-cord are link-independent. | An unavoidable window (up to ~4 s) where ArduPilot runs on the last `GPS_INPUT` before its own timeout. Bounded by that window + the non-manoeuvre failsafe config; exact params **[UNVERIFIED]** until SITL-verified. |
+   242	| **H6** | **`GPS_INPUT` spoof / failure of the companion process itself** — a plausible-but-wrong `GPS_INPUT` reaches ArduPilot, from an internal companion fault or an external injection. | (a) Companion software fault/corruption. (b) Unauthenticated MAVLink link; physical access to it. | (a) Same integrity monitor + watchdog + withheld-replay validation; a corrupted solution failing integrity won't renew the lease. (b) Dedicated point-to-point companion↔autopilot link (not shared/networked); companion is the sole authorised source (`GPS1_TYPE=14`); enable MAVLink signing (**[UNVERIFIED]** whether supported on the pinned firmware — recommended). Note the LEO-SoOP premise removes the *RF* GNSS-spoof surface (no GPS to spoof); the MAVLink injection surface remains. | A companion fault that is simultaneously wrong *and* integrity-consistent (correlated fault) is the hard residual; bounded only by the human backstop and the independent kill-cord. **[UNVERIFIED]**. |
+   243	| **H7** | **Human-override failure** — the backstop human fails to respond, is incapacitated/displaced, or the override is unusable. | Human distracted/overboard/incapacitated; kill-cord unclipped; manual override mis-wired. | Escalation ladder (§3.2) to command attention; the deliberate design that software never auto-manoeuvres, so an unresponsive human does not cause a surprise manoeuvre; kill-cord fires if the helm is displaced; pre-trial checklist (kill-cord clipped, override tested); qualified-person-aboard is a baseline precondition. | If the human is incapacitated *at* the helm (kill-cord not pulled) with authority already revoked, the vessel continues at its last physical state until intervention/fuel exhaustion. Irreducible for a manned system whose sole safety actor is unresponsive; out of software scope by design; requires an operational control (e.g. second crew / helm dead-man). **[UNVERIFIED]/accepted**. |
+   244	| **H8** | **Steering on a spoofed/absent frequency-reference or heel-biased solution** (supporting row, from the baseline degradation contract). | Frequency reference degrades or sustained heel steps the drift model beyond what the clock states absorb; both magnetometers lost. | Reject biased Doppler per integrity; revoke via G2 when solution limits exceeded; heading protection bound revokes when both magnetometers are gone; mount the g-sensitivity vector vertical (baseline hardware rule). | Slow, in-model bias below the innovation-detection floor. **[UNVERIFIED]**; bounded by conservative limits and the human backstop. |
+   245	
+   246	---
+   247	
+   248	## 5. Assumptions and the [UNVERIFIED] register
+   249	
+   250	Safety-relevant items this case depends on that are not yet frozen:
+   251	
+   252	- Per-epoch **protection-limit numbers** for horizontal position, horizontal velocity and
+   253	  heading, in both the aided and denied profiles (distinct from the acceptance-profile trial
+   254	  statistics). Must be no looser than the profiles imply.
+   255	- **`t_lease`** (watchdog deadline), constrained `< GPS_TIMEOUT_MS` (4000 ms); provisional
+   256	  few-hundred-ms to ~1 s.
+   257	- **`T_ack`** and the caution-band hysteresis thresholds/dwell for the escalation ladder.
+   258	- ArduPilot **GPS/EKF failsafe parameter values** proving loss/degradation of `GPS_INPUT`
+   259	  cannot auto-manoeuvre; validated in SITL against a pinned firmware commit + artifact
+   260	  checksum.
+   261	- Whether **MAVLink signing** is available on the pinned firmware for the companion link.
+   262	- The mechanism of "stop steering" at the MAVLink boundary (mode command vs fix-validity
+   263	  degrade) that reliably yields helm control **without** provoking an ArduPilot failsafe
+   264	  manoeuvre.
+   265	- All timing budgets assume a **displacement hull**; a planing/slamming hull invalidates them
+   266	  (baseline caveat) and requires re-derivation.
+   267	- Content-liveness (not just sequence-freshness) check to fully close hazard H4.
+   268	
+   269	Assumptions carried from the baseline: manned displacement-hull vessel, Danish straits
+   270	(working assumption), qualified helm aboard with physical controller-independent override,
+   271	`gnss_authority` enforced at bus ingress, and the MAVLink `GPS_INPUT` interface named by the
+   272	baseline. Implementation-level field encodings and parameter names are subordinate v2
+   273	schema/code and configuration work.
+
+exec
+/bin/bash -lc "nl -ba .orchestration/briefs/U-S1.md; sed -n '1,180p' docs/design/SAFETY_CASE.md | nl -ba; sed -n '35,130p' docs/design/ARCHITECTURE.md | nl -ba -v35" in /home/od/work/leo-pnt
+ succeeded in 0ms:
+     1	# Brief U-S1 — Safety case
+     2	
+     3	Contract version: v1. Read first: `.orchestration/CONTRACTS.md`, `docs/HANDOFF_PROMPT_BLADERF.md`
+     4	(especially failure mode 9 and "Fixed constraints"), `docs/design/DESIGN_BASELINE.md`,
+     5	`docs/design/ARCHITECTURE.md` (approved baseline), `.orchestration/DECISIONS.md`.
+     6	
+     7	## Goal
+     8	`docs/design/SAFETY_CASE.md` — handoff deliverable 6. Must state, precisely and testably:
+     9	1. **What grants steering authority**: the full conjunction of conditions (solution integrity
+    10	   within the active profile's protection limits, calibration validity per the baseline's
+    11	   extrinsics rule, watchdog liveness, human arm action) and where each is evaluated
+    12	   (companion process, upstream of MAVLink — ArduPilot's 100 m clamp makes its EKF variance a
+    13	   censored view; restate why the authority gate cannot live in ArduPilot).
+    14	2. **What revokes it**: per degradation row of the baseline; revocation semantics on a manned
+    15	   fast boat (never auto-RTL/Loiter/disarm — an unannounced manoeuvre at speed is the hazard;
+    16	   revocation means stop steering + alarm + hand to helm).
+    17	3. **The backstop when the human does not respond**: supervisor monotonic watchdog so authority
+    18	   cannot outlive the solution; un-acknowledged alarm escalation ladder (state stages, timing,
+    19	   and the terminal state); the physical, controller-independent override (helm kill-cord)
+    20	   as the final layer outside software.
+    21	4. **Hazard table**: hazard → cause → mitigation → residual risk, covering at minimum: stale
+    22	   solution steering, optimistic covariance (wrong-Jacobian class faults), authority flapping,
+    23	   silent estimator halt vs authority-alive inversion, MAVLink link loss mid-authority,
+    24	   GPS_INPUT spoof/failure of the companion process itself, human-override failure.
+    25	Mark anything not derivable from the baseline/handoff as [UNVERIFIED] or estimate. This
+    26	document is subordinate to DESIGN_BASELINE.md and must say so.
+    27	
+    28	## Files owned
+    29	Only: `docs/design/SAFETY_CASE.md`, `.orchestration/reports/U-S1.md`. No code, no git commit, no web research.
+    30	
+    31	## Report
+    32	`.orchestration/reports/U-S1.md`: decisions taken, assumptions, open uncertainties, contract version.
+     1	# Safety Case
+     2	
+     3	Status: **subordinate to [`DESIGN_BASELINE.md`](DESIGN_BASELINE.md)**
+     4	Contract: v1 (2026-07-22)
+     5	
+     6	`DESIGN_BASELINE.md` is the single normative design document. This safety case implements
+     7	and is bounded by it. Where the two differ, the baseline governs until the baseline is
+     8	explicitly revised. This document adds no new sensor, estimator or acceptance requirement;
+     9	it specifies **how steering authority is granted, revoked and backstopped**, deliverable 6
+    10	of `docs/HANDOFF_PROMPT_BLADERF.md`, and it draws every degradation trigger from the
+    11	baseline's degradation contract.
+    12	
+    13	Values that the baseline and handoff do not supply — protection-limit numbers, alarm and
+    14	lease timings, failsafe parameter values — are marked **[UNVERIFIED]** or **estimate** and
+    15	must be frozen before steering trials. They are engineering placeholders, not certified
+    16	safety performance.
+    17	
+    18	---
+    19	
+    20	## 0. Terms, and the three things this case keeps separate
+    21	
+    22	Three limit concepts are deliberately distinct and must not be conflated:
+    23	
+    24	- **Acceptance profile** (baseline §Acceptance profiles): system-level trial statistics
+    25	  (for example ≤ 25 m aided, ≤ 200 m denied horizontal position) computed offline over
+    26	  declared test segments against the truth journal. These grade the *campaign*. The baseline
+    27	  states they **do not replace per-epoch integrity and authority checks**.
+    28	- **Protection limit**: the per-epoch bound the authority supervisor tests each solution
+    29	  against, derived by the solution integrity monitor (architecture module 10) from the
+    30	  filter covariance and integrity state, *independently of ArduPilot*. The baseline does not
+    31	  supply protection-limit numbers; they are **[UNVERIFIED]** and shall be no looser than the
+    32	  active acceptance profile implies.
+    33	- **Active profile**: which limit set applies, selected by `gnss_authority` — the **aided**
+    34	  profile under `production`, the **denied** profile under `recorded_only` and `off`. The
+    35	  selection follows the baseline's mode rule and never changes code path.
+    36	
+    37	Two further terms:
+    38	
+    39	- **Authority** is the companion process's assertion of autonomous steering: whether the
+    40	  fused solution is permitted to steer the vessel via `GPS_INPUT`. It is a *lease*, not a
+    41	  latch — it must be actively and continuously re-earned.
+    42	- **The helm** is the qualified person aboard (baseline: a qualified person shall remain
+    43	  aboard with a physical, controller-independent manual override). The helm is the primary
+    44	  safety actor. Software is subordinate to the helm at all times.
+    45	
+    46	**Vessel-speed caveat.** The baseline vessel is a **displacement-hull** vessel operating
+    47	provisionally in the Danish straits; handoff failure mode 9 frames the hazard as a *manned
+    48	fast boat*. The revocation principle below (revocation is never itself a manoeuvre) holds at
+    49	any speed. The *timing* budgets (lease deadline, acknowledgement window) are sized to the
+    50	vessel's manoeuvre/collision time budget, which shrinks as speed rises. All timing values
+    51	here are conservative estimates for a displacement hull and are **[UNVERIFIED]**; if the
+    52	hull planes or slams they shall be re-derived, consistent with the baseline's load-bearing
+    53	displacement-hull assumption.
+    54	
+    55	---
+    56	
+    57	## 1. What grants steering authority
+    58	
+    59	Steering authority is granted **only while the full conjunction below holds**. It is a
+    60	logical AND: any single false term revokes authority (§2). The companion never self-grants;
+    61	grant is opt-in by the helm and continuously re-earned by the solution.
+    62	
+    63	| # | Grant condition (all must hold) | Testable predicate | Evaluated in |
+    64	|---|---|---|---|
+    65	| G1 | **Human arm action** | The helm has performed a positive, explicit companion-steering arm action, and it has not since been withdrawn. Absence of arm ⇒ no authority; this is the default state at process start. | Companion (authority supervisor, module 11) |
+    66	| G2 | **Solution integrity within the active profile's protection limits** | Horizontal-position, horizontal-velocity and heading protection limits derived by the integrity monitor are each within the active-profile limit set, evaluated per epoch on the true (unclamped) covariance. | Companion (integrity monitor module 10 → supervisor module 11) |
+    67	| G3 | **Calibration validity (baseline extrinsics rule)** | Every measurement feeding the current solution carries a calibration ID that resolves the surveyed antenna-phase-centre / IMU / vessel-reference extrinsics; none is missing or mismatched; the frequency-reference pre-deployment calibration is present and unexpired. Missing/mismatched calibration is an integrity fault. | Companion (bus ingress + integrity monitor) |
+    68	| G4 | **Watchdog liveness** | The supervisor's monotonic authority lease is unexpired, i.e. it has been renewed by a *fresh, integrity-passing* solution within the lease deadline, on the clock service's monotonic domain (architecture §Time ownership). | Companion (supervisor monotonic watchdog) |
+    69	
+    70	Freshness in G4 means the solution's own timestamp/sequence has advanced *and* the solution
+    71	passed G2/G3 this epoch. A frozen or stalled output does not renew the lease (see hazard H4).
+    72	
+    73	### Why the authority gate cannot live in ArduPilot
+    74	
+    75	Every grant condition is evaluated **in the companion process, upstream of MAVLink**,
+    76	because ArduPilot cannot see what the gate must test:
+    77	
+    78	- **The covariance ArduPilot exposes is censored.** The handoff and baseline state ArduPilot
+    79	  clamps reported horizontal accuracy at **100 m** internally; its EKF variance is therefore
+    80	  a *censored view*. A censored 100 m ceiling cannot distinguish a healthy 5 m solution from
+    81	  a 5 km divergence — exactly the discrimination G2 requires. The real, unclamped protection
+    82	  limit exists only upstream, so the gate must live upstream. This is not tunable away.
+    83	- **ArduPilot has no visibility of the LEO-specific integrity state** (calibration-ID match,
+    84	  ephemeris age, per-pass transmit-bias health, innovation consistency) that G2/G3 test.
+    85	- **ArduPilot does not know the companion's liveness** (G4) — a stalled companion still
+    86	  looks, from ArduPilot's side, like a GPS that has merely gone quiet.
+    87	- **`gnss_authority` and the aided/denied profile selection are companion concepts.**
+    88	  ArduPilot cannot select the active protection-limit set.
+    89	
+    90	Consequently ArduPilot is treated as a **downstream actuator that must never be relied on to
+    91	judge navigation integrity**. Its own GPS/EKF failsafe actions are configured so that loss
+    92	or degradation of the injected `GPS_INPUT` **cannot itself command an autonomous manoeuvre**
+    93	(RTL/Loiter/disarm) — because such a manoeuvre is the hazard (§2). The specific ArduPilot
+    94	failsafe parameter values are **[UNVERIFIED]** and are a SITL-validated configuration
+    95	deliverable pinned to a firmware commit and artifact checksum (handoff verification
+    96	discipline).
+    97	
+    98	---
+    99	
+   100	## 2. What revokes steering authority
+   101	
+   102	### 2.1 Revocation semantics on a manned vessel at speed
+   103	
+   104	Revocation is uniform regardless of cause and is **never a manoeuvre**:
+   105	
+   106	> **Revocation = stop steering + alarm + hand to helm.**
+   107	
+   108	Software shall **never** autonomously select RTL, Loiter or disarm (handoff failure mode 9;
+   109	baseline degradation contract, final row). On a manned vessel making way, an *unannounced
+   110	manoeuvre at speed is itself the hazard* — a surprise turn, stop or hold can put the vessel
+   111	beam-on to sea, into traffic, or throw crew. Therefore:
+   112	
+   113	- **Stop steering** means the companion ceases to assert autonomous navigation control. It
+   114	  does not command a course change. Control surfaces are left to the helm; ArduPilot is
+   115	  commanded to (or held in) a manual/helm-controlled state rather than allowed to let a
+   116	  GPS-timeout failsafe fire a surprise manoeuvre.
+   117	- **Alarm** is raised to the helm immediately (§3.2 ladder).
+   118	- **Hand to helm** — the qualified person takes manual control. The helm's physical override
+   119	  mechanically dominates the autopilot at all times (baseline; §3.3).
+   120	
+   121	Revocation is **latched**: once revoked, authority is not re-granted automatically. Re-grant
+   122	requires *all* of §1 true again **and** a fresh explicit human arm action (G1), after a
+   123	stabilisation dwell. This is the primary defence against authority flapping (hazard H3).
+   124	
+   125	Two revocation trigger classes both produce this same action:
+   126	
+   127	- **Integrity/limit breach** — a grant condition (G2 or G3) becomes false: the solution is
+   128	  too uncertain, or calibration/ephemeris integrity fails.
+   129	- **Lease expiry** — G4 fails: no fresh integrity-passing solution renewed the lease within
+   130	  its deadline (covers estimator stall, companion stall, thread death, output freeze).
+   131	
+   132	### 2.2 Revocation mapped to every baseline degradation row
+   133	
+   134	Each row of the baseline degradation contract is mapped to its authority effect. "Continue"
+   135	means the estimator keeps running (baseline: authority expiry never stops the estimator) and
+   136	authority persists **only while §1 still holds**.
+   137	
+   138	| Baseline degradation row | Authority supervisor response | Revocation trigger |
+   139	|---|---|---|
+   140	| GNSS absent or forbidden | Normal denied operation; **denied** protection-limit set active. Not itself a revocation. GNSS cannot re-enter fusion (enforced at bus ingress). | None (mode selection) |
+   141	| One LEO constellation / RF front end lost | Continue; authority persists if protection limits still met; geometry/uncertainty degrade honestly. | G2 if protection limit breached |
+   142	| **All LEO observations lost** | Estimator continues on IMU + magnetometer + speed log; covariance grows. Authority expires as the growing protection limit crosses threshold, or as the lease is no longer renewed by an in-limit solution. | G2, then G4 |
+   143	| One magnetometer lost/rejected | Continue on the other calibrated magnetometer; inflate heading uncertainty. | G2 (heading limit) if breached |
+   144	| **Both magnetometers lost/rejected** | Heading is not passage-capable by inertial integration alone; revoke when the heading protection bound is exceeded. | G2 (heading limit) |
+   145	| Speed log lost | Continue; current separation unavailable; uncertainty reflects it. | G2 if breached |
+   146	| **IMU stream stale** | Time propagation no longer trustworthy → supervisor revokes. Estimator stays running, does not fabricate propagation samples. | G2/G4 (stale-propagation integrity fault) |
+   147	| Frequency reference degrades / sustained heel invalidates its model | Reject biased Doppler per integrity; revoke when solution limits exceeded. | G2 |
+   148	| Sea-surface multipath biases a tracker | Correlation-quality / innovation-consistency rejection or inflation; persistent constellation-correlated residuals revoke when protection limits exceeded. | G2 |
+   149	| Ephemeris missing or too old | Do not form/accept the affected Doppler prediction (never bypass the age gate). Continue on other measurements; revoke only if the surviving solution breaches limits. | G3 (age gate) → G2 |
+   150	| Calibration ID missing/mismatched | Authority-blocking integrity fault (baseline extrinsics rule). | G3 |
+   151	| **Companion process stalls** | Independent monotonic watchdog makes the lease expire → authority revoked. Alarm escalation and physical override remain. Software never selects RTL/Loiter/disarm. | G4 |
+   152	
+   153	The DR (dead-reckoning) timeout is one input to the G2/G4 logic. Per the baseline and
+   154	handoff failure mode 3 it **governs authority only** — it never stops propagation,
+   155	observation processing, journalling, or the 10–20 minute position-convergence process.
+   156	
+   157	---
+   158	
+   159	## 3. The backstop when the human does not respond
+   160	
+   161	Three layers, in order of who acts. Software's automatic layer only *stops asserting* and
+   162	*alerts*; it never manoeuvres. The kinetic final layer is physical and controller-independent.
+   163	
+   164	### 3.1 Layer 1 — supervisor monotonic watchdog (automatic, so authority cannot outlive the solution)
+   165	
+   166	Authority is a **lease** on the clock service's monotonic domain (architecture §Time
+   167	ownership), continuously renewed **only** by a fresh, in-limit, calibration-valid solution
+   168	(G2+G3+G4). If renewal stops for *any* reason — solution unhealthy, integrity fault,
+   169	estimator stall, thread death, whole-companion stall — the lease is not renewed, expires, and
+   170	authority drops to revoked. This is what guarantees **authority cannot outlive the solution**
+   171	(handoff failure mode 9).
+   172	
+   173	Independence properties (from the baseline/architecture, restated as safety requirements):
+   174	
+   175	- The watchdog is **independent of estimator convergence**: its expiry cannot stop the
+   176	  estimator, and the estimator's slow convergence cannot hold the lease open.
+   177	- The lease uses the monotonic clock, not device or UTC time, so a device clock reset or a
+   178	  spoofed UTC label cannot extend it.
+   179	- **Lease deadline `t_lease` shall be shorter than ArduPilot's `GPS_TIMEOUT_MS` (4000 ms)**
+   180	  so the companion always revokes *before* ArduPilot's own GPS timeout could fire a failsafe.
+    35	   before modules 6 and 7.
+    36	9. **Estimator** propagates on every IMU event and applies only accepted, implemented
+    37	   updates. Its state registry requires a direct or cross-covariance measurement path for
+    38	   every declared state. It creates one per-satellite, per-pass transmit-frequency nuisance
+    39	   bias with a small validated random walk and retires it when the pass ends. It also applies
+    40	   the MSL sea-surface altitude pseudo-measurement; water current is derived downstream and
+    41	   is not a baseline estimator state.
+    42	10. **Solution integrity monitor** derives protection/uncertainty metrics independently
+    43	    of ArduPilot's censored accuracy view.
+    44	11. **Authority supervisor** grants or revokes steering authority from solution health,
+    45	    freshness and uncertainty. Its monotonic watchdog is independent of estimator
+    46	    convergence; expiry cannot stop the estimator. It raises and escalates alarms but does
+    47	    not select RTL, Loiter or disarm.
+    48	12. **MAVLink publisher** emits approximately 5 Hz `GPS_INPUT`, with independent horizontal
+    49	    and speed accuracy, using propagated fill between absolute updates. It publishes fused
+    50	    heading in `yaw`, the MSL-constrained altitude in `alt`, vertical velocity `vd = 0`, and
+    51	    a `vert_accuracy` consistent with the sea-surface constraint; it does not publish
+    52	    `ODOMETRY` as the navigation injection.
+    53	13. **Journal/replay service** writes measurements, truth and decisions and can reproduce
+    54	    the same bus stream from disk. Offline evaluation consumes journals; it does not feed
+    55	    results back into online rejection.
+    56	
+    57	No leaf module communicates directly with another leaf module. It publishes to or is
+    58	called by the executive through explicit ports, which makes the connected running path the
+    59	unit of integration rather than a collection of independently tested parts.
+    60	
+    61	## Measurement bus
+    62	
+    63	The measurement bus is an in-process, bounded, typed event stream owned and drained by the
+    64	fusion executive. Producers submit immutable envelopes; one executive orders, journals and
+    65	dispatches them. Backpressure and overflow are explicit health events, never silent drops.
+    66	
+    67	Every envelope contains: schema version, source ID, sequence number, measurement kind,
+    68	source/sample time, host receive monotonic time, optional UTC time plus its uncertainty,
+    69	payload SI units and frame identifier, covariance/uncertainty, quality flags, calibration
+    70	ID and provenance linking it to a capture or source record. The calibration ID shall resolve
+    71	the surveyed antenna phase-centre, IMU and vessel-reference extrinsics; Doppler and inertial
+    72	updates compensate rotational lever-arm velocity, and a missing/mismatched ID is an
+    73	authority-blocking integrity event. Exact field encoding and frame
+    74	enumeration are v2 contract work; the concepts are binding here.
+    75	
+    76	Ordering uses host monotonic receive time with per-source sequence checks. Measurement time
+    77	is retained for delayed updates. Clock resets, sequence gaps, lateness and queue overflow
+    78	become journalled integrity events. The bus carries at least IMU, heading, speed-through-
+    79	water, GNSS, tracker Doppler, ephemeris state, predicted Doppler, gate decision, estimator
+    80	solution, integrity status, authority status and output status messages.
+    81	
+    82	GNSS routing is enforced at bus ingress: `production` permits a fusion copy and truth copy;
+    83	`recorded_only` permits only the truth-journal route; `off` permits neither. There is no
+    84	downstream switch that can accidentally re-authorise it.
+    85	
+    86	## Time ownership
+    87	
+    88	The **clock/time service is the sole owner of time**. Device adapters may report device
+    89	counters or UTC labels, but may not define ordering, freshness or deadlines. At process
+    90	start the service establishes a host-monotonic epoch; all runtime ordering, stale-data
+    91	checks, authority leases and watchdogs use that monotonic domain. It also maintains an
+    92	explicit, uncertainty-bearing mapping between device time, host monotonic time and UTC for
+    93	ephemeris evaluation and logs. The estimator owns receiver clock bias and drift **states**,
+    94	not system time. GNSS UTC, when present, is a measurement and never silently disciplines
+    95	the SDR reference or runtime clock.
+    96	
+    97	All persistent timestamps include monotonic nanoseconds from the run epoch and, when
+    98	available, UTC as an absolute RFC 3339 timestamp. The clock model and its uncertainty are
+    99	journalled so replay can reconstruct event timing. Nanosecond representation and RFC 3339
+   100	encoding are architecture choices (**estimates**) pending v2 schema review.
+   101	
+   102	## On-disk formats
+   103	
+   104	All formats are append-only and versioned. A run directory has a manifest containing run
+   105	UUID, schema versions, absolute UTC creation time when available, monotonic epoch metadata,
+   106	configuration hash, calibration IDs, software revision, hardware/channel setup, ephemeris
+   107	snapshot identity and file hashes. Atomic segment finalisation and recovery after an
+   108	unclean stop are required; specific container encodings are `[UNVERIFIED]` pending v2.
+   109	
+   110	### Raw IQ capture
+   111	
+   112	IQ is stored in independently recoverable, fixed-duration segments. Each segment contains
+   113	interleaved coherent RX-channel samples without lossy compression plus a sidecar/header
+   114	with sample representation, endianness, sample rate, centre frequency, bandwidth, gain,
+   115	channel allocation, external-reference status, first-sample monotonic and optional UTC
+   116	time, sample count, overrun/gap records and calibration/configuration identity. Raw ADC
+   117	packing versus normalised signed-integer representation is `[UNVERIFIED]`.
+   118	
+   119	### Measurement journal
+   120	
+   121	The measurement journal is a length-delimited binary stream of the exact versioned bus
+   122	envelopes presented to and produced by the executive. Records carry checksums; segments
+   123	carry indexes by monotonic time, source and message kind. It includes raw sensor records,
+   124	tracker observations, ephemeris products, predictions, accept/reject decisions,
+   125	propagations, updates, solutions, integrity and authority transitions, alarms and MAVLink
+   126	publication outcomes, including derived horizontal current vectors and their propagated
+   127	covariance. A replay reader shall preserve values and event ordering and shall
+   128	reject unknown required schema versions rather than guess. The binary codec is
+   129	`[UNVERIFIED]`.
+   130	
+
+codex
+## Findings
+
+1. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:164`  
+   **Claim:** The companion’s internal watchdog guarantees that “authority cannot outlive the solution,” including when the whole companion stalls.  
+   **Finding:** A watchdog implemented inside the companion cannot execute revocation, publish a state change, or raise alarms after the whole process stalls. ArduPilot will retain the last injected state until its own timeout or another independently executing mechanism intervenes. This contradicts lines 168–171 and H4/H5. The architecture likewise places the watchdog within the companion supervisor, not in an independent process/controller.  
+   **HOW TO VERIFY:** In SITL, grant authority, then `SIGSTOP` or power-cut the companion. Record actuator/mode behavior and `GPS_INPUT` state for at least 5 seconds. Demonstrate which independently executing component revokes control before ArduPilot’s timeout. If none does, add an ArduPilot-side heartbeat/lease, separate hardware/process watchdog, or narrow the guarantee.
+
+2. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:179`  
+   **Claim:** `t_lease < GPS_TIMEOUT_MS` ensures “the companion always revokes before ArduPilot’s own GPS timeout.”  
+   **Finding:** This timing inequality has no causal effect during companion failure or MAVLink link loss: the revocation cannot reach ArduPilot over a failed process/link. ArduPilot only observes missing `GPS_INPUT` and reacts after its own timeout. H5 itself concedes an unavoidable window of up to approximately four seconds at line 241, directly contradicting “always revokes before.” The baseline says continuous publication is motivated by the timeout; it does not require or establish that an internal companion lease must beat it.  
+   **HOW TO VERIFY:** Break the MAVLink connection while authority is granted and timestamp: last accepted `GPS_INPUT`, internal lease expiry, any message received by ArduPilot conveying revocation, ArduPilot timeout, mode transition, and actuator behavior. Unless ArduPilot receives an independent revocation before 4000 ms, remove the claim and treat its timeout/non-manoeuvre configuration as the actual boundary.
+
+3. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:113`  
+   **Claim:** On revocation, ArduPilot is commanded to or held in a manual/helm-controlled state without an autonomous manoeuvre.  
+   **Finding:** The document does not define a verified mechanism that performs this transition. `GPS_INPUT` supplies navigation data; it is not itself a steering-authority or manual-control handoff interface. The document’s own register admits that the mechanism remains unresolved at lines 262–264. Therefore “stop steering + hand to helm” is not presently a testable safety action, and the central revocation claim is unsubstantiated.  
+   **HOW TO VERIFY:** Specify the exact MAVLink command, ArduPilot mode, RC/actuator arbitration, timeout behavior, and required parameter set. Test integrity failure, lease expiry, process death, and link loss in pinned-firmware SITL plus hardware-in-the-loop. Confirm no commanded turn, loiter, RTL, disarm, throttle change, or actuator discontinuity occurs and that physical helm input immediately dominates.
+
+4. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:191`  
+   **Claim:** S2 is entered whenever any G1–G4 condition is false.  
+   **Finding:** G1 is false by default at process start and becomes false when the helm deliberately withdraws authorization. As written, normal startup and intentional disarming cause a loud warning, then maximal continuous escalation if unacknowledged. This conflates “not armed” with a fault-driven revocation and makes the escalation ladder internally inconsistent.  
+   **HOW TO VERIFY:** Execute the state machine from cold startup with no arm action, then arm and deliberately disarm. Confirm expected states and annunciation. Define a separate DISARMED state and reserve S2/S3 for loss of a previously granted lease or another hazardous fault.
+
+5. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:125`  
+   **Claim:** Two revocation trigger classes cover the full authority conjunction.  
+   **Finding:** The listed classes cover G2/G3 and G4 but omit G1 withdrawal, despite lines 59–61 saying any false term revokes. The escalation table does treat G1 false as S2, producing inconsistent revocation semantics.  
+   **HOW TO VERIFY:** Construct a transition table for every condition changing true→false and false→true. Include explicit-arm withdrawal, startup-unarmed, protection-limit breach, calibration/ephemeris fault, and lease expiry. Require exactly one defined authority and alarm outcome for each transition.
+
+6. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:166`  
+   **Claim:** The lease is renewed by a fresh solution satisfying “G2+G3+G4.”  
+   **Finding:** G4 is defined as the lease already being unexpired because it was renewed. Making G4 a prerequisite for renewal is circular and leaves initial lease acquisition and boundary-time behavior undefined. Depending on implementation, an expired lease could never become live again even after a fresh arm action, or the implementation could silently differ from the safety case.  
+   **HOW TO VERIFY:** Formalize renewal as an event predicate independent of current lease validity, such as `fresh && G2 && G3`, then separately define `G4 := monotonic_now < lease_deadline`. Test startup, exact-deadline arrival, expiry, recovery, and explicit re-arm.
+
+7. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:237`  
+   **Claim:** A few-hundred-millisecond lease renewed only by a “fresh” solution safely handles loss of all LEO observations.  
+   **Finding:** The baseline explicitly permits 5 Hz propagated dead-reckoned fill between absolute observations and expects LEO observations to be sparse. “Fresh solution” is not defined tightly enough to distinguish a newly propagated DR solution from a new absolute/integrity observation. If every propagated frame renews the lease, loss of all LEO can continue renewing indefinitely until G2 grows; if only absolute solutions renew it, normal operation may revoke within approximately one second. The degradation row’s “G2, then G4” behavior is therefore not testable.  
+   **HOW TO VERIFY:** Define which estimator events qualify for lease renewal and the independent maximum age of each safety-relevant source. Replay minutes-long gaps in LEO observations while IMU propagation continues and verify the precise revoke time against the intended DR authority policy.
+
+8. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:238`  
+   **Claim:** An “innovation-consistency / NEES-style” online monitor provides a covariance-realism check that does not itself trust covariance.  
+   **Finding:** NEES explicitly normalizes state error using the reported covariance and normally requires truth; it is not an online covariance-independent detector aboard a GNSS-denied vessel. Innovation consistency also uses predicted innovation covariance. The proposed mitigation is technically misstated and does not independently close optimistic-covariance faults.  
+   **HOW TO VERIFY:** Specify the exact statistic, inputs, reference truth or redundancy, thresholds, false-alarm probability, and independence assumptions. Demonstrate detection using injected Jacobian, missing-propagation, and process-noise faults in GNSS-withheld replay. Rename offline NEES evidence separately from any online monitor.
+
+9. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:210`  
+   **Claim:** The physical override and kill-cord form the final backstop when the human does not respond.  
+   **Finding:** The kill-cord only acts if its lanyard is physically pulled. It does nothing for a distracted or incapacitated helm who remains in position, which the document acknowledges at line 243. Thus the chain is real for displacement/overboard scenarios but not for the full mandated “human does not respond” case. The safety case labels that residual accepted without an acceptance authority, criterion, or required operational mitigation.  
+   **HOW TO VERIFY:** Perform a hazard analysis for at least distracted, unconscious-at-helm, overboard, disconnected-cord, and failed-manual-override cases. Identify who formally accepts each residual. Require and test a second helm, dead-man device, or equivalent if unattended continued propulsion is outside the trial risk envelope.
+
+10. **Major — medium confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:65`  
+    **Claim:** The four-condition conjunction is “precisely and testably” specified.  
+    **Finding:** Several predicates remain non-executable: protection-limit numbers are absent; “frequency-reference calibration … unexpired” has no baseline expiry rule; ephemeris validity is later assigned to G3 although G3’s predicate does not clearly include it; the stabilization dwell and all relevant timings are unset. Marking them `[UNVERIFIED]` is honest but does not satisfy the brief’s requirement for a precise, testable authority contract before steering.  
+    **HOW TO VERIFY:** Produce a requirements table containing units, numerical thresholds, comparison operators, age limits, evaluation rate, missing-data behavior, hysteresis, dwell, and test IDs for every G1–G4 subpredicate. Trace every item to baseline authority or explicitly mark it as a proposed baseline change.
+
+11. **Major — high confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:241`  
+    **Claim:** During MAVLink link loss, the companion “detects link loss and treats it as revocation.”  
+    **Finding:** Detection requirements are absent: no heartbeat/ACK source, deadline, directionality, or proof that a one-way companion→ArduPilot failure is observable by the companion. More importantly, internal revocation cannot alter the autopilot through the failed link. This mitigation therefore does not control the stated hazard.  
+    **HOW TO VERIFY:** Inject independent TX, RX, full-duplex, intermittent, and corrupt-frame faults. Establish detection latency for each and show the mechanism that changes actuator authority despite the failed channel.
+
+12. **Major — medium confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:242`  
+    **Claim:** A companion software fault or spoofed `GPS_INPUT` is mitigated by “the same integrity monitor + watchdog.”  
+    **Finding:** The integrity monitor, authority supervisor, watchdog, and publisher are all within the same companion fault domain. A process corruption capable of producing plausible false `GPS_INPUT` can also falsify integrity status or renew the lease. The hazard row recognizes the correlated residual but nevertheless describes the non-independent controls as mitigation. Physical kill-cord does not detect plausible wrong steering.  
+    **HOW TO VERIFY:** Define fault-containment boundaries and inject faults after the integrity decision, in the publisher, supervisor state, and outgoing MAVLink serialization. Demonstrate an independent consumer or monitor rejects unauthorized/wrong output, or explicitly classify the residual as uncontrolled and obtain risk acceptance.
+
+13. **Minor — high confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:194`  
+    **Claim:** The caution band supplies hysteresis.  
+    **Finding:** S1 returns to S0 when the metric “recovers past the caution threshold,” apparently using the same threshold for entry and exit. That is not hysteresis and permits S0/S1 alarm flapping, although latched S2 prevents steering-authority flapping after revocation.  
+    **HOW TO VERIFY:** Define distinct caution-entry and caution-clear thresholds with ordering and dwell, then run noisy boundary traces through the state machine.
+
+14. **Minor — high confidence**  
+    **File:** `.orchestration/reports/U-S1.md:32`  
+    **Claim:** `t_lease < 4000 ms` means the companion “always revokes before ArduPilot could fire its own failsafe.”  
+    **Finding:** The report repeats the invalid guarantee and omits the critical distinction between internal companion state and a revocation observable by ArduPilot.  
+    **HOW TO VERIFY:** Update the report after resolving findings 1–3 and cite the SITL/HIL evidence demonstrating the actual responder ordering.
+
+Coverage result: all four brief deliverables and all seven mandated hazard categories are present. The failure is in correctness, testability, and the claimed independence/effectiveness of the backstop chain—not omission or style.
+
+**FAIL**
+tokens used
+34,673
+## Findings
+
+1. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:164`  
+   **Claim:** The companion’s internal watchdog guarantees that “authority cannot outlive the solution,” including when the whole companion stalls.  
+   **Finding:** A watchdog implemented inside the companion cannot execute revocation, publish a state change, or raise alarms after the whole process stalls. ArduPilot will retain the last injected state until its own timeout or another independently executing mechanism intervenes. This contradicts lines 168–171 and H4/H5. The architecture likewise places the watchdog within the companion supervisor, not in an independent process/controller.  
+   **HOW TO VERIFY:** In SITL, grant authority, then `SIGSTOP` or power-cut the companion. Record actuator/mode behavior and `GPS_INPUT` state for at least 5 seconds. Demonstrate which independently executing component revokes control before ArduPilot’s timeout. If none does, add an ArduPilot-side heartbeat/lease, separate hardware/process watchdog, or narrow the guarantee.
+
+2. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:179`  
+   **Claim:** `t_lease < GPS_TIMEOUT_MS` ensures “the companion always revokes before ArduPilot’s own GPS timeout.”  
+   **Finding:** This timing inequality has no causal effect during companion failure or MAVLink link loss: the revocation cannot reach ArduPilot over a failed process/link. ArduPilot only observes missing `GPS_INPUT` and reacts after its own timeout. H5 itself concedes an unavoidable window of up to approximately four seconds at line 241, directly contradicting “always revokes before.” The baseline says continuous publication is motivated by the timeout; it does not require or establish that an internal companion lease must beat it.  
+   **HOW TO VERIFY:** Break the MAVLink connection while authority is granted and timestamp: last accepted `GPS_INPUT`, internal lease expiry, any message received by ArduPilot conveying revocation, ArduPilot timeout, mode transition, and actuator behavior. Unless ArduPilot receives an independent revocation before 4000 ms, remove the claim and treat its timeout/non-manoeuvre configuration as the actual boundary.
+
+3. **Blocker — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:113`  
+   **Claim:** On revocation, ArduPilot is commanded to or held in a manual/helm-controlled state without an autonomous manoeuvre.  
+   **Finding:** The document does not define a verified mechanism that performs this transition. `GPS_INPUT` supplies navigation data; it is not itself a steering-authority or manual-control handoff interface. The document’s own register admits that the mechanism remains unresolved at lines 262–264. Therefore “stop steering + hand to helm” is not presently a testable safety action, and the central revocation claim is unsubstantiated.  
+   **HOW TO VERIFY:** Specify the exact MAVLink command, ArduPilot mode, RC/actuator arbitration, timeout behavior, and required parameter set. Test integrity failure, lease expiry, process death, and link loss in pinned-firmware SITL plus hardware-in-the-loop. Confirm no commanded turn, loiter, RTL, disarm, throttle change, or actuator discontinuity occurs and that physical helm input immediately dominates.
+
+4. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:191`  
+   **Claim:** S2 is entered whenever any G1–G4 condition is false.  
+   **Finding:** G1 is false by default at process start and becomes false when the helm deliberately withdraws authorization. As written, normal startup and intentional disarming cause a loud warning, then maximal continuous escalation if unacknowledged. This conflates “not armed” with a fault-driven revocation and makes the escalation ladder internally inconsistent.  
+   **HOW TO VERIFY:** Execute the state machine from cold startup with no arm action, then arm and deliberately disarm. Confirm expected states and annunciation. Define a separate DISARMED state and reserve S2/S3 for loss of a previously granted lease or another hazardous fault.
+
+5. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:125`  
+   **Claim:** Two revocation trigger classes cover the full authority conjunction.  
+   **Finding:** The listed classes cover G2/G3 and G4 but omit G1 withdrawal, despite lines 59–61 saying any false term revokes. The escalation table does treat G1 false as S2, producing inconsistent revocation semantics.  
+   **HOW TO VERIFY:** Construct a transition table for every condition changing true→false and false→true. Include explicit-arm withdrawal, startup-unarmed, protection-limit breach, calibration/ephemeris fault, and lease expiry. Require exactly one defined authority and alarm outcome for each transition.
+
+6. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:166`  
+   **Claim:** The lease is renewed by a fresh solution satisfying “G2+G3+G4.”  
+   **Finding:** G4 is defined as the lease already being unexpired because it was renewed. Making G4 a prerequisite for renewal is circular and leaves initial lease acquisition and boundary-time behavior undefined. Depending on implementation, an expired lease could never become live again even after a fresh arm action, or the implementation could silently differ from the safety case.  
+   **HOW TO VERIFY:** Formalize renewal as an event predicate independent of current lease validity, such as `fresh && G2 && G3`, then separately define `G4 := monotonic_now < lease_deadline`. Test startup, exact-deadline arrival, expiry, recovery, and explicit re-arm.
+
+7. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:237`  
+   **Claim:** A few-hundred-millisecond lease renewed only by a “fresh” solution safely handles loss of all LEO observations.  
+   **Finding:** The baseline explicitly permits 5 Hz propagated dead-reckoned fill between absolute observations and expects LEO observations to be sparse. “Fresh solution” is not defined tightly enough to distinguish a newly propagated DR solution from a new absolute/integrity observation. If every propagated frame renews the lease, loss of all LEO can continue renewing indefinitely until G2 grows; if only absolute solutions renew it, normal operation may revoke within approximately one second. The degradation row’s “G2, then G4” behavior is therefore not testable.  
+   **HOW TO VERIFY:** Define which estimator events qualify for lease renewal and the independent maximum age of each safety-relevant source. Replay minutes-long gaps in LEO observations while IMU propagation continues and verify the precise revoke time against the intended DR authority policy.
+
+8. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:238`  
+   **Claim:** An “innovation-consistency / NEES-style” online monitor provides a covariance-realism check that does not itself trust covariance.  
+   **Finding:** NEES explicitly normalizes state error using the reported covariance and normally requires truth; it is not an online covariance-independent detector aboard a GNSS-denied vessel. Innovation consistency also uses predicted innovation covariance. The proposed mitigation is technically misstated and does not independently close optimistic-covariance faults.  
+   **HOW TO VERIFY:** Specify the exact statistic, inputs, reference truth or redundancy, thresholds, false-alarm probability, and independence assumptions. Demonstrate detection using injected Jacobian, missing-propagation, and process-noise faults in GNSS-withheld replay. Rename offline NEES evidence separately from any online monitor.
+
+9. **Major — high confidence**  
+   **File:** `docs/design/SAFETY_CASE.md:210`  
+   **Claim:** The physical override and kill-cord form the final backstop when the human does not respond.  
+   **Finding:** The kill-cord only acts if its lanyard is physically pulled. It does nothing for a distracted or incapacitated helm who remains in position, which the document acknowledges at line 243. Thus the chain is real for displacement/overboard scenarios but not for the full mandated “human does not respond” case. The safety case labels that residual accepted without an acceptance authority, criterion, or required operational mitigation.  
+   **HOW TO VERIFY:** Perform a hazard analysis for at least distracted, unconscious-at-helm, overboard, disconnected-cord, and failed-manual-override cases. Identify who formally accepts each residual. Require and test a second helm, dead-man device, or equivalent if unattended continued propulsion is outside the trial risk envelope.
+
+10. **Major — medium confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:65`  
+    **Claim:** The four-condition conjunction is “precisely and testably” specified.  
+    **Finding:** Several predicates remain non-executable: protection-limit numbers are absent; “frequency-reference calibration … unexpired” has no baseline expiry rule; ephemeris validity is later assigned to G3 although G3’s predicate does not clearly include it; the stabilization dwell and all relevant timings are unset. Marking them `[UNVERIFIED]` is honest but does not satisfy the brief’s requirement for a precise, testable authority contract before steering.  
+    **HOW TO VERIFY:** Produce a requirements table containing units, numerical thresholds, comparison operators, age limits, evaluation rate, missing-data behavior, hysteresis, dwell, and test IDs for every G1–G4 subpredicate. Trace every item to baseline authority or explicitly mark it as a proposed baseline change.
+
+11. **Major — high confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:241`  
+    **Claim:** During MAVLink link loss, the companion “detects link loss and treats it as revocation.”  
+    **Finding:** Detection requirements are absent: no heartbeat/ACK source, deadline, directionality, or proof that a one-way companion→ArduPilot failure is observable by the companion. More importantly, internal revocation cannot alter the autopilot through the failed link. This mitigation therefore does not control the stated hazard.  
+    **HOW TO VERIFY:** Inject independent TX, RX, full-duplex, intermittent, and corrupt-frame faults. Establish detection latency for each and show the mechanism that changes actuator authority despite the failed channel.
+
+12. **Major — medium confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:242`  
+    **Claim:** A companion software fault or spoofed `GPS_INPUT` is mitigated by “the same integrity monitor + watchdog.”  
+    **Finding:** The integrity monitor, authority supervisor, watchdog, and publisher are all within the same companion fault domain. A process corruption capable of producing plausible false `GPS_INPUT` can also falsify integrity status or renew the lease. The hazard row recognizes the correlated residual but nevertheless describes the non-independent controls as mitigation. Physical kill-cord does not detect plausible wrong steering.  
+    **HOW TO VERIFY:** Define fault-containment boundaries and inject faults after the integrity decision, in the publisher, supervisor state, and outgoing MAVLink serialization. Demonstrate an independent consumer or monitor rejects unauthorized/wrong output, or explicitly classify the residual as uncontrolled and obtain risk acceptance.
+
+13. **Minor — high confidence**  
+    **File:** `docs/design/SAFETY_CASE.md:194`  
+    **Claim:** The caution band supplies hysteresis.  
+    **Finding:** S1 returns to S0 when the metric “recovers past the caution threshold,” apparently using the same threshold for entry and exit. That is not hysteresis and permits S0/S1 alarm flapping, although latched S2 prevents steering-authority flapping after revocation.  
+    **HOW TO VERIFY:** Define distinct caution-entry and caution-clear thresholds with ordering and dwell, then run noisy boundary traces through the state machine.
+
+14. **Minor — high confidence**  
+    **File:** `.orchestration/reports/U-S1.md:32`  
+    **Claim:** `t_lease < 4000 ms` means the companion “always revokes before ArduPilot could fire its own failsafe.”  
+    **Finding:** The report repeats the invalid guarantee and omits the critical distinction between internal companion state and a revocation observable by ArduPilot.  
+    **HOW TO VERIFY:** Update the report after resolving findings 1–3 and cite the SITL/HIL evidence demonstrating the actual responder ordering.
+
+Coverage result: all four brief deliverables and all seven mandated hazard categories are present. The failure is in correctness, testability, and the claimed independence/effectiveness of the backstop chain—not omission or style.
+
+**FAIL**

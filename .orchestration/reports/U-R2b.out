@@ -1,0 +1,355 @@
+I'll start by reading the orchestration contract, then run live web research on Iridium STL, terrestrial SoOP around Danish waters, Danish maritime regs, and CelesTrak SupGP.===R2-DOC===
+# U-R2 Research: PNT services, terrestrial SoOP, regulations (live web)
+
+**Access date for all sources:** 2026-07-22  
+**Operating-area assumption (flagged):** Danish waters / Danish straits (Øresund, Great Belt, Little Belt, Kattegat approaches). All area-specific inferences below use this assumption unless a source names another basin.  
+**Disclaimer (regulatory):** Findings in §3 are **not legal advice**. For binding answers, contact the Danish Maritime Authority (DMA) and, where applicable, the Danish Emergency Management Agency (DEMA). Equivalent EU-level material is descriptive only; flag-state and coastal-state rules control.
+
+**Legend:** **[VERIFIED]** = read on a primary/secondary page this session. **[ASSUMED]** = inference from partial evidence; labelled as such.
+
+---
+
+## 1. Iridium STL (Satelles / Xona — ownership & branding 2026)
+
+### 1.1 Owner / branding — not Xona
+
+**[VERIFIED]** In April 2024 Iridium Communications completed acquisition of Satelles, Inc. (~US$115M for the remaining ~80%; Iridium already held ~20%). The service was rebranded **Iridium Satellite Time and Location (STL)** and is also referred to as **Iridium PNT**.  
+Sources:  
+- https://investor.iridium.com/2024-04-02-Iridium-Completes-Satelles-Acquisition-Introduces-Iridium-Satellite-Time-and-Location-STL (access 2026-07-22)  
+- https://www.gpsworld.com/iridium-acquires-satelles-to-boost-pnt-capabilities/ (access 2026-07-22)  
+- https://www.iridium.com/iridium-pnt/solutions/timing/nist (access 2026-07-22) — states Satelles is “formerly known as” / STL “now referred to broadly as Iridium PNT”
+
+**[VERIFIED]** **Xona Space Systems** is a **separate** company offering a dedicated LEO PNT constellation brand **Pulsar** (demo Pulsar-0; production launches targeted late 2026 / early service ~2027). It is **not** the owner of Iridium STL.  
+Sources:  
+- https://www.xonaspace.com/ (access 2026-07-22)  
+- https://arstechnica.com/space/2026/07/move-over-gps-navigation-satellites-in-low-earth-orbit-are-making-a-comeback/ (access 2026-07-22)  
+- FrontierSI LEO PNT market report (2025 edition, published 2026): Iridium PNT described as the only fully operational commercial LEO PNT service at end-2025 — https://frontiersi.com.au/wp-content/uploads/2026/03/FrontierSI-State-of-Market-Report-LEO-PNT-2025-Edition-v1.0-3.pdf (access 2026-07-22)
+
+### 1.2 Product status (2026)
+
+**[VERIFIED]** Operational commercial service on the existing Iridium LEO constellation (encrypted alternate PNT; receive-only from user perspective in standard descriptions). Expanded commercial partner sales authorization for **parts of Europe and Asia-Pacific** announced June 2024 (signal is globally available; sales geography is licensed through partners).  
+Sources:  
+- https://investor.iridium.com/2024-06-20-Iridium-Satellite-Time-and-Location-Service-Activated-for-Europe-and-Asia-Pacific-Regions (access 2026-07-22)  
+- Iridium NIST collaboration page updated through Jan 2026 papers (access 2026-07-22)
+
+**[ASSUMED]** For a Danish-waters project, Europe partner sales channel is the intended commercial path; confirm current partner list with Iridium (geographic authorization language is “parts of Europe”).
+
+### 1.3 Receiver hardware options
+
+**[VERIFIED]** Commercial modules / integrated products exist; examples:
+
+| Product / line | Vendor | Notes | Source (access 2026-07-22) |
+|---|---|---|---|
+| STL-2600 LEO receiver module | VIAVI (heritage Jackson Labs) | GNSS-independent timing + meters-class stationary positioning; designed for SecureTime LEO / Iridium STL | https://www.viavisolutions.com/en-us/products/stl-2600-low-earth-orbit-receiver-module |
+| Secure microPNT STL-1000 | VIAVI | Compact SDR module; datasheet states lock requires **active subscription** to Iridium-based SecureTime LEO | https://www.viavisolutions.com/en-us/literature/secure-micropnt-stl-1000-leo-receiver-module-data-sheets-en.pdf |
+| Partner GNSS+STL boxes | VIAVI, Adtran, Safran (named) | “STL upgrade” / GNSS+STL drop-in products | https://insidegnss.com/iridium-stl-protecting-pnt-as-part-of-a-layered-approach/ (2025) |
+
+**[VERIFIED]** Auburn University thesis used commercial Jackson Labs **STL-2600** receivers for timing evaluation.  
+Source: https://etd.auburn.edu/handle/10415/9082 (access 2026-07-22)
+
+### 1.4 How purchased; public pricing; path to quote
+
+**[VERIFIED]** Model is **commercial service + partner hardware**, not free like GNSS:
+
+- Iridium sells through partner ecosystem (~500 partners broadly; PNT-specific partners include VIAVI, Adtran, Safran).  
+- VIAVI **SecureTime LEO** product pages state “Request a Quote”; STL lock on modules “requires active subscription to Iridium based SecureTime LEO services.”  
+- Iridium public contact for STL: **pnt@iridium.com**; product page path historically https://www.iridium.com/satellite-time-location (redirect/branding may now sit under /iridium-pnt).  
+- Reseller example (GIT Satellite) lists “Call for price.”
+
+Sources:  
+- https://investor.iridium.com/2024-06-20-Iridium-Satellite-Time-and-Location-Service-Activated-for-Europe-and-Asia-Pacific-Regions (access 2026-07-22)  
+- https://www.viavisolutions.com/en-us/products/securetime-leo-services (access 2026-07-22)  
+- https://www.viavisolutions.com/en-us/literature/secure-micropnt-stl-1000-leo-receiver-module-data-sheets-en.pdf (access 2026-07-22)  
+- https://insidegnss.com/iridium-stl-protecting-pnt-as-part-of-a-layered-approach/ (access 2026-07-22)
+
+**[VERIFIED]** **No public list prices** found for service subscription or OEM silicon/module volume pricing on vendor pages this session.
+
+**Concrete quote path (actionable):**  
+1. Email **pnt@iridium.com** stating use case (marine experimental PNT, Denmark/EU), volume, timing vs position needs.  
+2. In parallel, VIAVI sales quote for SecureTime LEO + STL-2600 / STL-1000 (https://www.viavisolutions.com/en-us/contact-sales or product “Request a Quote”).  
+3. Optionally contact Adtran / Safran for GNSS+STL appliance paths.
+
+### 1.5 Claimed performance (~20 m, sub-100 ns) — vendor vs independent
+
+| Claim | Status | Evidence |
+|---|---|---|
+| **Position ~20 m** (standalone, after convergence) | **[VERIFIED]** as long-standing vendor/historical claim | Inside GNSS (2016, Satelles/Iridium): ~50 m in ~2 min, **20 m or better after ~10 min**; with aiding “as good as 5 m, 1σ”. GPS World innovation article: “positioning accuracy of 20 meters”. UNOOSA LEO-PNT workshop slide pack (Satelles): “Positioning accuracies of ~10 meters”. Sources: https://insidegnss.com/iridium-based-system-proposed-gps-backup-incorporates-crypto-protections/ ; https://www.gpsworld.com/innovation-navigation-from-leo/ ; https://www.unoosa.org/documents/pdf/icg/2023/ICG_WG-S_LEO-PNT_Workshop_June_2023/ICG_LEO-PNT_Workshop_2023_05.pdf (all access 2026-07-22) |
+| **Timing sub-100 ns** | **[VERIFIED]** for calibrated receivers with good oscillators under lab conditions | NIST/Satelles joint work: average offsets near 10 ns (OCXO), max &lt;200 ns; Rb max &lt;75 ns; long-term average offset &lt;1 ns after calibration; MTIE &lt;100 ns (PRTC-A class) with quality oscillators. Jan 2026 NIST paper: MAC oscillator, max offset &lt;40 ns, MTIE &lt;80 ns over 40 days (improved with ionospheric corrections). Iridium page summarizes these. Sources: https://www.iridium.com/iridium-pnt/solutions/timing/nist ; https://www.nist.gov/publications/validating-timing-performance-improvement-ionospheric-corrections-iridium-pnt-receivers ; https://www.nist.gov/publications/measuring-timing-accuracy-satellite-time-and-location-stl-receivers (access 2026-07-22) |
+| **Timing sub-μs indoors / attenuated** | **[VERIFIED]** | GPS World: “timekeeping to within 1 microsecond… deep attenuation”; sub-100 ns with Rb at unknown static indoor location in further demos. Source: https://www.gpsworld.com/innovation-navigation-from-leo/ (access 2026-07-22) |
+| **Maritime dynamic position accuracy at Danish latitudes** | **[ASSUMED] / not verified this session** | Public literature emphasizes timing and static/critical-infrastructure use; dynamic marine accuracy under multipath/sea motion not independently confirmed here. |
+
+**Bottom line on the brief’s “~20 m, sub-100 ns”:**  
+- **~20 m position:** supported by vendor historical claims and field-test write-ups; treat as **order-of-magnitude** for unaided positioning after minutes of convergence, not a certified maritime accuracy standard.  
+- **Sub-100 ns timing:** **well supported** by NIST joint evaluations for appropriate oscillator class and calibration — stronger claim than position for scientific evidence quality.
+
+---
+
+## 2. Terrestrial SoOP in/around Danish waters
+
+### 2.1 DVB-T2 (Denmark / southern Sweden / northern Germany)
+
+**[VERIFIED]** Denmark DTT is **DVB-T2** (transition completed; five national multiplexes as of 2025 Wikipedia summary; MUX1 free-to-air DIGI-TV (DR/TV 2); MUX2–5 Boxer pay).  
+Source: https://en.wikipedia.org/wiki/Digital_terrestrial_television (Denmark section; access 2026-07-22)
+
+**[VERIFIED]** DVB-T2 supports **SFN** operation; SFN requires tight time synchronization of all transmitters (industry literature: typically GPS/GNSS receivers at sites, or network/PTP alternatives for resilience).  
+Sources:  
+- https://wsts.atis.org/wp-content/uploads/2025/05/WSTS-Magnus_v2.pdf (access 2026-07-22)  
+- https://www.vidi.eu/download_file/147/0 (SFN sync white paper; GPS as traditional method; access 2026-07-22)
+
+**[ASSUMED]** Danish / southern Swedish / northern German DVB-T2 SFNs are **GNSS-disciplined in the default industry architecture**. No public operator statement (DR / Digi-TV / Boxer / Teracom-class) confirming Denmark-specific GNSS vs PTP-only architecture was found this session. For SoOP usability this matters: if transmitters are GNSS-held, transmitter phase/time may degrade under regional GNSS spoofing/jamming (relevant given Baltic GNSS interference reports).
+
+**[ASSUMED for Danish waters]** Dense DVB-T2 coverage is strong **nearshore / straits / landward approaches**; open North Sea / deep Kattegat range depends on ERP and geometry — treat as coastal SoOP candidate, not basin-wide.
+
+### 2.2 R-Mode Baltic status (2026)
+
+**[VERIFIED]** R-Mode Baltic began as the world’s first large-scale R-Mode **testbed** (not a certified SOLAS-grade operational navigation service). Roughly **eight transmitters** spanning ~**800 km Heligoland–Stockholm** (Germany–Poland–Sweden corridor).  
+Source: DLR (24 Mar 2025): https://www.dlr.de/en/latest/news/2025/towards-standardisationsatellite-independent-navigation-in-the-baltic-sea (access 2026-07-22)
+
+**[VERIFIED]** **ORMOBASS** (Operational R-Mode Baltic Sea System) expands the test area toward **Sweden–Finland–Estonia**. IALA Guideline **1187** (medium-wave R-Mode signal characteristics) available early 2025. DLR states goal to develop essential MF and VHF R-Mode functions by **2026** for maritime authorities; **“From early 2026, the standardised signals will be available in the area between Germany, Finland and Estonia.”**  
+Same DLR source; project page: https://interreg-baltic.eu/project/ormobass/ (access 2026-07-22)
+
+**[VERIFIED]** ResearchGate figure caption (testbed as of 3 Mar 2025): MF R-Mode stations active; **VHF R-Mode transmitters “currently not available in the Baltic but… activated in the near future.”**  
+Source: https://www.researchgate.net/figure/R-Mode-Baltic-Sea-testbed-as-of-3-March-2025-The-green-triangles-represent-the-MF-R-Mode_fig1_401151122 (access 2026-07-22)
+
+**Status summary (as of this research date):**
+
+| Aspect | Assessment | Label |
+|---|---|---|
+| Full operational (SOLAS-grade) R-Mode service | **No** — still project/testbed + standardisation rollout | VERIFIED (DLR language: test field, standardisation, authorities for operation) |
+| Usable test signals MF | **Yes** in established SW Baltic corridor; expansion east/north 2025–2026 | VERIFIED |
+| Coverage of **Danish waters / Danish straits** | **Partial / edge of original Heligoland–Stockholm corridor**; not Denmark-centric network | ASSUMED geometry from DLR map description — confirm station list with DLR/WSV/SMA before planning |
+| Receiver ecosystem | Prototype / research receivers (project partners: Alberding, NavSim, Kongsberg Discovery/Seatex, etc.) | VERIFIED partner list on DLR page |
+
+### 2.3 Cellular (LTE/5G) offshore viability
+
+**[VERIFIED]** **North Sea:** Tampnet operates large offshore **4G/5G LTE** footprint (~**300,000 km²** cited across UK, Danish, and Norwegian shelves); roaming products for vessels; private 5G deployments on platforms/rigs.  
+Sources:  
+- https://www.offshore-energy.biz/tampnet-secures-roam-free-mobile-coverage-for-north-sea-assets/ (access 2026-07-22)  
+- https://www.tampnet.com/roaming-north-sea (access 2026-07-22)
+
+**[VERIFIED]** Generic maritime LTE range from **coastal towers** is typically tens of km (vendor/marketing claims up to ~50–70 km with high-gain antennas; standard towers often less). Beyond that, industrial offshore networks or satellite fill gaps.  
+Source example: https://weconnect.one/blogs/how-far-offshore-does-4g-work-long-distance-maritime-internet-explained/ (access 2026-07-22)
+
+**[ASSUMED for Danish waters / straits]**  
+- **Straits and nearshore (Øresund, Belts, coastal Kattegat):** public Danish/Swedish/German LTE/5G generally viable as SoOP or data backhaul with marine antennas.  
+- **Open North Sea (DK shelf):** viable where Tampnet / coastal overlap exists; not continuous for pure public MNO.  
+- **Central Baltic / far from coast:** poor for continuous public cellular SoOP; experiments (e.g. Baltic ship-as-base-station demos) are not production coverage.
+
+**SoOP note:** cellular ranging/ToA requires operator cooperation or opportunistic research methods; **coverage ≠ usable timing reference**. Treat cellular as **availability/backhaul** first, PNT SoOP second.
+
+### 2.4 eLoran status in the region
+
+**[VERIFIED]** European legacy Loran largely shut down ~2015; **UK Anthorn** remains an operational eLoran-capable site used for **timing** distribution research/service.  
+Sources:  
+- ESA NAVISP final presentation note: “one operational eLoran station in Anthorn, UK” — https://navisp.esa.int/news/article/Final%20Presentation%20of%20UK%20Time%20Distribution%20%28NAVISP%20EL3-017%29 (access 2026-07-22)  
+- RIN event text on UK maintaining Anthorn while rest of Europe shut down infrastructure (access via search summary 2026-07-22)
+
+**[VERIFIED]** UK government (Nov 2025) announced **£71 million** to begin a **UK National eLoran programme** as part of resilient PNT; earlier **UK–France** PNT/eLoran cooperation messaging (2025).  
+Sources:  
+- https://www.gov.uk/government/news/landmark-government-investment-to-safeguard-the-essential-signals-we-all-rely-on (access 2026-07-22)  
+- https://insidegnss.com/uk-and-france-renew-ties-resilient-pnt-eloran-a-key-part/ (access 2026-07-22)
+
+**[VERIFIED]** No operational multi-station eLoran **navigation** chain covering the **Baltic / Danish straits** was found as of 2026-07-22. Baltic/North Sea states’ Jan 2026 GNSS-interference letter stresses need for alternatives but does not declare eLoran operational there.  
+Source: https://valtioneuvosto.fi/en/-/1410829/itameren-ja-pohjanmeren-rantavaltiot-gnss-hairinta-on-lisannyt-merenkulun-turvallisuusriskeja-1 (access 2026-07-22)
+
+**Assessment for Danish waters:** eLoran is a **strategic/UK-led rebuild**, not a currently usable regional maritime PNT layer for Denmark in 2026.
+
+---
+
+## 3. Regulatory — manned experimental autopilot / semi-autonomous in Danish waters
+
+**Not legal advice.** Contact authorities for binding interpretation.
+
+### 3.1 Danish authorities & permits
+
+**[VERIFIED]** DMA invites contact to designate test areas and issue permits for new technology testing in Danish waters; framework depends on the specific activity. Contact: **mrj@dma.dk**, +45 72 19 60 00.  
+Source: https://www.dma.dk/growth-and-framework-conditions/maritime-digitalization/guidelines-for-testing-maritime-technologies (access 2026-07-22)
+
+**[VERIFIED]** For **remote / autonomous maritime sea drones and autonomous vessels**, DMA guideline “Approval process for Remote Operation of Maritime Sea Drones and Autonomous Vessels in Danish Waters”:
+
+1. Contact DMA **Regulatory Future Lab**: **futurelab@dma.dk** (early engagement recommended).  
+2. Formal application via DMA portal for navigation with autonomous vessels/drones (wireless control).  
+3. Applications to **DEMA** (Safety of Navigation, National Waters) **≥ 4 weeks** before planned operation.  
+4. DMA assesses construction, equipment, operational aspects; DEMA issues final permission if risk assessment shows safe operation consistent with international regulation.  
+5. Required: detailed risk assessment (safety of voyage; impact on freedom of navigation of others), operational/technical package (area, traffic, warnings/notice to mariners, support vessels, route, UNCLOS compliance, seaworthiness measures); CONOPS if not already provided.  
+6. Additional permits may apply (e.g. Danish Geodata Agency for maritime survey activity).
+
+Source: DMA PDF https://www.dma.dk/Media/638995644980251670/Guideline%20-%20Approval%20process%20for%20Remote%20Operation%20of%20Maritime%20Sea%20Drones.pdf (access 2026-07-22)
+
+**[ASSUMED]** A **manned** vessel with experimental autopilot / semi-autonomy is still “new technology” testing if it departs from conventional manning/watchkeeping assumptions — engage Future Lab early. Pure software logging of PNT with conventional bridge watch may need less process than control authority transfer; DMA decides case-by-case (**not verified as a bright-line rule**).
+
+**[VERIFIED]** DMA references **IMO MSC.1/Circ.1604** Interim Guidelines for MASS Trials.  
+Source: DMA testing guidelines page (access 2026-07-22); IMO circular PDF linked from that page.
+
+### 3.2 Sandbox / test-area schemes
+
+**[VERIFIED]** Denmark positions itself as open to experiments and will **“establish the framework for the test area and issue a permit”** based on enquiry — not a single fixed geographic sandbox only, but **activity-specific** test areas. Examples of ongoing test activities are published on DMA site.  
+Source: https://www.dma.dk/growth-and-framework-conditions/maritime-digitalization/guidelines-for-testing-maritime-technologies (access 2026-07-22)
+
+### 3.3 COLREGs implications for a manned test platform
+
+**[VERIFIED]** COLREGs **Rule 5** requires every vessel to maintain a proper look-out by sight and hearing and all available means.  
+Source: standard COLREGs text e.g. https://ecolregs.com/index.php?option=com_k2&view=item&layout=item&id=48&Itemid=505&lang=en (access 2026-07-22)
+
+**[ASSUMED / industry consensus, not a DMA binding memo found]** On a **manned** experimental platform:
+
+- Presence of crew does **not** waive COLREGs; master remains responsible.  
+- Autopilot / semi-autonomy may assist but human look-out and collision-avoidance responsibility remain unless a specific permit defines otherwise.  
+- Rule 2 (responsibility / good seamanship) and Rules 5–19 collision-avoidance suite remain the operational baseline for trials.  
+- Danish 2017 regulatory-barrier analysis (DMA-commissioned) treats COLREGs look-out and master responsibility as core issues for autonomy levels.
+
+**Practical implication for this project:** design trials so a competent watchkeeper can always override and fulfill Rule 5; document CONOPS and risk assessment accordingly for DEMA/DMA.
+
+### 3.4 EU / EMSA / IMO context
+
+**[VERIFIED]** IMO **non-mandatory MASS Code** adopted for voluntary use; **Experience-Building Phase** next; mandatory MASS Code trajectory into early 2030s (industry summaries: voluntary ~2025; mandatory entry into force often cited ~2032).  
+Sources:  
+- https://www.imo.org/en/mediacentre/hottopics/pages/autonomous-shipping.aspx (access 2026-07-22)  
+- DNV regulatory overview: https://www.dnv.com/maritime/autonomous-remotely-operated-ships/regulatory/ (access 2026-07-22)
+
+**[VERIFIED this session]** No standalone EMSA “sandbox permit” instrument for Danish waters was found that replaces DMA/DEMA process. EMSA role is EU-level safety/agency support; **coastal/flag administration remains the binding permit path**.
+
+**Authorities to contact for binding answers:**
+
+| Topic | Authority |
+|---|---|
+| Test framework, ship construction/equipment assessment, Future Lab | **Danish Maritime Authority** — futurelab@dma.dk ; mrj@dma.dk |
+| Safety of navigation permit for autonomous/remote ops in Danish waters | **DEMA** (via DMA application process, ≥4 weeks) |
+| Maritime survey permit | **Danish Geodata Agency** |
+| Flag/class if Danish-flag experimental craft | DMA + recognized organization / class |
+
+---
+
+## 4. CelesTrak SupGP
+
+### 4.1 Current coverage (as of 2026-07-22)
+
+**[VERIFIED]** SupGP page “Current as of **2026 Jul 22 18:16:46 UTC**” lists among others:
+
+| Constellation / set | Source of ephemeris | Notes from live page / download |
+|---|---|---|
+| **Starlink** | SpaceX public repository https://api.starlink.com/public-files/ephemerides/MANIFEST.txt | SupGP CSV download this session: **~10,861 data rows** (+ header). Matching-results counter showed high unmatched count (810*) — quality flag, not absence of fleet data. Pre/post-launch stacks also published (e.g. G17-39, G17-51). |
+| **OneWeb** | Space-Track, with OneWeb permission | SupGP CSV: **~651 rows**. Matching-results “1” (warn) — **not** zero-coverage; data present for large set. “Full fleet” in the sense of complete commercial constellation ephemeris: **yes as a SupGP FILE**, with residual match warnings vs GP. |
+| Also: Kuiper, Planet, Iridium, GPS, GLONASS, SES, Intelsat, Telesat, Orbcomm, ISS, CSS, CPF, AST Space Mobile, EUMETSAT | Various | Iridium SupGP matching “Full Constellation: 0” (good) |
+
+Sources:  
+- https://celestrak.org/NORAD/elements/supplemental/ (fetched 2026-07-22)  
+- Live CSV pulls: `sup-gp.php?FILE=starlink&FORMAT=csv`, `FILE=oneweb` (2026-07-22)
+
+**Answer to “Starlink, OneWeb full-fleet?”:**  
+- **Starlink:** SupGP covers the operational/public ephemeris set at large scale (~10k+ objects in file this day) — effectively full public ephemeris feed from SpaceX, not a partial demo.  
+- **OneWeb:** SupGP file present with hundreds of objects; not empty. Residual matching warnings vs 18 SDS GP do not mean “not full fleet.”
+
+### 4.2 Update cadence
+
+**[VERIFIED]** CelesTrak documents that it **checks for new GP data once every 2 hours**; users should not poll faster. 18 SDS GP itself typically updates **2–3 times/day**. Starlink SupGP is regenerated from SpaceX ephemerides (SpaceX historically posts frequent ephemeris; CelesTrak fits ~first 8 h interval per literature). Page timestamp updates through the day (observed 08:15 UTC and 18:16 UTC stamps on 2026-07-22).  
+Sources:  
+- https://celestrak.org/NORAD/documentation/gp-data-formats.php (access 2026-07-22)  
+- https://celestrak.org/NORAD/elements/supplemental/ (access 2026-07-22)
+
+### 4.3 Access method & terms
+
+**[VERIFIED]** Free public HTTP queries:
+
+```
+https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=starlink&FORMAT=csv
+https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=oneweb&FORMAT=json
+```
+
+Query parameters: CATNR, INTDES, SOURCE, FILE, NAME, SPECIAL; formats TLE/2LE/XML/KVN/JSON/JSON-PRETTY/CSV (CSV default as of 2026-05-09).  
+Source: https://celestrak.org/NORAD/documentation/sup-gp-queries.php (access 2026-07-22)
+
+**[VERIFIED]** Usage policy highlights (enforceable via HTTP 403 / firewall):
+
+- Prefer documented query APIs; only download what you need when you need it.  
+- Do not poll more often than update rate (~**once per 2 hours**).  
+- As of **2026-03-26**, **one-download-per-update** enforced for heavy groups (Active, Starlink GP groups); same spirit applies to bandwidth abuse.  
+- Daily bandwidth abuse thresholds discussed (100–250 MB/day historical warnings).  
+- Prefer **celestrak.org** not legacy .com redirects.  
+- Prefer non-TLE formats for 6-digit catalog numbers (TLE exhausted for new catalog numbers ≥100000 as of 2026-07-11 notice).
+
+Sources:  
+- https://celestrak.org/usage-policy.php (access 2026-07-22)  
+- https://celestrak.org/NORAD/documentation/gp-data-formats.php (access 2026-07-22)
+
+**[ASSUMED]** For LEO-PNT research using Starlink/OneWeb as SoOP, SupGP (operator ephemeris-derived) is preferred over standard 18 SDS GP when available; still not carrier-phase ephemeris for high-precision PNT — suitable for coarse prediction / association.
+
+---
+
+## Cross-cutting notes for Danish waters (assumption)
+
+| Source | Relevance to Danish waters / straits (assumption) | Confidence |
+|---|---|---|
+| Iridium STL | Global LEO; commercially sellable in parts of Europe via partners | High (service); medium (partner SKU availability) |
+| DVB-T2 SoOP | Strong candidate nearshore/straits | Medium (sync architecture unconfirmed) |
+| R-Mode | SW Baltic testbed may illuminate southern approaches; not DK-native network | Medium |
+| Public cellular | Good in straits; offshore patchy | Medium-high |
+| Tampnet LTE | Relevant if ops extend to Danish North Sea shelf | High for North Sea industrial zones |
+| eLoran | Not operational PNT layer for DK in 2026 | High |
+| CelesTrak SupGP | Independent of geography; Starlink/OneWeb dense at DK latitudes | High |
+
+---
+
+## Source index (selected primary URLs, all accessed 2026-07-22)
+
+1. https://investor.iridium.com/2024-04-02-Iridium-Completes-Satelles-Acquisition-Introduces-Iridium-Satellite-Time-and-Location-STL  
+2. https://investor.iridium.com/2024-06-20-Iridium-Satellite-Time-and-Location-Service-Activated-for-Europe-and-Asia-Pacific-Regions  
+3. https://www.iridium.com/iridium-pnt/solutions/timing/nist  
+4. https://www.nist.gov/publications/validating-timing-performance-improvement-ionospheric-corrections-iridium-pnt-receivers  
+5. https://www.viavisolutions.com/en-us/products/stl-2600-low-earth-orbit-receiver-module  
+6. https://www.xonaspace.com/  
+7. https://www.dlr.de/en/latest/news/2025/towards-standardisationsatellite-independent-navigation-in-the-baltic-sea  
+8. https://www.dma.dk/growth-and-framework-conditions/maritime-digitalization/guidelines-for-testing-maritime-technologies  
+9. https://www.dma.dk/Media/638995644980251670/Guideline%20-%20Approval%20process%20for%20Remote%20Operation%20of%20Maritime%20Sea%20Drones.pdf  
+10. https://celestrak.org/NORAD/elements/supplemental/  
+11. https://celestrak.org/NORAD/documentation/sup-gp-queries.php  
+12. https://celestrak.org/usage-policy.php  
+13. https://www.gov.uk/government/news/landmark-government-investment-to-safeguard-the-essential-signals-we-all-rely-on  
+14. https://valtioneuvosto.fi/en/-/1410829/itameren-ja-pohjanmeren-rantavaltiot-gnss-hairinta-on-lisannyt-merenkulun-turvallisuusriskeja-1  
+15. https://www.offshore-energy.biz/tampnet-secures-roam-free-mobile-coverage-for-north-sea-assets/  
+
+===R2-REPORT===
+
+## Unit report — U-R2
+
+**Contract version:** v1 (read `.orchestration/CONTRACTS.md`; reports are text-delivered per brief override — no files written).
+
+### Summary
+Live web research completed on Iridium STL ownership/branding (Iridium post-Satelles; **not Xona**), purchase path (partner + subscription; **pnt@iridium.com** / VIAVI quote; no public prices), performance (~20 m position = vendor-class claims; sub-100 ns timing = NIST-backed for good oscillators), terrestrial SoOP around the Danish-waters assumption (DVB-T2 SFN coastal candidate with unconfirmed GNSS discipline; R-Mode still testbed expanding early-2026; cellular good nearshore / Tampnet North Sea; eLoran not regional-operational), Danish MASS/test permits (DMA Future Lab + DEMA ≥4 weeks; COLREGs still apply to manned trials), and CelesTrak SupGP (Starlink ~10.8k rows, OneWeb ~651 rows live 2026-07-22; free HTTP with one-download-per-update discipline).
+
+### VERIFIED vs ASSUMED (high level)
+
+| VERIFIED (read primary pages) | ASSUMED (inference) |
+|---|---|
+| Iridium owns STL; brand Iridium STL / Iridium PNT since 2024 | Danish DVB-T2 sites are GNSS-disciplined (industry default only) |
+| Xona Pulsar is a different LEO-PNT product | Exact R-Mode geometric usability of Danish straits without station coordinates |
+| VIAVI STL modules require SecureTime LEO subscription | Manned autopilot always needs same DEMA path as unmanned drones (case-by-case) |
+| NIST timing results sub-100 ns class | Dynamic maritime STL position accuracy |
+| DLR R-Mode testbed + early-2026 standardised signals DE–FI–EE corridor | Continuous public 5G as SoOP mid-Baltic |
+| DMA/DEMA test-permit process and Future Lab contacts | EMSA does not replace national permit (no counter-example found) |
+| CelesTrak SupGP Starlink/OneWeb files live; 2 h check / usage limits | SupGP fit quality sufficient for all SoOP pipelines |
+
+### Dead ends
+- No public Iridium or VIAVI **price list** for STL service.  
+- No official Danish broadcaster document stating **whether DTT SFN sync is GNSS-only or PTP-backed**.  
+- No public **complete R-Mode station coordinate table** with Danish coverage contours on open web (map descriptions only).  
+- **EMSA** did not yield a concrete EU sandbox permit product for Danish waters.  
+- eLoran: UK funding/rebuild found; **no Baltic operational chain**.
+
+### Open uncertainties
+1. Which Iridium **European partners** stock maritime-suitable STL receivers **now** (2026-07).  
+2. STL **dynamic** position error budget on a small craft in Øresund multipath.  
+3. Whether DEMA/DMA treat **manned** semi-autonomous control differently from “sea drones” for the same risk envelope.  
+4. R-Mode **receiver availability** and licensing for non-project participants.  
+5. OneWeb SupGP “matching results: 1” meaning for ephemeris trust (investigate RMS tables before production use).  
+6. Legal: radio/spectrum implications of passive SoOP receive-only vs any active RF experiments (not researched in depth).
+
+### Method notes
+Web search + page fetch + selective `curl` of CelesTrak/Starlink endpoints. No repo files written or edited. No git. No code. Access date stamped **2026-07-22** throughout.
+
+### Contract compliance
+- Contract **v1** stated.  
+- VERIFIED/ASSUMED split present.  
+- Regulatory not-legal-advice + authority contacts present.  
+- Operating area assumption flagged.  
+- Output format: `===R2-DOC===` / research / `===R2-REPORT===` / this report.

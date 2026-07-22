@@ -1,0 +1,11 @@
+U-E1 dual review: Opus PASS (8 non-blocking findings), Sonnet FAIL (vacuous GMST test + wrong fixture provenance). Fable arbitration (D18): implementation verified correct by BOTH seats' independent re-derivations; failures are test-integrity defects — the exact decoy-test pattern this project rejects. One fix round U-E1.1, single-seat re-verify, then merge.
+
+Fix list (U-E1.1):
+1. (Sonnet F2) Make gmst_rad testable (pub(crate) or via public API) and assert GMST at J2000 epoch 946728000 ≈ 280.46061837° within stated tolerance; delete the tautological utc.timestamp() assertion; have the rotation test derive its angle from gmst_rad, not a hardcoded FRAC_PI_2 (or keep both: known-angle geometry + known-epoch GMST).
+2. (Sonnet F1) Fix the receiver-fixture provenance: recompute the Copenhagen WGS-84 ECEF properly (expected ≈ [3518304.71, 784390.70, 5244191.85] for 55.6761N 12.5683E h=0 — verify independently) and update value + comment, or replace the comment with the true derivation of the existing value.
+3. (Opus F3) Add a reference-value assertion on EcefState.velocity_mps exercising the ω×r term (e.g. equatorial TEME state at known GMST; assert full 3-vector within tolerance, derivation in comment).
+4. (Opus F2) Add a Vallado deep-propagation case (t=360 min, sat 00005) asserted at 1e-6 km from the sgp4 crate's shipped test_cases.toml values — copy the numbers into the test with provenance comment.
+5. (Opus F1) Switch the ephemeris store to the crate's non-AFSPC (improved) mode for production propagation; keep AFSPC mode ONLY inside the Vallado reference tests; document the accuracy rationale in code + report.
+6. (Sonnet minors) Add literal [UNVERIFIED] tags in the TEME→ECEF doc comment matching the report; add backward-in-time age-gate test; comment the -90.0-rad "mask disabled" sentinel or add a None/disable API; note report evidence is paraphrased (append the real terminal output this round).
+7. (Opus F8) Strengthen ISS end-to-end: assert approach-positive precedes recede-negative ordering; make parses test assert a parsed element (epoch) not just contains(25544).
+Out of scope: F4/F5/F6/F7 (Jacobian output, NED→ECEF conversion, offset semantics, drift sign) — routed to U-I2 handoff, already in the U-E1 report.

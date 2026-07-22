@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use nalgebra::{DMatrix, DVector};
 use pnt_types::{
-    FilterState, Heading, ImuSample, MeasurementEnvelope, MeasurementPayload, ReceiverClockId,
-    ReceiverClockSlot, SpeedThroughWater,
+    ecef_to_enu_rotation, ecef_vector_to_enu, FilterState, Heading, ImuSample, MeasurementEnvelope,
+    MeasurementPayload, ReceiverClockId, ReceiverClockSlot, SpeedThroughWater,
 };
 
 const CORE_DIM: usize = 9;
@@ -14,6 +14,7 @@ const VEL: usize = 3;
 const HEADING: usize = 6;
 const CLOCK_BIAS: usize = 7;
 const CLOCK_DRIFT: usize = 8;
+const CLOCK_BIAS_VARIANCE_CAP_M2: f64 = 1.0e8;
 
 pub trait Estimator {
     fn propagate(&mut self, imu: ImuSample);
@@ -58,6 +59,8 @@ pub struct DopplerRangeRateUpdate {
     pub core_jacobian: [f64; CORE_DIM],
     pub variance_mps2: f64,
     pub chi_square_threshold: Option<f64>,
+    /// Initial variance for a newly observed satellite's range-rate bias.
+    pub satellite_bias_variance_mps2: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -192,7 +195,8 @@ impl FilterStub {
     }
 
     pub fn update_doppler(&mut self, update: &DopplerRangeRateUpdate) -> UpdateResult {
-        let nuisance = self.augment_satellite_bias(&update.satellite_id, 1.0e4);
+        let nuisance =
+            self.augment_satellite_bias(&update.satellite_id, update.satellite_bias_variance_mps2);
         let mut h = DVector::zeros(self.x.len());
         h.rows_mut(0, CORE_DIM)
             .copy_from(&DVector::from_column_slice(&update.core_jacobian));
@@ -214,14 +218,17 @@ impl FilterStub {
         receiver: ReceiverClockId,
     ) -> UpdateResult {
         let slot = self.reserve_receiver_clock(receiver);
-        let nuisance = self.augment_satellite_bias(&update.satellite_id, 1.0e4);
+        let nuisance =
+            self.augment_satellite_bias(&update.satellite_id, update.satellite_bias_variance_mps2);
         let mut h = DVector::zeros(self.x.len());
         h.rows_mut(0, CORE_DIM)
             .copy_from(&DVector::from_column_slice(&update.core_jacobian));
         h[slot.drift_index] += h[CLOCK_DRIFT];
         h[CLOCK_DRIFT] = 0.0;
         h[nuisance] = 1.0;
-        let predicted = update.predicted_range_rate_mps + self.x[nuisance];
+        let predicted = update.predicted_range_rate_mps
+            + update.core_jacobian[CLOCK_DRIFT] * self.x[slot.drift_index]
+            + self.x[nuisance];
         self.scalar_update(
             update.measured_range_rate_mps,
             predicted,
@@ -384,6 +391,20 @@ impl FilterStub {
         debug_assert!((&self.covariance - self.covariance.transpose()).amax() < 1.0e-8);
         debug_assert!(self.covariance.clone().symmetric_eigen().eigenvalues.min() >= -1.0e-8);
     }
+
+    fn cap_clock_bias_variance(&mut self, index: usize) {
+        let variance = self.covariance[(index, index)];
+        if variance > CLOCK_BIAS_VARIANCE_CAP_M2 {
+            let scale = (CLOCK_BIAS_VARIANCE_CAP_M2 / variance).sqrt();
+            for column in 0..self.covariance.ncols() {
+                self.covariance[(index, column)] *= scale;
+            }
+            for row in 0..self.covariance.nrows() {
+                self.covariance[(row, index)] *= scale;
+            }
+            self.covariance[(index, index)] = CLOCK_BIAS_VARIANCE_CAP_M2;
+        }
+    }
 }
 
 impl Estimator for FilterStub {
@@ -411,11 +432,31 @@ impl Estimator for FilterStub {
             q[(VEL + axis, VEL + axis)] = self.process_noise.acceleration_variance * dt;
         }
         q[(HEADING, HEADING)] = self.process_noise.turn_rate_variance * dt;
-        q[(CLOCK_DRIFT, CLOCK_DRIFT)] = self.process_noise.clock_drift_variance * dt;
-        for index in CORE_DIM..self.x.len() {
+        let clock_pairs = std::iter::once((CLOCK_BIAS, CLOCK_DRIFT)).chain(
+            self.receiver_clocks
+                .values()
+                .map(|slot| (slot.bias_index, slot.drift_index)),
+        );
+        for (bias, drift) in clock_pairs {
+            let spectral_density = self.process_noise.clock_drift_variance;
+            q[(bias, bias)] += spectral_density * dt.powi(3) / 3.0;
+            q[(bias, drift)] += spectral_density * dt.powi(2) / 2.0;
+            q[(drift, bias)] += spectral_density * dt.powi(2) / 2.0;
+            q[(drift, drift)] += spectral_density * dt;
+        }
+        for index in self.nuisance_slots.values().copied() {
             q[(index, index)] = self.process_noise.nuisance_random_walk_variance * dt;
         }
         self.covariance = &f * &self.covariance * f.transpose() + q;
+        self.cap_clock_bias_variance(CLOCK_BIAS);
+        let receiver_biases: Vec<_> = self
+            .receiver_clocks
+            .values()
+            .map(|slot| slot.bias_index)
+            .collect();
+        for bias in receiver_biases {
+            self.cap_clock_bias_variance(bias);
+        }
         self.propagations += 1;
         if self.covariance[(POS, POS)] > old_position_variance {
             self.covariance_growth_count += 1;
@@ -437,15 +478,35 @@ impl Estimator for FilterStub {
             MeasurementPayload::SpeedThroughWater(value) => {
                 self.update_speed_through_water(value, variance, None);
             }
+            MeasurementPayload::Gnss(value) => {
+                let rotation =
+                    ecef_to_enu_rotation([self.x[POS], self.x[POS + 1], self.x[POS + 2]]);
+                let ned = value.velocity_ned_mps;
+                let enu = [ned[1], ned[0], -ned[2]];
+                let velocity_ecef_mps = std::array::from_fn(|column| {
+                    (0..3).map(|row| rotation[row][column] * enu[row]).sum()
+                });
+                self.update_gnss(GnssUpdate {
+                    position_ecef_m: value.position_ecef_m,
+                    velocity_ecef_mps,
+                    position_variance_m2: [variance; 3],
+                    velocity_variance_mps2: [variance; 3],
+                    aided_mode: true,
+                    chi_square_threshold: None,
+                });
+            }
             _ => {}
         }
     }
 
     fn state(&self) -> FilterState {
+        let position_ecef_m = [self.x[0], self.x[1], self.x[2]];
+        let velocity_ecef_mps = [self.x[3], self.x[4], self.x[5]];
+        let velocity_enu_mps = ecef_vector_to_enu(position_ecef_m, velocity_ecef_mps);
         FilterState {
-            position_ecef_m: [self.x[0], self.x[1], self.x[2]],
-            velocity_ecef_mps: [self.x[3], self.x[4], self.x[5]],
-            horizontal_velocity_ned_mps: [self.x[3], self.x[4]],
+            position_ecef_m,
+            velocity_ecef_mps,
+            horizontal_velocity_ned_mps: [velocity_enu_mps[1], velocity_enu_mps[0]],
             heading_rad: self.x[HEADING],
             receiver_clock_bias_m: self.x[CLOCK_BIAS],
             receiver_clock_drift_mps: self.x[CLOCK_DRIFT],
@@ -458,11 +519,24 @@ impl Estimator for FilterStub {
 }
 
 fn speed_model(x: &DVector<f64>) -> (f64, DVector<f64>) {
-    let speed = x[VEL].hypot(x[VEL + 1]);
+    let model = |state: &DVector<f64>| {
+        let enu = ecef_vector_to_enu(
+            [state[POS], state[POS + 1], state[POS + 2]],
+            [state[VEL], state[VEL + 1], state[VEL + 2]],
+        );
+        enu[0].hypot(enu[1])
+    };
+    let speed = model(x);
     let mut h = DVector::zeros(x.len());
     if speed > 1.0e-12 {
-        h[VEL] = x[VEL] / speed;
-        h[VEL + 1] = x[VEL + 1] / speed;
+        for index in POS..VEL + 3 {
+            let step = 1.0e-6 * x[index].abs().max(1.0);
+            let mut plus = x.clone();
+            plus[index] += step;
+            let mut minus = x.clone();
+            minus[index] -= step;
+            h[index] = (model(&plus) - model(&minus)) / (2.0 * step);
+        }
     }
     (speed, h)
 }
@@ -582,6 +656,7 @@ mod tests {
             core_jacobian: [0.0; CORE_DIM],
             variance_mps2: 1.0,
             chi_square_threshold: Some(10.0),
+            satellite_bias_variance_mps2: 1.0e4,
         });
         assert!(result.accepted);
         assert_eq!(filter.covariance().nrows(), core + 1);
@@ -611,14 +686,12 @@ mod tests {
 
     fn augmented_filter() -> FilterStub {
         let mut filter = FilterStub::default();
-        filter.x.rows_mut(0, 6).copy_from(&DVector::from_column_slice(&[
-            3_492.09,
-            742.235,
-            5_283.455,
-            2.0,
-            -3.0,
-            4.0,
-        ]));
+        filter
+            .x
+            .rows_mut(0, 6)
+            .copy_from(&DVector::from_column_slice(&[
+                3_492.09, 742.235, 5_283.455, 2.0, -3.0, 4.0,
+            ]));
         filter.reserve_receiver_clock(ReceiverClockId("orbcomm".into()));
         filter.augment_satellite_bias("SV-A", 11.0);
         filter.augment_satellite_bias("SV-B", 22.0);
@@ -659,7 +732,9 @@ mod tests {
         };
 
         let heading = numeric(|filter| {
-            filter.update_heading(Heading { radians: 0.7 }, 1.0, None).innovation
+            filter
+                .update_heading(Heading { radians: 0.7 }, 1.0, None)
+                .innovation
         });
         assert!((heading[(0, HEADING)] + 1.0).abs() < JACOBIAN_TOLERANCE);
         assert_eq!(heading.ncols(), base.len());
@@ -701,6 +776,7 @@ mod tests {
                         core_jacobian: [0.0, 0.0, 0.0, 0.2, -0.3, 0.4, 0.0, 0.0, 1.0],
                         variance_mps2: 1.0,
                         chi_square_threshold: Some(0.0),
+                        satellite_bias_variance_mps2: 11.0,
                     },
                     ReceiverClockId("orbcomm".into()),
                 )
@@ -724,7 +800,9 @@ mod tests {
                     1,
                     filter
                         .update_speed_through_water(
-                            SpeedThroughWater { metres_per_second: 5.0 },
+                            SpeedThroughWater {
+                                metres_per_second: 5.0,
+                            },
                             1.0,
                             Some(0.0),
                         )
@@ -777,8 +855,46 @@ mod tests {
         let filter = augmented_filter();
         assert_eq!(filter.nuisance_slots.len(), 2);
         assert!(filter.nuisance_slots["SV-A"] < filter.nuisance_slots["SV-C"]);
-        let receiver = filter.receiver_clock_slot(&ReceiverClockId("orbcomm".into())).unwrap();
+        let receiver = filter
+            .receiver_clock_slot(&ReceiverClockId("orbcomm".into()))
+            .unwrap();
         assert!(receiver.drift_index < filter.nuisance_slots["SV-A"]);
         assert_eq!(filter.covariance.nrows(), CORE_DIM + 2 + 2);
+    }
+
+    #[test]
+    fn doppler_uses_requested_nuisance_variance_and_real_augmented_path() {
+        let mut filter = augmented_filter();
+        let index = filter.augment_satellite_bias("SV-D", 47.0);
+        let result = filter.update_doppler(&DopplerRangeRateUpdate {
+            satellite_id: "SV-D".into(),
+            measured_range_rate_mps: 1.0,
+            predicted_range_rate_mps: 1.0,
+            core_jacobian: [0.0; CORE_DIM],
+            variance_mps2: 3.0,
+            chi_square_threshold: None,
+            satellite_bias_variance_mps2: 47.0,
+        });
+        assert!((result.innovation_variance - 50.0).abs() < f64::EPSILON);
+        assert_eq!(filter.nuisance_slots["SV-D"], index);
+    }
+
+    #[test]
+    fn clock_bias_variance_is_bounded_after_full_two_state_process_noise() {
+        let mut filter = augmented_filter();
+        filter.covariance[(CLOCK_BIAS, CLOCK_BIAS)] = CLOCK_BIAS_VARIANCE_CAP_M2 * 2.0;
+        let receiver = filter
+            .receiver_clock_slot(&ReceiverClockId("orbcomm".into()))
+            .unwrap();
+        filter.covariance[(receiver.bias_index, receiver.bias_index)] =
+            CLOCK_BIAS_VARIANCE_CAP_M2 * 2.0;
+        filter.propagate(ImuSample::default());
+        assert!(filter.covariance[(CLOCK_BIAS, CLOCK_BIAS)] <= CLOCK_BIAS_VARIANCE_CAP_M2);
+        assert!(
+            filter.covariance[(receiver.bias_index, receiver.bias_index)]
+                <= CLOCK_BIAS_VARIANCE_CAP_M2
+        );
+        assert!(filter.covariance[(CLOCK_BIAS, CLOCK_DRIFT)] > 0.0);
+        assert!(filter.covariance[(receiver.bias_index, receiver.drift_index)] > 0.0);
     }
 }

@@ -138,6 +138,28 @@ bias metres (7), and clock drift metres/second (8). Dynamically registered state
 accuracies in SI units, derived from that epoch's covariance. For source compatibility with
 the v2 executive these are accessors rather than additional stored fields; U-I2 shall move
 epoch creation to a constructor before any wire schema represents them as stored fields.
+Position covariance is rotated from ECEF into ENU at the epoch position. Horizontal
+accuracy is 2-D DRMS, `sqrt(P_ENU[E,E] + P_ENU[N,N])`; because the complete rotation is
+applied, ECEF cross-covariances contribute. Vertical accuracy is the ENU up-axis one-sigma,
+`sqrt(P_ENU[U,U])`. Speed accuracy applies the same 2-D DRMS convention to the ECEF
+velocity covariance. `horizontal_velocity_ned_mps` is the north/east projection of ECEF
+velocity at the epoch position, and the speed-through-water model is its horizontal norm.
+
+The primary clock-bias state is retained for future pseudorange/STL observability and to
+preserve the baseline's required state surface. Doppler currently observes drift, not bias,
+so propagation applies the standard two-state integrated drift-noise covariance and caps
+clock-bias variance at `1e8 m^2` for the primary and registered receiver clocks. That cap and
+the process-noise coefficient are engineering bounds pending replay tuning `[UNVERIFIED]`.
+
+GNSS aiding uses six sequential scalar, one-degree-of-freedom updates (three ECEF position,
+then three ECEF velocity). A supplied chi-square threshold is therefore a per-component
+1-DOF NIS threshold, not a joint 6-DOF gate. Acceptance or rejection is independent for each
+component. Callers requiring a joint gate must perform it before invoking this API.
+
+In GNSS-denied operation, ECEF vertical velocity is only weakly observable through the
+local-MSL and horizontal-speed constraints. U-M1 must publish `vd = 0` with a consistent
+nonzero vertical-accuracy bound as required by the baseline; stronger vertical dynamics and
+noise tuning remain `[UNVERIFIED]`.
 
 ### Helm arm command (resolves D13)
 

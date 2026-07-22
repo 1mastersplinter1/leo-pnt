@@ -10,9 +10,8 @@ the binding v2 additions in `.orchestration/CONTRACTS.md` were applied.
 - Added configurable, typed ephemeris age rejection. The default is six hours, from
   `docs/design/DESIGN_BASELINE.md` (approximately 0.94 km cited orbit-error datum). The
   absolute epoch/query separation is gated, including backward propagation.
-- Added SGP4 TEME propagation using `sgp4` 2.4.0 in AFSPC compatibility mode. That selects
-  WGS-72 constants and makes the included Vallado case 00005 comparison identical to the
-  dependency's shipped `tests/test_cases.toml` reference vector.
+- Added SGP4 TEME propagation using `sgp4` 2.4.0's recommended improved mode (WGS-84 and
+  IAU sidereal time). AFSPC/WGS-72 compatibility is isolated to the Vallado reference test.
 - Added TEME-to-ECEF position and velocity conversion and documented its model limits.
 - Added `pnt-predictor` with geometric range, range rate, ECEF line of sight, geocentric
   elevation/mask, receiver-clock drift, nominal carrier and per-SV nuisance bias.
@@ -34,9 +33,10 @@ No runtime or test code performs network access. Fixtures are under
 
 ## Models, bounds, and assumptions
 
-- SGP4 uses the crate's AFSPC compatibility path and WGS-72 geopotential. Its included
-  Vallado reference is checked to 1e-6 km position and 1e-9 km/s velocity at epoch. This is
-  an implementation-verification tolerance, not an ephemeris accuracy claim.
+- Production SGP4 uses the crate's recommended improved WGS-84 path. The isolated AFSPC
+  Vallado reference at t=360 minutes is checked against the crate's shipped
+  `tests/test_cases.toml` values to 1e-6 km position and 1e-9 km/s velocity. This is an
+  implementation-verification tolerance, not an ephemeris accuracy claim.
 - TEME to Earth-fixed uses the IAU-1982 GMST polynomial/Vallado TEME-to-PEF rotation,
   constant Earth rotation rate 7.2921150e-5 rad/s, and the corresponding `omega cross r`
   velocity term. UTC is used as UT1. Since IERS keeps `|UT1-UTC| < 0.9 s`, the stated worst
@@ -65,19 +65,47 @@ payload; integration needs those schema decisions without weakening the age gate
 
 ## Evidence
 
+## U-E1.1 review-fix dispositions
+
+1. **Fixed (Sonnet F2).** Exposed documented `gmst_rad`, asserted J2000 GMST is
+   280.46061837 degrees within 1e-10 degree, removed the tautological timestamp assertion,
+   and made the epoch rotation test use the computed GMST.
+2. **Fixed (Sonnet F1).** Independently recomputed Copenhagen WGS-84 ECEF with the standard
+   ellipsoid equations as `[3518304.710700, 784390.701416, 5244191.852570]` m and corrected
+   the fixture to the corresponding centimetre-rounded values.
+3. **Fixed (Opus F3).** Added a full-vector ECEF velocity reference assertion whose
+   independently stated result includes `omega cross r`.
+4. **Fixed (Opus F2).** Added satellite 00005 at t=360 minutes, copying position and velocity
+   from `sgp4` 2.4.0's shipped `tests/test_cases.toml`; position is asserted to 1e-6 km.
+5. **Fixed (Opus F1).** Production construction and propagation now use `from_elements` and
+   `propagate`, the dependency's recommended improved WGS-84 mode. AFSPC/WGS-72 calls exist
+   only in the Vallado compatibility test. This avoids choosing legacy compatibility over
+   the dependency's accuracy-oriented production default.
+6. **Fixed (Sonnet minors).** Added literal `[UNVERIFIED]` tags to the TEME-to-ECEF docs,
+   added backward age-gate coverage, documented the -90-radian mask-disable sentinel, and
+   replaced the earlier paraphrased evidence below with real terminal output.
+7. **Fixed (Opus F8).** The ISS end-to-end test now requires approach-positive samples to
+   precede recede-negative samples; the parser test asserts the known parsed epoch for both
+   TLE and OMM (allowing the TLE parser's one-nanosecond decimal-rounding difference).
+
+F4/F5/F6/F7 remain out of scope and routed to U-I2 as directed by the review summary.
+
 TDD commits:
 
 - `12394a0 test(ephemeris): specify propagation and Doppler contracts` (tests committed
   before library sources; initial run failed because the crates did not yet exist).
 - `794156a feat(ephemeris): add SGP4 propagation and Doppler prediction`.
 
-Final gate, 2026-07-22:
+U-E1.1 terminal evidence, 2026-07-22 (verbatim terminal summaries, not paraphrases):
 
 ```text
-$ cargo test
-all workspace tests passed (new tests: pnt-ephemeris 5/5, pnt-predictor 3/3)
-$ cargo clippy --all-targets -- -D warnings
-finished successfully, zero warnings
-$ cargo fmt --all -- --check
-finished successfully
+$ PATH="$HOME/.cargo/bin:$PATH" cargo test
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ PATH="$HOME/.cargo/bin:$PATH" cargo clippy --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+$ PATH="$HOME/.cargo/bin:$PATH" cargo fmt --all -- --check
+(no output; exit status 0)
 ```

@@ -105,9 +105,9 @@ impl EphemerisStore {
     fn from_elements(elements: Vec<Elements>) -> Result<Self, EphemerisError> {
         let mut entries = HashMap::new();
         for element in elements {
-            // AFSPC compatibility mode (WGS-72 constants) is selected so results are
-            // directly traceable to the Vallado reference vectors shipped by sgp4.
-            let constants = Constants::from_elements_afspc_compatibility_mode(&element)
+            // Use sgp4's recommended improved mode (WGS-84 and IAU sidereal time) for
+            // production accuracy. AFSPC compatibility is confined to reference tests.
+            let constants = Constants::from_elements(&element)
                 .map_err(|e| EphemerisError::Parse(e.to_string()))?;
             entries.insert(
                 element.norad_id,
@@ -159,7 +159,7 @@ impl EphemerisStore {
             .map_err(|e| EphemerisError::Propagation(e.to_string()))?;
         let prediction = entry
             .constants
-            .propagate_afspc_compatibility_mode(minutes)
+            .propagate(minutes)
             .map_err(|e| EphemerisError::Propagation(e.to_string()))?;
         Ok(TemeState {
             position_km: prediction.position,
@@ -210,10 +210,11 @@ impl EphemerisStore {
 }
 
 /// Rotates TEME into an Earth-fixed frame using the IAU-1982 GMST expression and constant
-/// Earth angular velocity, following Vallado's TEME-to-PEF method. Polar motion, DUT1,
-/// precession/nutation corrections, and length-of-day variation are omitted. With UTC used
-/// as UT1, the IERS bound |UT1-UTC| < 0.9 s implies <420 m equatorial rotation error; omitted
-/// polar motion is normally metre-scale. This is therefore not a precision EOP transform.
+/// Earth angular velocity, following Vallado's TEME-to-PEF method. `[UNVERIFIED]` Polar
+/// motion, DUT1, precession/nutation corrections, and length-of-day variation are omitted.
+/// With UTC used as UT1, the IERS bound |UT1-UTC| < 0.9 s implies <420 m equatorial rotation
+/// error. `[UNVERIFIED]` Omitted polar motion is expected to be metre-scale, but this project
+/// has no EOP-aware validation fixture. This is therefore not a precision EOP transform.
 #[must_use]
 pub fn teme_to_ecef_at_gmst(
     position_km: [f64; 3],
@@ -239,7 +240,13 @@ pub fn teme_to_ecef_at_gmst(
     }
 }
 
-fn gmst_rad(time: DateTime<Utc>) -> f64 {
+/// Computes IAU-1982 Greenwich mean sidereal time, using UTC as an approximation to UT1.
+///
+/// # Panics
+///
+/// Panics if `time` lies outside the range whose Unix-day count fits in an `i32`.
+#[must_use]
+pub fn gmst_rad(time: DateTime<Utc>) -> f64 {
     let whole_days = i32::try_from(time.timestamp().div_euclid(86_400))
         .expect("supported chrono dates fit in i32 Unix days");
     let day_seconds = i32::try_from(time.timestamp().rem_euclid(86_400))

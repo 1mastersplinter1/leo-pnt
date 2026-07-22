@@ -13,6 +13,7 @@ fn approaching_is_positive_doppler() {
         velocity_ecef_mps: [0.0; 3],
         clock_drift_mps: 0.0,
     };
+    // -90 rad is deliberately below asin's [-pi/2, pi/2] range, disabling the mask.
     let p = predict(sat, rx, 0.0, 1_500_000_000.0, -90.0).unwrap();
     // Independently: rho_dot = LOS dot (v_sat-v_rx) = -1000 m/s and
     // received Doppler = -f*rho_dot/c = +5003.461... Hz.

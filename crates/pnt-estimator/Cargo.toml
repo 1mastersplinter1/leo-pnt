@@ -5,6 +5,7 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+nalgebra = "0.33"
 pnt-types = { path = "../pnt-types" }
 
 [lints]

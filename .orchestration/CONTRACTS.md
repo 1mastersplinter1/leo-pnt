@@ -123,3 +123,35 @@ time, and GNSS must never silently discipline runtime time or the SDR reference.
 Measurement arrival is never the propagation trigger: accepted IMU ticks are. A dead-
 reckoning timeout affects steering authority only and must not stop propagation, updates,
 journalling or convergence.
+
+## v3 (2026-07-22)
+
+v3 retains v1 and v2 and resolves D10, D13, and review findings F3/F4.
+
+### Estimator state and epoch uncertainty
+
+`FilterState` carries ECEF position and velocity, heading, primary receiver-clock bias and
+drift, and the estimator's complete row-major covariance together with its dimension. The
+nine core slots are ordered position ECEF (0--2), velocity ECEF (3--5), heading (6), clock
+bias metres (7), and clock drift metres/second (8). Dynamically registered states follow.
+`SolutionEpoch` exposes horizontal-position, horizontal-speed, and vertical one-sigma
+accuracies in SI units, derived from that epoch's covariance. For source compatibility with
+the v2 executive these are accessors rather than additional stored fields; U-I2 shall move
+epoch creation to a constructor before any wire schema represents them as stored fields.
+
+### Helm arm command (resolves D13)
+
+`ArmCommand` is a measurement-bus payload with `action: Arm | Disarm`, the clock-service
+stamped `host_monotonic_ns: u64`, and `source_id: SourceId`. Receipt is not itself an
+authority grant: the executive must journal and route it to the authority supervisor, which
+applies freshness, source, health, and revocation policy. U-I2 owns that routing.
+
+### Independent receiver-clock registry (resolves D10)
+
+The estimator owns a registry from opaque `ReceiverClockId` to `ReceiverClockSlot {
+bias_index, drift_index }`. Reserving a receiver dynamically augments the state and full
+covariance with bias (metres) and drift (metres/second); propagation couples its bias to its
+drift, and receiver-specific Doppler updates linearise against that slot instead of the
+primary clock. Retirement/reindexing must preserve registry validity. Orbcomm remains
+rejected at ingress until U-I2 explicitly provisions its receiver clock and routes accepted
+predictor output through this receiver-specific update path.

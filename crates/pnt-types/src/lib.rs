@@ -71,6 +71,31 @@ pub enum Constellation {
     Orbcomm,
 }
 
+/// Identifies a physically independent receiver clock domain.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ReceiverClockId(pub String);
+
+/// Slot reserved by the estimator for a receiver's clock bias and drift.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReceiverClockSlot {
+    pub bias_index: usize,
+    pub drift_index: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArmAction {
+    Arm,
+    Disarm,
+}
+
+/// Human helm command. The executive, not the estimator, routes this message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArmCommand {
+    pub action: ArmAction,
+    pub host_monotonic_ns: u64,
+    pub source_id: SourceId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TrackerDoppler {
     pub constellation: Constellation,
@@ -85,6 +110,7 @@ pub enum MeasurementPayload {
     SpeedThroughWater(SpeedThroughWater),
     Gnss(GnssFix),
     TrackerDoppler(TrackerDoppler),
+    ArmCommand(ArmCommand),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -103,18 +129,128 @@ pub struct MeasurementEnvelope {
     pub provenance: Provenance,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FilterState {
     pub position_ecef_m: [f64; 3],
+    pub velocity_ecef_mps: [f64; 3],
     pub horizontal_velocity_ned_mps: [f64; 2],
     pub heading_rad: f64,
     pub receiver_clock_bias_m: f64,
     pub receiver_clock_drift_mps: f64,
+    /// Row-major covariance. Its dimension is `covariance_dimension`; dynamic
+    /// nuisance states follow the nine core states.
+    pub covariance: Vec<f64>,
+    pub covariance_dimension: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+impl Default for FilterState {
+    fn default() -> Self {
+        Self {
+            position_ecef_m: [0.0; 3],
+            velocity_ecef_mps: [0.0; 3],
+            horizontal_velocity_ned_mps: [0.0; 2],
+            heading_rad: 0.0,
+            receiver_clock_bias_m: 0.0,
+            receiver_clock_drift_mps: 0.0,
+            covariance: (0..Self::CORE_DIMENSION)
+                .flat_map(|row| {
+                    (0..Self::CORE_DIMENSION).map(move |column| f64::from(u8::from(row == column)))
+                })
+                .collect(),
+            covariance_dimension: Self::CORE_DIMENSION,
+        }
+    }
+}
+
+impl FilterState {
+    pub const CORE_DIMENSION: usize = 9;
+
+    #[must_use]
+    pub fn horizontal_accuracy_m(&self) -> f64 {
+        covariance_accuracy(&self.covariance, self.covariance_dimension, &[0, 1])
+    }
+
+    #[must_use]
+    pub fn speed_accuracy_mps(&self) -> f64 {
+        covariance_accuracy(&self.covariance, self.covariance_dimension, &[3, 4])
+    }
+
+    #[must_use]
+    pub fn vertical_accuracy_m(&self) -> f64 {
+        covariance_accuracy(&self.covariance, self.covariance_dimension, &[2])
+    }
+}
+
+fn covariance_accuracy(covariance: &[f64], dimension: usize, indices: &[usize]) -> f64 {
+    indices
+        .iter()
+        .filter_map(|index| covariance.get(index * dimension + index))
+        .copied()
+        .fold(0.0_f64, f64::max)
+        .max(0.0)
+        .sqrt()
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SolutionEpoch {
     pub monotonic_ns: u64,
     pub state: FilterState,
     pub steering_authorised: bool,
+}
+
+impl SolutionEpoch {
+    #[must_use]
+    pub fn horizontal_accuracy_m(&self) -> f64 {
+        self.state.horizontal_accuracy_m()
+    }
+
+    #[must_use]
+    pub fn speed_accuracy_mps(&self) -> f64 {
+        self.state.speed_accuracy_mps()
+    }
+
+    #[must_use]
+    pub fn vertical_accuracy_m(&self) -> f64 {
+        self.state.vertical_accuracy_m()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epoch_accuracies_are_derived_from_its_full_covariance() {
+        let mut covariance = vec![0.0; FilterState::CORE_DIMENSION.pow(2)];
+        covariance[0] = 9.0;
+        covariance[FilterState::CORE_DIMENSION + 1] = 16.0;
+        covariance[2 * FilterState::CORE_DIMENSION + 2] = 25.0;
+        covariance[3 * FilterState::CORE_DIMENSION + 3] = 0.04;
+        covariance[4 * FilterState::CORE_DIMENSION + 4] = 0.09;
+        let epoch = SolutionEpoch {
+            monotonic_ns: 1,
+            state: FilterState {
+                covariance,
+                covariance_dimension: FilterState::CORE_DIMENSION,
+                ..FilterState::default()
+            },
+            steering_authorised: false,
+        };
+        assert!((epoch.horizontal_accuracy_m() - 4.0).abs() < f64::EPSILON);
+        assert!((epoch.speed_accuracy_mps() - 0.3).abs() < f64::EPSILON);
+        assert!((epoch.vertical_accuracy_m() - 5.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn arm_command_is_a_bus_payload() {
+        let command = ArmCommand {
+            action: ArmAction::Disarm,
+            host_monotonic_ns: 42,
+            source_id: SourceId("helm".into()),
+        };
+        assert_eq!(
+            MeasurementPayload::ArmCommand(command.clone()),
+            MeasurementPayload::ArmCommand(command)
+        );
+    }
 }

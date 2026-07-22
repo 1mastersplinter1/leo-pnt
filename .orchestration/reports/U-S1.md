@@ -86,3 +86,40 @@ human-response control (H7); the G1 arm bus message (D13); the Orbcomm fusion ga
   findings that carried substance.
 - Documentation-only unit: no executable test suite. No git commit (D3, brief). `ARCHITECTURE.md`
   deliberately not edited (not owned; the arm-message gap is registered, per D13).
+
+---
+
+## Round 2 — U-S1.2 (fresh context) dispositions, per D17 arbitration
+
+Round-2 review split (Sol verify **FAIL** / Sonnet verify **PASS**); coordinator arbitration
+**D17** rules exactly what remains. This round executes D17(a)–(e) only; passed structure from
+round 1 is not restructured.
+
+### Sol verify — not-resolved items
+
+| # | Finding | Disposition |
+|---|---|---|
+| 3 | Hand-to-helm recipe supplies only candidate commands/modes; exact mode, RC arbitration, command-ack/failure behaviour, actuator transition undefined | **Addressed per D17(e)/(d)** — §2.1 Case A keeps the candidates and now enumerates all four as explicit **[UNVERIFIED]** SITL/HIL items (mode-set command + mode enum; RC-arbitration params; command-ack/failure handling + fallback; continuous actuator transition). Added the **sea-trial gate**: *no on-water steering authority until the Case-A handoff recipe is demonstrated in SITL at the pinned firmware* (§2.1, §5 register, pre-trial checklist). Recipe stays honestly unproven, not asserted complete. |
+| 5 | State machine claims "exactly one outcome per Boolean transition" but omits G1↓ from WARNING/ESCALATED/LATCHED-SAFE, G2/G3/G4 recovery in those states, G4 expiry while DISARMED, ack/recovery races | **Fixed per D17(c-matrix)** — §2.2 replaced with a **total 6-state × 11-event matrix** (every state × G1↓/↑, G2↓/↑, G3↓/↑, G4↯, Tack↯, ACK, ce, cc). Explicit self-loops define every previously-missing cell (recovery does not auto-clear a latch; G4↯ inert while DISARMED; G1↑ ignored in W/E). Added a precedence priority order + default rule proving **exactly one successor per cell** for all 66 cells. |
+| 10 | Predicate table has operators/units/missing-data but PLs, timers, freshness, dwells, thresholds remain [UNVERIFIED]; contract not numerically executable before steering | **Resolved by reframing per D17(d): numeric [UNVERIFIED] values are NOT a doc defect** — the fix is the **fail-closed gate** (§1): steering authority shall never be granted while any authority-contract parameter (PLs, timers, freshness, dwells, thresholds) remains [UNVERIFIED]. §5 lead note restates every such parameter as fail-closed. The open register is now a hard precondition, not a permissive default. |
+
+### Sol verify — NEW findings
+
+| Finding | Disposition |
+|---|---|
+| **Blocker** — document asserts ArduPilot takes a bounded ~4 s "non-manoeuvre GPS-failsafe" on `GPS_INPUT` silence; `GPS_TIMEOUT_MS` is a data timeout, not a proven control-authority action | **CONFIRMED, fixed per D17(a)** — recast everywhere (§2.1 Case B, §1.3, §3.1, §2.3 row, H5, §5): ArduPilot's response to `GPS_INPUT` silence is **[UNVERIFIED — to be characterised in ArduPilot SITL at the pinned firmware, per D17/U-M1]**; the "bounded ~4 s non-manoeuvre timeout" claim withdrawn. Case B's residual is now classified **uncontrolled-pending-evidence**, consistent with H6/H7; only the physical helm/kill-cord is currently relied on. §5 records the U-M1 SITL characterisation obligation (mode/actuation/timing, every autonomous mode, ≥10 s). |
+| **Major** — baseline still requires the in-process watchdog to expire authority on companion process stall, contradicting the safety case (normative inconsistency; baseline governs) | **Resolved by D17(b)** — the baseline "Companion faults, by class" row was amended by Fable (glue edit, D17) to split estimator-only stall (watchdog) from whole-process death (autopilot-side [UNVERIFIED] backstop + physical layer). Safety-case §2.3 row rewritten to **align 1:1** with the amended baseline wording and class split. Inconsistency removed. (Baseline not owned by this unit; alignment only.) |
+| **Major** — state machine claims complete edge coverage but omits state/event combinations and race precedence | **Fixed** — same total matrix + precedence/default rule as finding 5 (§2.2). Every cell now has one next state, one authority result, one annunciation. |
+
+### Sonnet minor
+
+| Finding | Disposition |
+|---|---|
+| Mislabel: cross-reference to the degradation mapping / Orbcomm caveat cites **§2.4**, which does not exist (section is **§2.3**) | **Fixed per D17(e)** — corrected the `(§2.4)`→`(§2.3)` cross-reference in `SAFETY_CASE.md` §1 (ephemeris-age note) and the B4 disposition in this report. |
+
+### Round-2 process
+
+- Read in full: `DECISIONS.md` (D17 mandate; D10/D13 context), amended `DESIGN_BASELINE.md`
+  (Companion-faults-by-class row), `SAFETY_CASE.md` (working copy), `U-S1-verify-sol.md`.
+- Owned/edited: `docs/design/SAFETY_CASE.md`, `.orchestration/reports/U-S1.md`. Baseline and
+  `ARCHITECTURE.md` not edited (not owned). No git commit. Round-1 passed structure preserved.

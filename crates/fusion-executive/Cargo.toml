@@ -1,0 +1,16 @@
+[package]
+name = "fusion-executive"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+pnt-config = { path = "../pnt-config" }
+pnt-estimator = { path = "../pnt-estimator" }
+pnt-integrity = { path = "../pnt-integrity" }
+pnt-journal = { path = "../pnt-journal" }
+pnt-time = { path = "../pnt-time" }
+pnt-types = { path = "../pnt-types" }
+
+[lints]
+workspace = true

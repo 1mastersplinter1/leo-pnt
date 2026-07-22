@@ -1,0 +1,11 @@
+[package]
+name = "pnt-estimator"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+pnt-types = { path = "../pnt-types" }
+
+[lints]
+workspace = true

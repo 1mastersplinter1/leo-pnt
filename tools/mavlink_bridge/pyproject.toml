@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leo-pnt-mavlink-bridge"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["pymap3d==3.2.0", "pymavlink==2.4.43"]
+
+[project.scripts]
+leo-pnt-mavlink-bridge = "mavlink_bridge.cli:main"
+leo-pnt-synthetic-trajectory = "mavlink_bridge.synthetic:main"
+
+[tool.setuptools]
+packages = ["mavlink_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+

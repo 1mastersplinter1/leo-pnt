@@ -1,0 +1,7 @@
+# External MAVLink GPS and Rover boat frame required by U-M1.
+FRAME_CLASS 2
+GPS1_TYPE 14
+GPS2_TYPE 0
+AHRS_EKF_TYPE 3
+EK3_ENABLE 1
+

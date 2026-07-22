@@ -1,0 +1,7 @@
+# DECISIONS.md — one line per ruling; never re-litigate
+
+- D1 (2026-07-22, Fable): Superpowers brainstorming's interactive approval gate is satisfied by the handoff document itself (product of prior design work; user directive given autonomously) — design baseline still goes to user for review before code units expand beyond the executive skeleton.
+- D2 (2026-07-22, Fable): Header assigns docs to Fable; user's token-budget instruction overrides — Sol/Sonnet draft documents, Fable reviews and signs. User instruction > header.
+- D3 (2026-07-22, Fable): Wave-1 units are docs-only with disjoint file ownership; they share the main worktree and do NOT commit (Fable commits post-review). Per-unit worktrees begin with code units (U-C1 onward).
+- D4 (2026-07-22, Fable): Repo lives at /home/od/work/leo-pnt, branch main. Superpowers plan location overridden by header: unit plan in .orchestration/PLAN.md, task-level TDD detail lives in each brief.
+- D5 (2026-07-22, Fable): Research units (U-R1/U-R2) run on Grok for web-search + cost; every factual claim needs URL + access date and VERIFIED/ASSUMED split; a non-Grok reviewer must confirm before any claim becomes load-bearing in the BOM or design.

@@ -107,6 +107,8 @@ impl EphemerisStore {
         for element in elements {
             // Use sgp4's recommended improved mode (WGS-84 and IAU sidereal time) for
             // production accuracy. AFSPC compatibility is confined to reference tests.
+            // [UNVERIFIED] Improved-mode production propagation lacks a project-local,
+            // literature-anchored numerical validation fixture.
             let constants = Constants::from_elements(&element)
                 .map_err(|e| EphemerisError::Parse(e.to_string()))?;
             entries.insert(

@@ -12,7 +12,8 @@ pub struct SatelliteState {
 pub struct ReceiverState {
     pub position_ecef_m: [f64; 3],
     pub velocity_ecef_mps: [f64; 3],
-    /// Receiver-clock drift expressed as an equivalent positive range rate (m/s).
+    /// Receiver-clock drift expressed as an equivalent positive range rate (m/s). This affects
+    /// `correlation_peak_hz` only; `Prediction::range_rate_mps` remains purely geometric.
     pub clock_drift_mps: f64,
 }
 

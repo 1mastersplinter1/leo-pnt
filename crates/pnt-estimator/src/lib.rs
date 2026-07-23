@@ -346,6 +346,7 @@ impl FilterStub {
             let a = identity - &gain * h.transpose();
             self.covariance =
                 &a * &self.covariance * a.transpose() + (&gain * gain.transpose()) * variance;
+            self.covariance = (&self.covariance + self.covariance.transpose()) * 0.5;
             self.measurement_updates += 1;
             self.debug_assert_covariance();
         }
@@ -451,6 +452,7 @@ impl Estimator for FilterStub {
             q[(index, index)] = self.process_noise.nuisance_random_walk_variance * dt;
         }
         self.covariance = &f * &self.covariance * f.transpose() + q;
+        self.covariance = (&self.covariance + self.covariance.transpose()) * 0.5;
         self.cap_clock_bias_variance(CLOCK_BIAS);
         let receiver_biases: Vec<_> = self
             .receiver_clocks
@@ -482,8 +484,10 @@ impl Estimator for FilterStub {
                 self.update_speed_through_water(value, variance, None);
             }
             MeasurementPayload::Gnss(value) => {
-                let rotation =
-                    ecef_to_enu_rotation([self.x[POS], self.x[POS + 1], self.x[POS + 2]]);
+                // Resolve the reported local velocity at the fix location. Using the prior
+                // estimate here is ill-conditioned during cold start and can rotate an otherwise
+                // good GNSS velocity into the wrong ECEF axes.
+                let rotation = ecef_to_enu_rotation(value.position_ecef_m);
                 let ned = value.velocity_ned_mps;
                 let enu = [ned[1], ned[0], -ned[2]];
                 let velocity_ecef_mps = std::array::from_fn(|column| {

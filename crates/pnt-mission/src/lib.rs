@@ -51,8 +51,8 @@ pub struct CoordinatedTurnConfig {
 
 /// Seeded synthetic planing-hull wave/slam stand-in.
 ///
-/// This is **[UNVERIFIED vs real planing data]**. Bursts use a bounded half-sine vertical
-/// acceleration and a pitch-coupled horizontal component. They are not a sea-state model.
+/// This is **[UNVERIFIED vs real planing data]**. Bursts use a bounded, zero-mean full-cycle
+/// vertical acceleration and a pitch-coupled horizontal component. They are not a sea-state model.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaveSlamConfig {
     pub burst_rate_hz: f64,
@@ -85,6 +85,10 @@ pub struct MissionConfig {
     pub gnss_noise_std_m: f64,
     pub doppler_noise_std_hz: f64,
     pub elevation_mask_rad: f64,
+    /// Whole-second cadence for tracker-in-loop observations.
+    pub doppler_interval_s: u64,
+    /// Optional element-epoch offset for ephemeris-aging campaigns.
+    pub ephemeris_start_age_s: Option<u64>,
     pub coordinated_turn: Option<CoordinatedTurnConfig>,
     pub wave_slam: Option<WaveSlamConfig>,
     pub speed_scaled_imu: Option<SpeedScaledImuConfig>,
@@ -106,6 +110,8 @@ impl Default for MissionConfig {
             gnss_noise_std_m: 0.5,
             doppler_noise_std_hz: 2.0,
             elevation_mask_rad: 5.0_f64.to_radians(),
+            doppler_interval_s: 1,
+            ephemeris_start_age_s: None,
             coordinated_turn: None,
             wave_slam: None,
             speed_scaled_imu: None,
@@ -186,7 +192,10 @@ pub fn generate_mission(
     let output = output.as_ref();
     let store = EphemerisStore::from_tle_str(TLE)?;
     let epoch = store.epoch(NORAD_ID).expect("fixture satellite exists");
-    let start = find_visible_start(&store, epoch);
+    let start = config.ephemeris_start_age_s.map_or_else(
+        || find_visible_start(&store, epoch),
+        |age_s| epoch + Duration::seconds(i64::try_from(age_s).unwrap_or(i64::MAX)),
+    );
     let metadata = RunMetadata {
         run_uuid: format!("synthetic-mission-{:016x}", config.seed),
         created_utc_rfc3339: Some(start.to_rfc3339_opts(SecondsFormat::Nanos, true)),
@@ -211,9 +220,12 @@ pub fn generate_mission(
     let mut tracker = None;
     let mut turn_samples = 0_u64;
     let mut constant_heading_samples = 0_u64;
-    let mut north = 0.0;
-    let mut east = 0.0;
-    let mut previous_velocity = velocity_ne(0.0, config);
+    let mut local_position = [0.0; 3];
+    let mut disturbance_velocity = [0.0; 3];
+    let mut previous_velocity = {
+        let velocity = velocity_ne(0.0, config);
+        [velocity[0], velocity[1], 0.0]
+    };
 
     for tick in 0..=total {
         let seconds = tick as f64 * dt;
@@ -224,28 +236,43 @@ pub fn generate_mission(
         } else {
             constant_heading_samples += 1;
         }
-        let velocity = velocity_ne(heading, config);
+        let commanded_velocity = velocity_ne(heading, config);
+        let slam = wave_slam_acceleration(seconds, config.seed, config.wave_slam);
         if tick > 0 {
-            north += 0.5 * (previous_velocity[0] + velocity[0]) * dt;
-            east += 0.5 * (previous_velocity[1] + velocity[1]) * dt;
+            for axis in 0..3 {
+                disturbance_velocity[axis] += slam[axis] * dt;
+            }
         }
-        let acceleration_ne = [
+        let velocity = [
+            commanded_velocity[0] + disturbance_velocity[0],
+            commanded_velocity[1] + disturbance_velocity[1],
+            disturbance_velocity[2],
+        ];
+        if tick > 0 {
+            for axis in 0..3 {
+                local_position[axis] += 0.5 * (previous_velocity[axis] + velocity[axis]) * dt;
+            }
+        }
+        let acceleration_local = [
             (velocity[0] - previous_velocity[0]) / dt,
             (velocity[1] - previous_velocity[1]) / dt,
+            (velocity[2] - previous_velocity[2]) / dt,
         ];
         previous_velocity = velocity;
         let timestamp = tick.saturating_mul(1_000_000_000 / config.imu_rate_hz);
         let utc = start + Duration::nanoseconds(i64::try_from(timestamp).unwrap_or(i64::MAX));
-        let truth_position = local_to_ecef(north, east);
-        let velocity_ecef = local_vector_to_ecef(velocity[0], velocity[1]);
-        let slam = wave_slam_acceleration(seconds, config.seed, config.wave_slam);
-        let acceleration_ecef =
-            local_vector_to_ecef(acceleration_ne[0] + slam[0], acceleration_ne[1]);
+        let truth_position =
+            local_to_ecef_up(local_position[0], local_position[1], local_position[2]);
+        let velocity_ecef = local_vector_to_ecef(velocity[0], velocity[1], velocity[2]);
+        let acceleration_ecef = local_vector_to_ecef(
+            acceleration_local[0],
+            acceleration_local[1],
+            acceleration_local[2],
+        );
         let (imu_noise, imu_bias_scale) = scaled_imu(config);
         let imu = ImuSample {
             acceleration_mps2: std::array::from_fn(|axis| {
                 acceleration_ecef[axis]
-                    + if axis == 0 { slam[2] } else { 0.0 }
                     + config.imu_bias_mps2[axis] * imu_bias_scale
                     + imu_noise * rng.normal()
             }),
@@ -275,7 +302,7 @@ pub fn generate_mission(
                     position_ecef_m: std::array::from_fn(|axis| {
                         truth_position[axis] + config.gnss_noise_std_m * rng.normal()
                     }),
-                    velocity_ned_mps: [velocity[0], velocity[1], 0.0],
+                    velocity_ned_mps: [velocity[0], velocity[1], -velocity[2]],
                 }),
             );
             journals.try_write_measurement(&truth)?;
@@ -289,7 +316,7 @@ pub fn generate_mission(
                 vec![0.0],
                 MeasurementPayload::Gnss(GnssFix {
                     position_ecef_m: truth_position,
-                    velocity_ned_mps: [velocity[0], velocity[1], 0.0],
+                    velocity_ned_mps: [velocity[0], velocity[1], -velocity[2]],
                 }),
             ))?;
             sequence += 1;
@@ -318,7 +345,14 @@ pub fn generate_mission(
                 measurement_count += 1;
             }
 
-            let satellite = store.propagate_ecef(NORAD_ID, utc)?;
+            if tick % config.imu_rate_hz.saturating_mul(config.doppler_interval_s) != 0 {
+                continue;
+            }
+            // Mission truth may span the graduated-aging study envelope. This propagation is
+            // truth generation, while acceptance/inflation remains the executive's decision.
+            let satellite = store
+                .propagate_ecef_with_age(NORAD_ID, utc, Duration::hours(30))?
+                .state;
             if let Ok(prediction) = predict(
                 SatelliteState {
                     position_ecef_m: satellite.position_m,
@@ -334,6 +368,12 @@ pub fn generate_mission(
                 config.elevation_mask_rad,
             ) {
                 let predicted_hz = prediction.correlation_peak_hz;
+                // Decimated endurance studies represent independent acquisition opportunities;
+                // reacquire around the current prediction rather than carrying a 30-minute-old
+                // narrow tracking window. The historical one-second path is unchanged.
+                if config.doppler_interval_s > 1 {
+                    tracker = None;
+                }
                 let receiver = match tracker.as_mut() {
                     Some(receiver) => receiver,
                     None => tracker.insert(
@@ -426,6 +466,7 @@ pub fn run_study(
         velocity_ecef_mps: local_vector_to_ecef(
             config.speed_through_water_mps + config.current_north_mps,
             config.current_east_mps,
+            0.0,
         ),
         position_variance_m2: [1.0; 3],
         velocity_variance_mps2: [1.0; 3],
@@ -519,19 +560,27 @@ fn heading_profile(
     } else {
         let legacy_rate = FRAC_PI_2 / (turn_end - turn_start).max(1.0);
         let rate = coordinated.map_or(legacy_rate, |value| value.rate_rad_s);
-        (rate * (turn_end - turn_start), 0.0)
+        (
+            coordinated.map_or(FRAC_PI_2, |_| rate * (turn_end - turn_start)),
+            0.0,
+        )
     }
 }
 
 fn validate_config(config: &MissionConfig) -> Result<(), MissionError> {
-    if !(0.0..=10.3).contains(&config.speed_through_water_mps) {
+    if !(0.0..=15.5).contains(&config.speed_through_water_mps) {
         return Err(MissionError::InvalidConfig(
-            "speed_through_water_mps must be in 0..=10.3".into(),
+            "speed_through_water_mps must be in 0..=15.5".into(),
         ));
     }
     if config.imu_rate_hz == 0 {
         return Err(MissionError::InvalidConfig(
             "imu_rate_hz must be non-zero".into(),
+        ));
+    }
+    if config.doppler_interval_s == 0 {
+        return Err(MissionError::InvalidConfig(
+            "doppler_interval_s must be non-zero".into(),
         ));
     }
     if let Some(turn) = config.coordinated_turn {
@@ -603,7 +652,7 @@ fn wave_slam_acceleration(seconds: f64, seed: u64, config: Option<WaveSlamConfig
     if unit >= probability {
         return [0.0; 3];
     }
-    let vertical = config.vertical_peak_mps2 * (std::f64::consts::PI * phase).sin();
+    let vertical = config.vertical_peak_mps2 * (std::f64::consts::TAU * phase).cos();
     [vertical * config.pitch_coupling, 0.0, vertical]
 }
 
@@ -617,17 +666,22 @@ fn velocity_ne(heading: f64, config: &MissionConfig) -> [f64; 2] {
 // The fixture origin is the equator/prime meridian: north=ECEF z, east=ECEF y. The small
 // local displacement is projected back to the spherical sea surface, keeping altitude zero.
 fn local_to_ecef(north: f64, east: f64) -> [f64; 3] {
+    local_to_ecef_up(north, east, 0.0)
+}
+
+fn local_to_ecef_up(north: f64, east: f64, up: f64) -> [f64; 3] {
     let latitude = north / EARTH_RADIUS_M;
     let longitude = east / EARTH_RADIUS_M;
+    let radius = EARTH_RADIUS_M + up;
     [
-        EARTH_RADIUS_M * latitude.cos() * longitude.cos(),
-        EARTH_RADIUS_M * latitude.cos() * longitude.sin(),
-        EARTH_RADIUS_M * latitude.sin(),
+        radius * latitude.cos() * longitude.cos(),
+        radius * latitude.cos() * longitude.sin(),
+        radius * latitude.sin(),
     ]
 }
 
-fn local_vector_to_ecef(north: f64, east: f64) -> [f64; 3] {
-    [0.0, east, north]
+fn local_vector_to_ecef(north: f64, east: f64, up: f64) -> [f64; 3] {
+    [up, east, north]
 }
 
 fn envelope(
@@ -734,7 +788,7 @@ mod high_speed_tests {
     use super::*;
 
     #[test]
-    fn slam_is_seeded_bounded_and_pitch_coupled() {
+    fn slam_is_seeded_bounded_zero_mean_and_pitch_coupled() {
         let config = WaveSlamConfig {
             burst_rate_hz: 10.0,
             duration_s: 1.0,
@@ -746,20 +800,67 @@ mod high_speed_tests {
         assert_eq!(first.map(f64::to_bits), second.map(f64::to_bits));
         assert!(first[2].abs() <= 4.0);
         assert!((first[0] - first[2] * 0.2).abs() < f64::EPSILON);
+        let mean = (0..1_000)
+            .map(|sample| wave_slam_acceleration(f64::from(sample) / 1_000.0, 4, Some(config))[2])
+            .sum::<f64>()
+            / 1_000.0;
+        assert!(mean.abs() < 1.0e-12);
     }
 
     #[test]
-    fn envelope_accepts_twenty_knots_and_rejects_more() {
+    fn envelope_accepts_exploratory_thirty_knots_and_rejects_more() {
         let mut config = MissionConfig {
-            speed_through_water_mps: 10.3,
+            speed_through_water_mps: 15.43,
             ..MissionConfig::default()
         };
         assert!(validate_config(&config).is_ok());
-        config.speed_through_water_mps = 10.31;
+        config.speed_through_water_mps = 15.51;
         assert!(matches!(
             validate_config(&config),
             Err(MissionError::InvalidConfig(_))
         ));
+    }
+
+    #[test]
+    fn speed_scaled_imu_changes_noise_and_bias_at_high_speed() {
+        let scaling = SpeedScaledImuConfig {
+            reference_speed_mps: 5.0,
+            noise_per_speed_ratio: 0.5,
+            bias_per_speed_ratio: 0.25,
+        };
+        let reference = MissionConfig {
+            speed_through_water_mps: 5.0,
+            speed_scaled_imu: Some(scaling),
+            ..MissionConfig::default()
+        };
+        let faster = MissionConfig {
+            speed_through_water_mps: 10.0,
+            ..reference.clone()
+        };
+        assert_eq!(scaled_imu(&reference), (reference.imu_noise_std_mps2, 1.0));
+        assert_eq!(
+            scaled_imu(&faster),
+            (reference.imu_noise_std_mps2 * 1.5, 1.25)
+        );
+    }
+
+    #[test]
+    fn integrated_slam_acceleration_recovers_disturbance_velocity() {
+        let config = WaveSlamConfig {
+            burst_rate_hz: 10.0,
+            duration_s: 1.0,
+            vertical_peak_mps2: 4.0,
+            pitch_coupling: 0.2,
+        };
+        let dt = 0.001;
+        let mut velocity = [0.0; 3];
+        for sample in 0..1_000 {
+            let acceleration = wave_slam_acceleration(f64::from(sample) * dt, 4, Some(config));
+            for axis in 0..3 {
+                velocity[axis] += acceleration[axis] * dt;
+            }
+        }
+        assert!(velocity.iter().all(|value| value.abs() < 1.0e-12));
     }
 
     #[test]

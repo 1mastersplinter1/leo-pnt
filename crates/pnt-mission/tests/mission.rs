@@ -32,6 +32,12 @@ fn directory_bytes(path: &Path) -> Vec<(String, Vec<u8>)> {
     values
 }
 
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
+    })
+}
+
 #[test]
 fn same_seed_produces_bit_identical_run_directory() {
     let left = TempDir::new().unwrap();
@@ -39,6 +45,25 @@ fn same_seed_produces_bit_identical_run_directory() {
     generate_mission(left.path(), &small(42)).unwrap();
     generate_mission(right.path(), &small(42)).unwrap();
     assert_eq!(directory_bytes(left.path()), directory_bytes(right.path()));
+}
+
+#[test]
+fn short_mission_matches_main_committed_artifact_fingerprints() {
+    let directory = TempDir::new().unwrap();
+    generate_mission(directory.path(), &small(42)).unwrap();
+    // Captured from main's committed generator before the high-speed extension. These compare
+    // new output against the legacy baseline, rather than merely comparing two new runs.
+    for (name, expected) in [
+        ("manifest.json", 0x7569_3296_14f8_7b51),
+        ("measurements-000000.seg", 0x03a5_b3da_f92c_8325),
+        ("truth-000000.seg", 0xb0a4_5e7a_6473_d976),
+    ] {
+        assert_eq!(
+            fnv1a(&fs::read(directory.path().join(name)).unwrap()),
+            expected,
+            "{name} differs from main's short-mission artifact"
+        );
+    }
 }
 
 #[test]

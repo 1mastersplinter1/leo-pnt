@@ -1,506 +1,95 @@
 {
-  "schema_version": 1,
-  "caveat": "SYNTHETIC [UNVERIFIED] scenario; numbers are not navigation-performance claims.",
-  "route": "four equal-distance legs with 90 degree turns; same distance, not same time",
-  "gps_loss_h": 1.0,
-  "ephemeris_cached_h": 0.0,
-  "process_noise_base": {
-    "acceleration_variance": 0.04,
-    "turn_rate_variance": 0.0001,
-    "clock_drift_variance": 0.0001,
-    "nuisance_random_walk_variance": 1e-6
-  },
-  "process_noise_lineage": "Config-driven regime multipliers are provisional pending U-H1 and the real-IMU study required by D43.",
-  "wave_model": "Seeded bounded half-sine slam bursts: 0.08 Hz opportunities, 0.7 s duration, 4.0 m/s^2 vertical peak, 0.18 pitch-to-horizontal coupling.",
-  "same_distance": [
+  "schema_version": 2,
+  "caveat": "SYNTHETIC CAPABILITY/PLUMBING DEMONSTRATION [UNVERIFIED]; not a navigation-performance or denied-authority claim.",
+  "scenario": "Aided for 300 s to a real converged EKF state, then GNSS denied for 100 km at each of 7/20/30 kn; wave/slam on; graduated ephemeris aging on.",
+  "wave_model": "Zero-mean full-cycle acceleration integrated into both truth and IMU. 100-450 ms duration and 0.44 g RMS anchor are R5-sourced; 0.25 s, opportunity rate, pitch coupling, speed scaling, and mapping 0.44 g RMS to 6.10 m/s^2 sinusoidal peak are [UNVERIFIED]. The 30 kn 1.84x peak scale is [UNVERIFIED].",
+  "results": [
     {
       "regime": "displacement",
       "speed_kn": 7.0,
-      "distance_km": 500.0,
-      "duration_h": 38.56837642439185,
-      "denied_duration_h": 37.56837642439185,
-      "position_error_rms_m": 43.868373563398414,
-      "position_error_p95_m": 59.47385609886008,
-      "landfall_position_error_m": 60.95178094905208,
-      "velocity_error_rms_mps": 0.040047819777445016,
-      "velocity_error_p95_mps": 0.046506786150820226,
-      "landfall_ephemeris_age_h": 38.56837642439185,
-      "ephemeris_age_margin_h": -8.56837642439185,
-      "position_error_classes": [
-        {
-          "denied_age_h": 0.0,
-          "error_m": 4.165084553352475,
-          "class": "<25 m"
-        },
-        {
-          "denied_age_h": 1.0,
-          "error_m": 13.208284553352478,
-          "class": "<25 m"
-        },
-        {
-          "denied_age_h": 2.0,
-          "error_m": 16.979406614710335,
-          "class": "<25 m"
-        },
-        {
-          "denied_age_h": 3.0,
-          "error_m": 19.88314182147237,
-          "class": "<25 m"
-        },
-        {
-          "denied_age_h": 4.0,
-          "error_m": 22.337884553352477,
-          "class": "<25 m"
-        },
-        {
-          "denied_age_h": 5.0,
-          "error_m": 24.505696350850585,
-          "class": "<25 m"
-        },
-        {
-          "denied_age_h": 6.0,
-          "error_m": 26.469692238401084,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 7.0,
-          "error_m": 28.279246352933793,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 8.0,
-          "error_m": 29.96652867606819,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 9.0,
-          "error_m": 31.55388455335248,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 10.0,
-          "error_m": 33.05758349486789,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 11.0,
-          "error_m": 34.489907666551076,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 12.0,
-          "error_m": 35.86039908959226,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 13.0,
-          "error_m": 37.176646032528375,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 14.0,
-          "error_m": 38.44480103431795,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 15.0,
-          "error_m": 39.66993466921923,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 16.0,
-          "error_m": 40.85628455335248,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 17.0,
-          "error_m": 42.007435183911426,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 18.0,
-          "error_m": 43.12645073742605,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 19.0,
-          "error_m": 44.215975045218535,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 20.0,
-          "error_m": 45.278308148348685,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 21.0,
-          "error_m": 46.31546580795504,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 22.0,
-          "error_m": 47.32922639176334,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 23.0,
-          "error_m": 48.32116826316695,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 24.0,
-          "error_m": 49.29269992344969,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 25.0,
-          "error_m": 50.24508455335248,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 26.0,
-          "error_m": 51.17946017568754,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 27.0,
-          "error_m": 52.09685635771217,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 28.0,
-          "error_m": 52.99820815251511,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 29.0,
-          "error_m": 53.88436781756302,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 30.0,
-          "error_m": 54.75611472881743,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 31.0,
-          "error_m": 55.614163818822675,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 32.0,
-          "error_m": 56.4591727987839,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 33.0,
-          "error_m": 57.29174837219474,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 34.0,
-          "error_m": 58.112451606960185,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 35.0,
-          "error_m": 58.92180260124903,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 36.0,
-          "error_m": 59.72028455335248,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 37.0,
-          "error_m": 60.50834732603646,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 37.56837642439185,
-          "error_m": 60.95178094905208,
-          "class": "25-100 m"
-        }
-      ],
-      "manoeuvre_convergence": [
-        {
-          "turn": 1,
-          "time_s": 80.6,
-          "distance_m": 290.2493048
-        },
-        {
-          "turn": 2,
-          "time_s": 80.6,
-          "distance_m": 290.2493048
-        },
-        {
-          "turn": 3,
-          "time_s": 80.6,
-          "distance_m": 290.2493048
-        }
-      ]
+      "denied_distance_km": 100.0,
+      "denied_duration_h": 7.713888888888889,
+      "loss_state": {
+        "position_error_m": 0.7131743976820705,
+        "velocity_error_mps": 0.23530933107962917,
+        "position_covariance_trace_m2": 0.29121063849027023,
+        "covariance_dimension": 10
+      },
+      "position_error_rms_m": 63547045.05161588,
+      "position_error_p95_m": 136734162.83918235,
+      "landfall_position_error_m": 40944894.05161732,
+      "velocity_error_rms_mps": 53604.8557746159,
+      "velocity_error_p95_mps": 82111.85685498417,
+      "position_error_class": ">=500 m",
+      "ephemeris_age_h": 7.7972222222222225,
+      "ephemeris_age_margin_h": 22.20277777777778,
+      "accepted_doppler_updates": 16,
+      "aged_doppler_updates": 3,
+      "manoeuvre_convergence": {
+        "time_s": 2561.499999999998,
+        "truth_distance_m": 8989.034650256383,
+        "criterion": "first 5 s below pre-turn thresholds 15630347.0 m / 65819.802 m/s"
+      }
     },
     {
       "regime": "planing",
       "speed_kn": 20.0,
-      "distance_km": 500.0,
-      "duration_h": 13.498931748537148,
-      "denied_duration_h": 12.498931748537148,
-      "position_error_rms_m": 98.49094460200044,
-      "position_error_p95_m": 134.59458352166746,
-      "landfall_position_error_m": 138.00747337461092,
-      "velocity_error_rms_mps": 0.0869515900538509,
-      "velocity_error_p95_mps": 0.11181771126215823,
-      "landfall_ephemeris_age_h": 13.498931748537148,
-      "ephemeris_age_margin_h": 16.501068251462854,
-      "position_error_classes": [
-        {
-          "denied_age_h": 0.0,
-          "error_m": 4.7238678928089834,
-          "class": "<25 m"
-        },
-        {
-          "denied_age_h": 1.0,
-          "error_m": 42.11083666872468,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 2.0,
-          "error_m": 57.66932897488692,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 3.0,
-          "error_m": 69.63649851115196,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 4.0,
-          "error_m": 79.74466258749753,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 5.0,
-          "error_m": 88.66481972948147,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 6.0,
-          "error_m": 96.74109883206022,
-          "class": "25-100 m"
-        },
-        {
-          "denied_age_h": 7.0,
-          "error_m": 104.17792824373889,
-          "class": "100-500 m"
-        },
-        {
-          "denied_age_h": 8.0,
-          "error_m": 111.10850434267914,
-          "class": "100-500 m"
-        },
-        {
-          "denied_age_h": 9.0,
-          "error_m": 117.6253456491275,
-          "class": "100-500 m"
-        },
-        {
-          "denied_age_h": 10.0,
-          "error_m": 123.79581433453058,
-          "class": "100-500 m"
-        },
-        {
-          "denied_age_h": 11.0,
-          "error_m": 129.6707633971304,
-          "class": "100-500 m"
-        },
-        {
-          "denied_age_h": 12.0,
-          "error_m": 135.28970055806636,
-          "class": "100-500 m"
-        },
-        {
-          "denied_age_h": 12.498931748537148,
-          "error_m": 138.00747337461092,
-          "class": "100-500 m"
-        }
-      ],
-      "manoeuvre_convergence": [
-        {
-          "turn": 1,
-          "time_s": 114.19183588453085,
-          "distance_m": 1174.9060963956317
-        },
-        {
-          "turn": 2,
-          "time_s": 114.19183588453085,
-          "distance_m": 1174.9060963956317
-        },
-        {
-          "turn": 3,
-          "time_s": 114.19183588453085,
-          "distance_m": 1174.9060963956317
-        }
-      ]
+      "denied_distance_km": 100.0,
+      "denied_duration_h": 2.7,
+      "loss_state": {
+        "position_error_m": 0.3924225389436441,
+        "velocity_error_mps": 0.25284279623506206,
+        "position_covariance_trace_m2": 0.34561732991861854,
+        "covariance_dimension": 10
+      },
+      "position_error_rms_m": 104862828.1364789,
+      "position_error_p95_m": 209930997.3551389,
+      "landfall_position_error_m": 134375499.83779523,
+      "velocity_error_rms_mps": 91052.22342175632,
+      "velocity_error_p95_mps": 107076.38226500207,
+      "position_error_class": ">=500 m",
+      "ephemeris_age_h": 2.783333333333333,
+      "ephemeris_age_margin_h": 27.216666666666665,
+      "accepted_doppler_updates": 6,
+      "aged_doppler_updates": 0,
+      "manoeuvre_convergence": {
+        "time_s": 1752.0,
+        "truth_distance_m": 17855.727362819536,
+        "criterion": "first 5 s below pre-turn thresholds 24838592.4 m / 128387.407 m/s"
+      }
+    },
+    {
+      "regime": "exploratory",
+      "speed_kn": 30.0,
+      "denied_distance_km": 100.0,
+      "denied_duration_h": 1.8,
+      "loss_state": {
+        "position_error_m": 0.3118488446620645,
+        "velocity_error_mps": 0.25154207613681695,
+        "position_covariance_trace_m2": 0.3667659703740398,
+        "covariance_dimension": 10
+      },
+      "position_error_rms_m": 105957924.53960441,
+      "position_error_p95_m": 220146684.7025145,
+      "landfall_position_error_m": 158771669.86730433,
+      "velocity_error_rms_mps": 89004.89805845036,
+      "velocity_error_p95_mps": 107094.05685320696,
+      "position_error_class": ">=500 m",
+      "ephemeris_age_h": 1.8833333333333333,
+      "ephemeris_age_margin_h": 28.116666666666667,
+      "accepted_doppler_updates": 4,
+      "aged_doppler_updates": 0,
+      "manoeuvre_convergence": {
+        "time_s": 0.9999999999995453,
+        "truth_distance_m": 0.0,
+        "criterion": "first 5 s below pre-turn thresholds 238127927.3 m / 115769.870 m/s"
+      }
     }
   ],
-  "endurance_20kn_24h": {
-    "regime": "planing",
-    "speed_kn": 20.0,
-    "distance_km": 888.959232,
-    "duration_h": 24.0,
-    "denied_duration_h": 23.0,
-    "position_error_rms_m": 132.4323182467602,
-    "position_error_p95_m": 181.60541328668307,
-    "landfall_position_error_m": 186.2723858185764,
-    "velocity_error_rms_mps": 0.10932454541708495,
-    "velocity_error_p95_mps": 0.1427703056715027,
-    "landfall_ephemeris_age_h": 24.0,
-    "ephemeris_age_margin_h": 6.0,
-    "position_error_classes": [
-      {
-        "denied_age_h": 0.0,
-        "error_m": 4.7238678928089834,
-        "class": "<25 m"
-      },
-      {
-        "denied_age_h": 1.0,
-        "error_m": 42.11083666872468,
-        "class": "25-100 m"
-      },
-      {
-        "denied_age_h": 2.0,
-        "error_m": 57.66932897488692,
-        "class": "25-100 m"
-      },
-      {
-        "denied_age_h": 3.0,
-        "error_m": 69.63649851115196,
-        "class": "25-100 m"
-      },
-      {
-        "denied_age_h": 4.0,
-        "error_m": 79.74466258749753,
-        "class": "25-100 m"
-      },
-      {
-        "denied_age_h": 5.0,
-        "error_m": 88.66481972948147,
-        "class": "25-100 m"
-      },
-      {
-        "denied_age_h": 6.0,
-        "error_m": 96.74109883206022,
-        "class": "25-100 m"
-      },
-      {
-        "denied_age_h": 7.0,
-        "error_m": 104.17792824373889,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 8.0,
-        "error_m": 111.10850434267914,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 9.0,
-        "error_m": 117.6253456491275,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 10.0,
-        "error_m": 123.79581433453058,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 11.0,
-        "error_m": 129.6707633971304,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 12.0,
-        "error_m": 135.28970055806636,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 13.0,
-        "error_m": 140.68404423397263,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 14.0,
-        "error_m": 145.87926835627601,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 15.0,
-        "error_m": 150.89636709694673,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 16.0,
-        "error_m": 155.75288585361463,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 17.0,
-        "error_m": 160.46366585464546,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 18.0,
-        "error_m": 165.04139399618563,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 19.0,
-        "error_m": 169.4970167798762,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 20.0,
-        "error_m": 173.84005728043968,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 21.0,
-        "error_m": 178.0788615419015,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 22.0,
-        "error_m": 182.22079270617795,
-        "class": "100-500 m"
-      },
-      {
-        "denied_age_h": 23.0,
-        "error_m": 186.2723858185764,
-        "class": "100-500 m"
-      }
-    ],
-    "manoeuvre_convergence": [
-      {
-        "turn": 1,
-        "time_s": 114.19183588453085,
-        "distance_m": 1174.9060963956317
-      },
-      {
-        "turn": 2,
-        "time_s": 114.19183588453085,
-        "distance_m": 1174.9060963956317
-      },
-      {
-        "turn": 3,
-        "time_s": 114.19183588453085,
-        "distance_m": 1174.9060963956317
-      }
-    ]
-  },
+  "d50_consistency": "Consistent with D50: this synthetic run demonstrates plumbing only. It does not support denied operation at 20 kn; 30 kn remains aided/manual-only and exploratory, with no denied autonomous authority.",
   "integration_notes": [
-    "U-P1 graduated ephemeris aging is absent in this checkout; this study assumes its ordered 30 h ceiling and reports margin to it.",
-    "The current pnt-ephemeris binary default gate remains 6 h; a 500 km passage at 7 kn and the 24 h case would be rejected without U-P1.",
-    "At 20 kn, 24 h is 889 km, not approximately 500 km; both the 500 km comparison and 24 h endurance case are retained."
+    "Position, velocity, covariance and reconvergence are read from the real EKF state against generator truth; no endpoint or convergence formula is used.",
+    "Distance-to-reconvergence is accumulated from truth positions after the generator's actual coordinated turn, independently of elapsed time.",
+    "Graduated aging is exercised by the executive Doppler pipeline; the 30 h ceiling and synthetic TLE aging remain [UNVERIFIED] per D43/D45."
   ]
 }

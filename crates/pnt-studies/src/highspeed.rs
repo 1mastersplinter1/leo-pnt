@@ -1,15 +1,27 @@
-//! Deterministic D46 high-speed and extended-passage study.
-//!
-//! The dynamics and error growth are synthetic engineering stand-ins, not performance claims.
+//! Deterministic D46/D47 high-speed mission study through the real generator, executive and EKF.
 
-use pnt_estimator::ProcessNoise;
+use fusion_executive::{DopplerPipeline, Executive};
+use pnt_config::{Config, EphemerisAgingConfig, GnssAuthority};
+use pnt_ephemeris::EphemerisStore;
+use pnt_estimator::{Estimator, FilterStub, ProcessNoise};
+use pnt_integrity::IntegrityStub;
+use pnt_journal::{
+    MeasurementJournalRecord, MeasurementReader, MemoryJournals, TruthJournalRecord, TruthReader,
+};
+use pnt_mission::{
+    generate_mission, CoordinatedTurnConfig, MissionConfig, SpeedScaledImuConfig, WaveSlamConfig,
+};
+use pnt_time::ManualClock;
+use pnt_types::{FilterState, GnssFix, MeasurementEnvelope, MeasurementPayload, TimeTag};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fmt::Write, fs, path::Path};
+use tempfile::TempDir;
 
 const KNOT_MPS: f64 = 0.514_444;
-const ROUTE_DISTANCE_M: f64 = 500_000.0;
-const GPS_LOSS_S: f64 = 3_600.0;
-const GRADUATED_EPHEMERIS_CEILING_S: f64 = 30.0 * 3_600.0;
+const DENIED_DISTANCE_M: f64 = 100_000.0;
+const AIDED_STEADY_S: u64 = 300;
+const EPHEMERIS_CEILING_S: f64 = 30.0 * 3_600.0;
+const TLE: &str = include_str!("../../pnt-ephemeris/tests/fixtures/iss.tle");
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ProcessNoiseScale {
@@ -37,155 +49,115 @@ pub struct SpeedRegime {
     pub name: String,
     pub speed_kn: f64,
     pub process_noise_scale: ProcessNoiseScale,
+    pub wave_peak_mps2: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct HighSpeedConfig {
     pub seed: u64,
-    pub route_distance_m: f64,
-    pub gps_loss_s: f64,
+    pub aided_steady_s: u64,
+    pub denied_distance_m: f64,
     pub ephemeris_ceiling_s: f64,
-    pub displacement: SpeedRegime,
-    pub planing: SpeedRegime,
+    pub regimes: Vec<SpeedRegime>,
 }
 
 impl Default for HighSpeedConfig {
     fn default() -> Self {
         Self {
-            seed: 0xD46_2026,
-            route_distance_m: ROUTE_DISTANCE_M,
-            gps_loss_s: GPS_LOSS_S,
-            ephemeris_ceiling_s: GRADUATED_EPHEMERIS_CEILING_S,
-            displacement: SpeedRegime {
-                name: "displacement".into(),
-                speed_kn: 7.0,
-                process_noise_scale: ProcessNoiseScale {
-                    acceleration: 1.0,
-                    turn_rate: 1.0,
-                    clock_drift: 1.0,
-                    nuisance_random_walk: 1.0,
-                },
-            },
-            planing: SpeedRegime {
-                name: "planing".into(),
-                speed_kn: 20.0,
-                process_noise_scale: ProcessNoiseScale {
-                    acceleration: 6.0,
-                    turn_rate: 4.0,
-                    clock_drift: 1.0,
-                    nuisance_random_walk: 2.0,
-                },
-            },
+            seed: 0xD47_2026,
+            aided_steady_s: AIDED_STEADY_S,
+            denied_distance_m: DENIED_DISTANCE_M,
+            ephemeris_ceiling_s: EPHEMERIS_CEILING_S,
+            regimes: vec![
+                regime("displacement", 7.0, [1.0, 1.0, 1.0, 1.0], 6.10),
+                regime("planing", 20.0, [6.0, 4.0, 1.0, 2.0], 6.10),
+                regime("exploratory", 30.0, [10.0, 7.0, 1.0, 3.0], 11.22),
+            ],
         }
     }
+}
+
+fn regime(name: &str, speed_kn: f64, scale: [f64; 4], wave_peak_mps2: f64) -> SpeedRegime {
+    SpeedRegime {
+        name: name.into(),
+        speed_kn,
+        process_noise_scale: ProcessNoiseScale {
+            acceleration: scale[0],
+            turn_rate: scale[1],
+            clock_drift: scale[2],
+            nuisance_random_walk: scale[3],
+        },
+        wave_peak_mps2,
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LossState {
+    pub position_error_m: f64,
+    pub velocity_error_mps: f64,
+    pub position_covariance_trace_m2: f64,
+    pub covariance_dimension: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Convergence {
+    pub time_s: Option<f64>,
+    pub truth_distance_m: Option<f64>,
+    pub criterion: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PassageResult {
     pub regime: String,
     pub speed_kn: f64,
-    pub distance_km: f64,
-    pub duration_h: f64,
+    pub denied_distance_km: f64,
     pub denied_duration_h: f64,
+    pub loss_state: LossState,
     pub position_error_rms_m: f64,
     pub position_error_p95_m: f64,
     pub landfall_position_error_m: f64,
     pub velocity_error_rms_mps: f64,
     pub velocity_error_p95_mps: f64,
-    pub landfall_ephemeris_age_h: f64,
+    pub position_error_class: String,
+    pub ephemeris_age_h: f64,
     pub ephemeris_age_margin_h: f64,
-    pub position_error_classes: Vec<ErrorClass>,
-    pub manoeuvre_convergence: Vec<Convergence>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ErrorClass {
-    pub denied_age_h: f64,
-    pub error_m: f64,
-    pub class: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Convergence {
-    pub turn: u32,
-    pub time_s: f64,
-    pub distance_m: f64,
+    pub accepted_doppler_updates: u64,
+    pub aged_doppler_updates: u64,
+    pub manoeuvre_convergence: Convergence,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Report {
     pub schema_version: u32,
     pub caveat: String,
-    pub route: String,
-    pub gps_loss_h: f64,
-    pub ephemeris_cached_h: f64,
-    pub process_noise_base: ProcessNoiseRecord,
-    pub process_noise_lineage: String,
+    pub scenario: String,
     pub wave_model: String,
-    pub same_distance: Vec<PassageResult>,
-    pub endurance_20kn_24h: PassageResult,
+    pub results: Vec<PassageResult>,
+    pub d50_consistency: String,
     pub integration_notes: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ProcessNoiseRecord {
-    pub acceleration_variance: f64,
-    pub turn_rate_variance: f64,
-    pub clock_drift_variance: f64,
-    pub nuisance_random_walk_variance: f64,
-}
-
-impl From<ProcessNoise> for ProcessNoiseRecord {
-    fn from(value: ProcessNoise) -> Self {
-        Self {
-            acceleration_variance: value.acceleration_variance,
-            turn_rate_variance: value.turn_rate_variance,
-            clock_drift_variance: value.clock_drift_variance,
-            nuisance_random_walk_variance: value.nuisance_random_walk_variance,
-        }
-    }
-}
-
-/// Runs the deterministic campaign and writes `results.json`.
+/// Runs the generator-produced missions through `Executive<FilterStub>` and writes artifacts.
 ///
 /// # Errors
 ///
-/// Returns an I/O or JSON error if the committed artifact cannot be written.
+/// Returns a mission, journal, executive-fixture, I/O, or JSON error.
 pub fn run(output: impl AsRef<Path>, config: &HighSpeedConfig) -> Result<Report, StudyError> {
-    let base = ProcessNoise::default();
-    let same_distance = vec![
-        simulate(
-            config.seed,
-            config.route_distance_m,
-            &config.displacement,
-            config,
-        ),
-        simulate(
-            config.seed,
-            config.route_distance_m,
-            &config.planing,
-            config,
-        ),
-    ];
-    let endurance_distance = 24.0 * 3_600.0 * config.planing.speed_kn * KNOT_MPS;
-    let endurance = simulate(config.seed, endurance_distance, &config.planing, config);
+    let mut results = Vec::with_capacity(config.regimes.len());
+    for speed in &config.regimes {
+        results.push(simulate(speed, config)?);
+    }
     let report = Report {
-        schema_version: 1,
-        caveat: "SYNTHETIC [UNVERIFIED] scenario; numbers are not navigation-performance claims."
-            .into(),
-        route: "four equal-distance legs with 90 degree turns; same distance, not same time"
-            .into(),
-        gps_loss_h: config.gps_loss_s / 3_600.0,
-        ephemeris_cached_h: 0.0,
-        process_noise_base: base.into(),
-        process_noise_lineage: "Config-driven regime multipliers are provisional pending U-H1 and the real-IMU study required by D43.".into(),
-        wave_model: "Seeded bounded half-sine slam bursts: 0.08 Hz opportunities, 0.7 s duration, 4.0 m/s^2 vertical peak, 0.18 pitch-to-horizontal coupling.".into(),
-        same_distance,
-        endurance_20kn_24h: endurance,
+        schema_version: 2,
+        caveat: "SYNTHETIC CAPABILITY/PLUMBING DEMONSTRATION [UNVERIFIED]; not a navigation-performance or denied-authority claim.".into(),
+        scenario: "Aided for 300 s to a real converged EKF state, then GNSS denied for 100 km at each of 7/20/30 kn; wave/slam on; graduated ephemeris aging on.".into(),
+        wave_model: "Zero-mean full-cycle acceleration integrated into both truth and IMU. 100-450 ms duration and 0.44 g RMS anchor are R5-sourced; 0.25 s, opportunity rate, pitch coupling, speed scaling, and mapping 0.44 g RMS to 6.10 m/s^2 sinusoidal peak are [UNVERIFIED]. The 30 kn 1.84x peak scale is [UNVERIFIED].".into(),
+        results,
+        d50_consistency: "Consistent with D50: this synthetic run demonstrates plumbing only. It does not support denied operation at 20 kn; 30 kn remains aided/manual-only and exploratory, with no denied autonomous authority.".into(),
         integration_notes: vec![
-            "U-P1 graduated ephemeris aging is absent in this checkout; this study assumes its ordered 30 h ceiling and reports margin to it.".into(),
-            "The current pnt-ephemeris binary default gate remains 6 h; a 500 km passage at 7 kn and the 24 h case would be rejected without U-P1.".into(),
-            "At 20 kn, 24 h is 889 km, not approximately 500 km; both the 500 km comparison and 24 h endurance case are retained.".into(),
+            "Position, velocity, covariance and reconvergence are read from the real EKF state against generator truth; no endpoint or convergence formula is used.".into(),
+            "Distance-to-reconvergence is accumulated from truth positions after the generator's actual coordinated turn, independently of elapsed time.".into(),
+            "Graduated aging is exercised by the executive Doppler pipeline; the 30 h ceiling and synthetic TLE aging remain [UNVERIFIED] per D43/D45.".into(),
         ],
     };
     fs::create_dir_all(output.as_ref())?;
@@ -193,6 +165,7 @@ pub fn run(output: impl AsRef<Path>, config: &HighSpeedConfig) -> Result<Report,
         output.as_ref().join("results.json"),
         serde_json::to_vec_pretty(&report)?,
     )?;
+    fs::write(output.as_ref().join("STUDY.md"), markdown(&report))?;
     Ok(report)
 }
 
@@ -202,100 +175,329 @@ pub enum StudyError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Mission(#[from] pnt_mission::MissionError),
+    #[error(transparent)]
+    Journal(#[from] pnt_journal::JournalError),
+    #[error(transparent)]
+    Ephemeris(#[from] pnt_ephemeris::EphemerisError),
+    #[error("generated mission has no truth at the loss instant")]
+    MissingLossTruth,
+    #[error("generated mission has no filter sample at the denied endpoint")]
+    MissingEndpoint,
 }
 
-fn simulate(
-    seed: u64,
-    distance_m: f64,
-    regime: &SpeedRegime,
-    config: &HighSpeedConfig,
-) -> PassageResult {
+#[derive(Clone)]
+struct Sample {
+    elapsed_s: f64,
+    truth: GnssFix,
+    state: FilterState,
+    position_error_m: f64,
+    velocity_error_mps: f64,
+}
+
+#[allow(clippy::too_many_lines)]
+fn simulate(regime: &SpeedRegime, study: &HighSpeedConfig) -> Result<PassageResult, StudyError> {
     let speed_mps = regime.speed_kn * KNOT_MPS;
-    let duration_s = distance_m / speed_mps;
-    let denied_s = (duration_s - config.gps_loss_s).max(0.0);
-    let q = regime
-        .process_noise_scale
-        .apply(ProcessNoise::default())
-        .acceleration_variance;
-    let speed_factor = regime.speed_kn / 7.0;
-    let phase = ((seed ^ regime.speed_kn.to_bits()) as f64 * 1.0e-12)
-        .sin()
-        .abs();
-    // Bounded synthetic error envelope: sqrt-time inertial growth plus an aging term.
-    let position_at = |age_s: f64| {
-        4.0 + 0.75 * q.sqrt() * age_s.sqrt() * speed_factor.sqrt()
-            + 0.000_012 * age_s * speed_factor
-            + phase
+    let denied_s = (study.denied_distance_m / speed_mps).ceil() as u64;
+    let duration_s = study.aided_steady_s + denied_s;
+    let mission_dir = TempDir::new()?;
+    let mission = MissionConfig {
+        seed: study.seed,
+        duration_s,
+        imu_rate_hz: 20,
+        speed_through_water_mps: speed_mps,
+        imu_bias_mps2: [2.0e-4, -1.0e-4, 1.0e-4],
+        imu_noise_std_mps2: 5.0e-4,
+        gnss_noise_std_m: 0.5,
+        elevation_mask_rad: -std::f64::consts::FRAC_PI_2,
+        coordinated_turn: Some(CoordinatedTurnConfig {
+            rate_rad_s: std::f64::consts::FRAC_PI_2 / (0.1 * duration_s as f64),
+        }),
+        wave_slam: Some(WaveSlamConfig {
+            burst_rate_hz: 0.08,
+            duration_s: 0.25,
+            vertical_peak_mps2: regime.wave_peak_mps2,
+            pitch_coupling: 0.18,
+        }),
+        speed_scaled_imu: Some(SpeedScaledImuConfig {
+            reference_speed_mps: 7.0 * KNOT_MPS,
+            noise_per_speed_ratio: 0.12,
+            bias_per_speed_ratio: 0.08,
+        }),
+        doppler_interval_s: 1_800,
+        ephemeris_start_age_s: Some(0),
+        ..MissionConfig::default()
     };
-    let velocity_at =
-        |age_s: f64| 0.025 + 0.018 * q.sqrt() * (age_s / 3_600.0).sqrt() * speed_factor;
-    let samples = 1_440_u32;
-    let mut position = Vec::with_capacity(samples as usize + 1);
-    let mut velocity = Vec::with_capacity(samples as usize + 1);
-    for index in 0..=samples {
-        let age = denied_s * f64::from(index) / f64::from(samples);
-        position.push(position_at(age));
-        velocity.push(velocity_at(age));
-    }
-    let rms = |values: &[f64]| {
-        (values.iter().map(|value| value * value).sum::<f64>() / values.len() as f64).sqrt()
-    };
-    let p95 = |values: &[f64]| values[(values.len() * 95 / 100).min(values.len() - 1)];
-    let class_at = |error: f64| {
-        if error < 25.0 {
-            "<25 m"
-        } else if error < 100.0 {
-            "25-100 m"
-        } else if error < 500.0 {
-            "100-500 m"
-        } else {
-            ">=500 m"
+    generate_mission(mission_dir.path(), &mission)?;
+
+    let truth = load_truth(mission_dir.path())?;
+    let process_noise = regime.process_noise_scale.apply(ProcessNoise::default());
+    let mut pipeline =
+        DopplerPipeline::new(EphemerisStore::from_tle_str(TLE)?).without_elevation_mask();
+    pipeline.chi_square_threshold = None;
+    let mut executive = Executive::new(
+        Config {
+            gnss_authority: GnssAuthority::Production,
+            oneweb_enabled: false,
+            ephemeris_aging: EphemerisAgingConfig::default(),
+        },
+        ManualClock::default(),
+        FilterStub::new(0.05, process_noise),
+        IntegrityStub,
+        MemoryJournals::default(),
+    )
+    .with_doppler_pipeline(pipeline);
+
+    let records = MeasurementReader::open(mission_dir.path())?;
+    let mut samples = Vec::new();
+    let mut active_second = None;
+    for record in records {
+        let MeasurementJournalRecord::Envelope(envelope) = record? else {
+            continue;
+        };
+        let timestamp_ns = monotonic_ns(&envelope);
+        if active_second.is_some_and(|value| value != timestamp_ns) {
+            capture_sample(
+                active_second.expect("checked Some"),
+                &truth,
+                &executive,
+                &mut samples,
+            );
         }
-        .to_owned()
-    };
-    let mut classes = Vec::new();
-    for hour in 0..=(denied_s / 3_600.0).floor() as u32 {
-        let error = position_at(f64::from(hour) * 3_600.0);
-        classes.push(ErrorClass {
-            denied_age_h: f64::from(hour),
-            error_m: error,
-            class: class_at(error),
-        });
+        active_second = Some(timestamp_ns);
+        if matches!(envelope.payload, MeasurementPayload::Gnss(_))
+            && timestamp_ns > study.aided_steady_s.saturating_mul(1_000_000_000)
+        {
+            continue;
+        }
+        executive.process(envelope);
     }
-    if classes
-        .last()
-        .is_none_or(|last| last.denied_age_h < denied_s / 3_600.0)
-    {
-        let error = position_at(denied_s);
-        classes.push(ErrorClass {
-            denied_age_h: denied_s / 3_600.0,
-            error_m: error,
-            class: class_at(error),
-        });
+    if let Some(timestamp_ns) = active_second {
+        capture_sample(timestamp_ns, &truth, &executive, &mut samples);
     }
-    let convergence_time = 75.0 + 28.0 * speed_factor * q.sqrt();
-    PassageResult {
+
+    let loss = samples
+        .iter()
+        .find(|sample| (sample.elapsed_s - study.aided_steady_s as f64).abs() < f64::EPSILON)
+        .ok_or(StudyError::MissingLossTruth)?;
+    let denied: Vec<_> = samples
+        .iter()
+        .filter(|sample| sample.elapsed_s >= study.aided_steady_s as f64)
+        .collect();
+    let endpoint = denied.last().ok_or(StudyError::MissingEndpoint)?;
+    let position: Vec<_> = denied
+        .iter()
+        .map(|sample| sample.position_error_m)
+        .collect();
+    let velocity: Vec<_> = denied
+        .iter()
+        .map(|sample| sample.velocity_error_mps)
+        .collect();
+    let events = executive.journals().integrity_events();
+    let accepted_doppler_updates = events
+        .iter()
+        .filter(|event| event.reason == "Doppler innovation accepted")
+        .count() as u64;
+    let aged_doppler_updates = events
+        .iter()
+        .filter(|event| event.reason.contains("applied sigma_add"))
+        .count() as u64;
+    let ephemeris_age_s = duration_s as f64;
+
+    Ok(PassageResult {
         regime: regime.name.clone(),
         speed_kn: regime.speed_kn,
-        distance_km: distance_m / 1_000.0,
-        duration_h: duration_s / 3_600.0,
-        denied_duration_h: denied_s / 3_600.0,
+        denied_distance_km: study.denied_distance_m / 1_000.0,
+        denied_duration_h: denied_s as f64 / 3_600.0,
+        loss_state: LossState {
+            position_error_m: loss.position_error_m,
+            velocity_error_mps: loss.velocity_error_mps,
+            position_covariance_trace_m2: covariance_trace(&loss.state),
+            covariance_dimension: loss.state.covariance_dimension,
+        },
         position_error_rms_m: rms(&position),
-        position_error_p95_m: p95(&position),
-        landfall_position_error_m: position_at(denied_s),
+        position_error_p95_m: percentile(&position, 0.95),
+        landfall_position_error_m: endpoint.position_error_m,
         velocity_error_rms_mps: rms(&velocity),
-        velocity_error_p95_mps: p95(&velocity),
-        landfall_ephemeris_age_h: duration_s / 3_600.0,
-        ephemeris_age_margin_h: (config.ephemeris_ceiling_s - duration_s) / 3_600.0,
-        position_error_classes: classes,
-        manoeuvre_convergence: (1..=3)
-            .map(|turn| Convergence {
-                turn,
-                time_s: convergence_time,
-                distance_m: convergence_time * speed_mps,
-            })
-            .collect(),
+        velocity_error_p95_mps: percentile(&velocity, 0.95),
+        position_error_class: error_class(endpoint.position_error_m).into(),
+        ephemeris_age_h: ephemeris_age_s / 3_600.0,
+        ephemeris_age_margin_h: (study.ephemeris_ceiling_s - ephemeris_age_s) / 3_600.0,
+        accepted_doppler_updates,
+        aged_doppler_updates,
+        manoeuvre_convergence: measure_convergence(&samples, duration_s),
+    })
+}
+
+fn load_truth(path: &Path) -> Result<BTreeMap<u64, GnssFix>, StudyError> {
+    let mut truth = BTreeMap::new();
+    for record in TruthReader::open(path)? {
+        let TruthJournalRecord::Envelope(envelope) = record? else {
+            continue;
+        };
+        if let MeasurementPayload::Gnss(fix) = envelope.payload {
+            truth.insert(monotonic_ns(&envelope), fix);
+        }
     }
+    Ok(truth)
+}
+
+fn capture_sample(
+    timestamp_ns: u64,
+    truth: &BTreeMap<u64, GnssFix>,
+    executive: &Executive<ManualClock, FilterStub, IntegrityStub, MemoryJournals>,
+    samples: &mut Vec<Sample>,
+) {
+    let Some(truth) = truth.get(&timestamp_ns).copied() else {
+        return;
+    };
+    let state = executive.filter().state();
+    samples.push(Sample {
+        elapsed_s: timestamp_ns as f64 / 1.0e9,
+        position_error_m: norm_difference(state.position_ecef_m, truth.position_ecef_m),
+        velocity_error_mps: norm_difference(
+            state.velocity_ecef_mps,
+            ned_to_ecef(truth.position_ecef_m, truth.velocity_ned_mps),
+        ),
+        truth,
+        state,
+    });
+}
+
+fn monotonic_ns(envelope: &MeasurementEnvelope) -> u64 {
+    match envelope.sample_time {
+        TimeTag::HostMonotonicNanoseconds(value) | TimeTag::DeviceNanoseconds(value) => value,
+    }
+}
+
+fn ned_to_ecef(position: [f64; 3], ned: [f64; 3]) -> [f64; 3] {
+    let enu = [ned[1], ned[0], -ned[2]];
+    let rotation = pnt_types::ecef_to_enu_rotation(position);
+    std::array::from_fn(|column| (0..3).map(|row| rotation[row][column] * enu[row]).sum())
+}
+
+fn norm_difference(left: [f64; 3], right: [f64; 3]) -> f64 {
+    left.into_iter()
+        .zip(right)
+        .map(|(left, right)| (left - right).powi(2))
+        .sum::<f64>()
+        .sqrt()
+}
+
+fn covariance_trace(state: &FilterState) -> f64 {
+    (0..3)
+        .map(|axis| state.covariance[axis * state.covariance_dimension + axis])
+        .sum()
+}
+
+fn rms(values: &[f64]) -> f64 {
+    (values.iter().map(|value| value * value).sum::<f64>() / values.len() as f64).sqrt()
+}
+
+fn percentile(values: &[f64], fraction: f64) -> f64 {
+    let mut ordered = values.to_vec();
+    ordered.sort_by(f64::total_cmp);
+    ordered[((ordered.len() - 1) as f64 * fraction).round() as usize]
+}
+
+fn error_class(error_m: f64) -> &'static str {
+    if error_m < 25.0 {
+        "<25 m"
+    } else if error_m < 100.0 {
+        "25-100 m"
+    } else if error_m < 500.0 {
+        "100-500 m"
+    } else {
+        ">=500 m"
+    }
+}
+
+fn measure_convergence(samples: &[Sample], duration_s: u64) -> Convergence {
+    let turn_start = 0.45 * duration_s as f64;
+    let turn_end = 0.55 * duration_s as f64;
+    let baseline = samples
+        .iter()
+        .find(|sample| sample.elapsed_s >= (turn_start - 1.0).max(0.0))
+        .map_or((25.0, 0.5), |sample| {
+            (
+                (sample.position_error_m * 1.2).max(25.0),
+                (sample.velocity_error_mps * 1.2).max(0.5),
+            )
+        });
+    let post: Vec<_> = samples
+        .iter()
+        .filter(|sample| sample.elapsed_s >= turn_end)
+        .collect();
+    let converged = post.windows(5).find(|window| {
+        window.iter().all(|sample| {
+            sample.position_error_m <= baseline.0 && sample.velocity_error_mps <= baseline.1
+        })
+    });
+    let Some(window) = converged else {
+        return Convergence {
+            time_s: None,
+            truth_distance_m: None,
+            criterion: format!(
+                "not recovered for 5 s below pre-turn thresholds {:.1} m / {:.3} m/s",
+                baseline.0, baseline.1
+            ),
+        };
+    };
+    let target = window[0];
+    let distance = post
+        .windows(2)
+        .take_while(|pair| pair[1].elapsed_s <= target.elapsed_s)
+        .map(|pair| norm_difference(pair[0].truth.position_ecef_m, pair[1].truth.position_ecef_m))
+        .fold(0.0, |total, step| total + step);
+    Convergence {
+        time_s: Some(target.elapsed_s - turn_end),
+        truth_distance_m: Some(distance),
+        criterion: format!(
+            "first 5 s below pre-turn thresholds {:.1} m / {:.3} m/s",
+            baseline.0, baseline.1
+        ),
+    }
+}
+
+fn markdown(report: &Report) -> String {
+    let mut text = format!(
+        "# High-speed good-fix-loss study\n\n**{}**\n\n{}\n\n{}\n\n| tier | denied time | loss error / covariance trace | landfall error class | velocity RMS | ephemeris age / margin | graduated updates | reconvergence time / truth distance |\n|---|---:|---:|---:|---:|---:|---:|---:|\n",
+        report.caveat, report.scenario, report.d50_consistency
+    );
+    for result in &report.results {
+        let convergence = match (
+            result.manoeuvre_convergence.time_s,
+            result.manoeuvre_convergence.truth_distance_m,
+        ) {
+            (Some(time), Some(distance)) => format!("{time:.0} s / {distance:.0} m"),
+            _ => "not recovered in mission".into(),
+        };
+        let _ = writeln!(
+            text,
+            "| {} ({:.0} kn) | {:.2} h | {:.2} m / {:.2} m² | {:.2} m ({}) | {:.3} m/s | {:.2} h / {:+.2} h | {} accepted, {} aged | {} |",
+            result.regime,
+            result.speed_kn,
+            result.denied_duration_h,
+            result.loss_state.position_error_m,
+            result.loss_state.position_covariance_trace_m2,
+            result.landfall_position_error_m,
+            result.position_error_class,
+            result.velocity_error_rms_mps,
+            result.ephemeris_age_h,
+            result.ephemeris_age_margin_h,
+            result.accepted_doppler_updates,
+            result.aged_doppler_updates,
+            convergence
+        );
+    }
+    text.push_str("\n## Model and interpretation\n\n");
+    text.push_str(&report.wave_model);
+    text.push_str("\n\n");
+    for note in &report.integration_notes {
+        let _ = writeln!(text, "- {note}");
+    }
+    text
 }
 
 #[cfg(test)]
@@ -303,39 +505,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn comparison_is_same_distance_and_repeatable() {
-        let config = HighSpeedConfig::default();
-        let first = simulate(
-            config.seed,
-            config.route_distance_m,
-            &config.planing,
-            &config,
-        );
-        let second = simulate(
-            config.seed,
-            config.route_distance_m,
-            &config.planing,
-            &config,
-        );
+    fn real_pipeline_is_deterministic_and_holds_distance_constant() {
+        let config = HighSpeedConfig {
+            aided_steady_s: 5,
+            denied_distance_m: 20.0,
+            ..HighSpeedConfig::default()
+        };
+        let first = config
+            .regimes
+            .iter()
+            .map(|regime| simulate(regime, &config).unwrap())
+            .collect::<Vec<_>>();
+        let second = config
+            .regimes
+            .iter()
+            .map(|regime| simulate(regime, &config).unwrap())
+            .collect::<Vec<_>>();
         assert_eq!(first, second);
-        assert!((first.distance_km - 500.0).abs() < f64::EPSILON);
-        assert!(first.duration_h < 14.0);
-    }
-
-    #[test]
-    fn endurance_case_is_at_least_twenty_four_hours() {
-        let config = HighSpeedConfig::default();
-        let distance = 24.0 * 3_600.0 * config.planing.speed_kn * KNOT_MPS;
-        let result = simulate(config.seed, distance, &config.planing, &config);
-        assert!((result.duration_h - 24.0).abs() < 1.0e-12);
-        assert!(result.distance_km > 880.0);
+        assert!(first
+            .iter()
+            .all(|result| (result.denied_distance_km - 0.02).abs() < f64::EPSILON));
+        assert!(first
+            .iter()
+            .all(|result| result.loss_state.covariance_dimension >= 9));
     }
 
     #[test]
     fn process_noise_is_config_driven() {
         let base = ProcessNoise::default();
-        let scaled = HighSpeedConfig::default()
-            .planing
+        let scaled = HighSpeedConfig::default().regimes[1]
             .process_noise_scale
             .apply(base);
         assert!(

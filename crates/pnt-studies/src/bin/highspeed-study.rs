@@ -14,8 +14,8 @@ fn main() {
     let report =
         highspeed::run(&output, &HighSpeedConfig::default()).expect("high-speed study failed");
     println!(
-        "wrote {} (20 kn / 500 km: {:.2} h)",
+        "wrote {} ({} real mission/EKF tiers)",
         output.display(),
-        report.same_distance[1].duration_h
+        report.results.len()
     );
 }

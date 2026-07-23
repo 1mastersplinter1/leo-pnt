@@ -1,0 +1,562 @@
+{
+  "schema_version": 1,
+  "synthetic_only": true,
+  "quick": false,
+  "consistency": {
+    "runs": 96,
+    "epochs": 57600,
+    "nees_mean_6d": 0.8699809153080692,
+    "nees_95_coverage": 1.0,
+    "expected_nees_mean_6d": 6.0,
+    "expected_coverage": 0.95,
+    "nis_by_type": [
+      {
+        "measurement_type": "doppler_range_rate",
+        "samples": 57600,
+        "mean": 0.7382568795161031,
+        "coverage_95": 0.9783159722222222
+      }
+    ],
+    "verdict": "pessimistic: covariance is materially wider than observed errors"
+  },
+  "d39": {
+    "baseline": {
+      "label": "controlled baseline",
+      "measurement_variance_mps2": 0.14,
+      "acceleration_variance": 0.04,
+      "geometry_offset_s": 0,
+      "observation_period_s": 1,
+      "nuisance_bias_variance_mps2": 100.0,
+      "prior_variance_m2": 1e-12,
+      "initial_radial_position_error_m": 6.3781369999936205e-6,
+      "doppler_enabled": true,
+      "velocity_rms_mps": 0.3753479877101402,
+      "along_los_velocity_rms_mps": 0.3074865389554455,
+      "across_los_velocity_rms_mps": 0.21526295603111287,
+      "position_rms_m": 166.40595141558376,
+      "accepted_updates": 1200,
+      "rejected_updates": 0
+    },
+    "variance_sweep": [
+      {
+        "label": "R=0.01",
+        "measurement_variance_mps2": 0.01,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.8482508483592877,
+        "along_los_velocity_rms_mps": 0.4038573462276099,
+        "across_los_velocity_rms_mps": 0.745941516233172,
+        "position_rms_m": 311.7921178978339,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "R=0.14",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3753479877101402,
+        "along_los_velocity_rms_mps": 0.3074865389554455,
+        "across_los_velocity_rms_mps": 0.21526295603111287,
+        "position_rms_m": 166.40595141558376,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "R=1",
+        "measurement_variance_mps2": 1.0,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.32716520942146493,
+        "along_los_velocity_rms_mps": 0.24714453368356287,
+        "across_los_velocity_rms_mps": 0.21437503055655788,
+        "position_rms_m": 148.41560141601258,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "R=10",
+        "measurement_variance_mps2": 10.0,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.24873815739242022,
+        "along_los_velocity_rms_mps": 0.14049366108457395,
+        "across_los_velocity_rms_mps": 0.2052613020957172,
+        "position_rms_m": 92.31446900261844,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      }
+    ],
+    "process_noise_sweep": [
+      {
+        "label": "Qa=0.0004",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.0004,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.23650067178978157,
+        "along_los_velocity_rms_mps": 0.11423461678110364,
+        "across_los_velocity_rms_mps": 0.20708215781639028,
+        "position_rms_m": 79.34741576278418,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "Qa=0.004",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.004,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3083783408948277,
+        "along_los_velocity_rms_mps": 0.22434837271018807,
+        "across_los_velocity_rms_mps": 0.2115774297871518,
+        "position_rms_m": 136.35189730102644,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "Qa=0.04",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3753479877101402,
+        "along_los_velocity_rms_mps": 0.3074865389554455,
+        "across_los_velocity_rms_mps": 0.21526295603111287,
+        "position_rms_m": 166.40595141558376,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "Qa=0.4",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.4,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.6642566850326606,
+        "along_los_velocity_rms_mps": 0.3208397432782382,
+        "across_los_velocity_rms_mps": 0.5816345955526836,
+        "position_rms_m": 223.7663016522605,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      }
+    ],
+    "geometry_sweep": [
+      {
+        "label": "epoch+0s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3753479877101402,
+        "along_los_velocity_rms_mps": 0.3074865389554455,
+        "across_los_velocity_rms_mps": 0.21526295603111287,
+        "position_rms_m": 166.40595141558376,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "epoch+600s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 600,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.39082020846236293,
+        "along_los_velocity_rms_mps": 0.29459270697604334,
+        "across_los_velocity_rms_mps": 0.2568181697993582,
+        "position_rms_m": 175.8740577840065,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "epoch+1200s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 1200,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3947482113709358,
+        "along_los_velocity_rms_mps": 0.2944520254109978,
+        "across_los_velocity_rms_mps": 0.2629147297355438,
+        "position_rms_m": 171.3193103153035,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "epoch+1800s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 1800,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.37975577308504666,
+        "along_los_velocity_rms_mps": 0.2914365333961344,
+        "across_los_velocity_rms_mps": 0.24347318988641337,
+        "position_rms_m": 140.05820923551232,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      }
+    ],
+    "observation_rate_sweep": [
+      {
+        "label": "period=1s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3753479877101402,
+        "along_los_velocity_rms_mps": 0.3074865389554455,
+        "across_los_velocity_rms_mps": 0.21526295603111287,
+        "position_rms_m": 166.40595141558376,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "period=2s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 2,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3692603044205333,
+        "along_los_velocity_rms_mps": 0.20261832903303417,
+        "across_los_velocity_rms_mps": 0.30870533711065945,
+        "position_rms_m": 105.69687329232276,
+        "accepted_updates": 600,
+        "rejected_updates": 0
+      },
+      {
+        "label": "period=5s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 5,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.4168027945199705,
+        "along_los_velocity_rms_mps": 0.28251815991532536,
+        "across_los_velocity_rms_mps": 0.3064442181502457,
+        "position_rms_m": 146.44630475038994,
+        "accepted_updates": 240,
+        "rejected_updates": 0
+      },
+      {
+        "label": "period=10s",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 10,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.6813783075732183,
+        "along_los_velocity_rms_mps": 0.5846899084294999,
+        "across_los_velocity_rms_mps": 0.3498772770730416,
+        "position_rms_m": 315.8324868264792,
+        "accepted_updates": 120,
+        "rejected_updates": 0
+      }
+    ],
+    "four_way": [
+      {
+        "label": "prior-only",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": false,
+        "velocity_rms_mps": 0.25055178264219313,
+        "along_los_velocity_rms_mps": 0.11163824381366158,
+        "across_los_velocity_rms_mps": 0.22430581424337234,
+        "position_rms_m": 94.64779578431215,
+        "accepted_updates": 0,
+        "rejected_updates": 0
+      },
+      {
+        "label": "controlled baseline",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.3753479877101402,
+        "along_los_velocity_rms_mps": 0.3074865389554455,
+        "across_los_velocity_rms_mps": 0.21526295603111287,
+        "position_rms_m": 166.40595141558376,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "current replay prior path",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1.0,
+        "initial_radial_position_error_m": 3189068.5,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 3835.25877038078,
+        "along_los_velocity_rms_mps": 2749.4896571557447,
+        "across_los_velocity_rms_mps": 2673.857973224509,
+        "position_rms_m": 2010706.0569941946,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "near-fixed nuisance bias",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.04,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 1e-12,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.35943196423668045,
+        "along_los_velocity_rms_mps": 0.28830793467608223,
+        "across_los_velocity_rms_mps": 0.21463893336915915,
+        "position_rms_m": 153.4100772348032,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      },
+      {
+        "label": "matched velocity process noise",
+        "measurement_variance_mps2": 0.14,
+        "acceleration_variance": 0.0004,
+        "geometry_offset_s": 0,
+        "observation_period_s": 1,
+        "nuisance_bias_variance_mps2": 100.0,
+        "prior_variance_m2": 1e-12,
+        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "doppler_enabled": true,
+        "velocity_rms_mps": 0.23650067178978157,
+        "along_los_velocity_rms_mps": 0.11423461678110364,
+        "across_los_velocity_rms_mps": 0.20708215781639028,
+        "position_rms_m": 79.34741576278418,
+        "accepted_updates": 1200,
+        "rejected_updates": 0
+      }
+    ],
+    "mechanism_tests": [
+      {
+        "treatment": "prior-only",
+        "velocity_rms_mps": 0.25055178264219313,
+        "along_los_velocity_rms_mps": 0.11163824381366158,
+        "across_los_velocity_rms_mps": 0.22430581424337234,
+        "interpretation": "control: propagation from the same disclosed prior"
+      },
+      {
+        "treatment": "controlled baseline",
+        "velocity_rms_mps": 0.3753479877101402,
+        "along_los_velocity_rms_mps": 0.3074865389554455,
+        "across_los_velocity_rms_mps": 0.21526295603111287,
+        "interpretation": "production-like nuisance variance and process noise"
+      },
+      {
+        "treatment": "near-fixed nuisance bias",
+        "velocity_rms_mps": 0.35943196423668045,
+        "along_los_velocity_rms_mps": 0.28830793467608223,
+        "across_los_velocity_rms_mps": 0.21463893336915915,
+        "interpretation": "forces residuals into navigation/clock states"
+      },
+      {
+        "treatment": "loose nuisance bias",
+        "velocity_rms_mps": 0.37552785022056656,
+        "along_los_velocity_rms_mps": 0.30769897946553176,
+        "across_los_velocity_rms_mps": 0.21527309243644618,
+        "interpretation": "allows the pass bias to absorb range-rate residuals"
+      },
+      {
+        "treatment": "matched velocity process noise",
+        "velocity_rms_mps": 0.23650067178978157,
+        "along_los_velocity_rms_mps": 0.11423461678110364,
+        "across_los_velocity_rms_mps": 0.20708215781639028,
+        "interpretation": "matches Q to the injected acceleration-error scale and reduces velocity gain"
+      },
+      {
+        "treatment": "current replay prior path",
+        "velocity_rms_mps": 3835.25877038078,
+        "along_los_velocity_rms_mps": 2749.4896571557447,
+        "across_los_velocity_rms_mps": 2673.857973224509,
+        "interpretation": "current replay applies the prior as a 50%-gain measurement, leaving half-radius geometry"
+      }
+    ],
+    "best_non_degrading_tuning": {
+      "label": "matched velocity process noise",
+      "measurement_variance_mps2": 0.14,
+      "acceleration_variance": 0.0004,
+      "geometry_offset_s": 0,
+      "observation_period_s": 1,
+      "nuisance_bias_variance_mps2": 100.0,
+      "prior_variance_m2": 1e-12,
+      "initial_radial_position_error_m": 6.3781369999936205e-6,
+      "doppler_enabled": true,
+      "velocity_rms_mps": 0.23650067178978157,
+      "along_los_velocity_rms_mps": 0.11423461678110364,
+      "across_los_velocity_rms_mps": 0.20708215781639028,
+      "position_rms_m": 79.34741576278418,
+      "accepted_updates": 1200,
+      "rejected_updates": 0
+    },
+    "answer": "Two mechanisms are evidenced. The current replay prior path is structurally confounded: variance 1 against initial variance 1 gives gain 0.5 and retains 3189068 m radial ECEF error. After removing that confound, Doppler still raises velocity RMS from 0.2506 to 0.3753 m/s entirely in the LOS component (across-LOS changes from 0.2243 to 0.2153 m/s): the default Q is 100 times the injected acceleration-error variance, so the filter repeatedly trusts noisy scalar range rate over the cleaner DR velocity. Matching Q yields 0.2365 m/s.",
+    "routed_fix": "Route to the next pnt-replay/estimator integration unit: add an atomic FilterStub state/covariance initialization API, use it for ReceiverPrior, and regression-test radial ECEF error as well as horizontal replay scores. Do not tune Doppler around the half-radius state."
+  },
+  "observability": {
+    "duration_curve": [
+      {
+        "duration_minutes": 2,
+        "seeds": 6,
+        "prior_only_position_rms_m": 0.8080507732907591,
+        "prior_doppler_position_rms_m": 5.744327556022449
+      },
+      {
+        "duration_minutes": 5,
+        "seeds": 6,
+        "prior_only_position_rms_m": 5.2989540808340125,
+        "prior_doppler_position_rms_m": 15.277859587668354
+      },
+      {
+        "duration_minutes": 10,
+        "seeds": 6,
+        "prior_only_position_rms_m": 22.109816384546672,
+        "prior_doppler_position_rms_m": 34.5147250613
+      },
+      {
+        "duration_minutes": 15,
+        "seeds": 6,
+        "prior_only_position_rms_m": 49.96668728717345,
+        "prior_doppler_position_rms_m": 58.898291423950155
+      },
+      {
+        "duration_minutes": 20,
+        "seeds": 6,
+        "prior_only_position_rms_m": 88.8431679788182,
+        "prior_doppler_position_rms_m": 86.94815753423903
+      },
+      {
+        "duration_minutes": 25,
+        "seeds": 6,
+        "prior_only_position_rms_m": 138.76522644605316,
+        "prior_doppler_position_rms_m": 114.47794229217368
+      },
+      {
+        "duration_minutes": 30,
+        "seeds": 6,
+        "prior_only_position_rms_m": 199.80743783773914,
+        "prior_doppler_position_rms_m": 149.58721674231822
+      }
+    ],
+    "turn_reset": {
+      "pre_turn_position_rms_m": 28.521533389409083,
+      "first_two_minutes_after_turn_rms_m": 43.86545333107707,
+      "final_two_minutes_rms_m": 125.23769780093626,
+      "reset_observed": false
+    },
+    "verdict": "The stub reproduces only the relative 20-minute emergence: Doppler is worse at 2 min (5.74 vs 0.81 m RMS) but better at 30 min (149.59 vs 199.81 m). Absolute RMS does not converge; it grows throughout. Turn reset observed: false. The stub has no heading-to-velocity coupling or manoeuvre covariance reset, so it cannot reproduce the predicted reset mechanism."
+  },
+  "stale_ephemeris": {
+    "cells": [
+      {
+        "offset_hours": 0,
+        "innovation_mean_mps": 0.0,
+        "innovation_rms_mps": 0.0,
+        "rejection_fraction_threshold_9": 0.0,
+        "samples": 600
+      },
+      {
+        "offset_hours": 1,
+        "innovation_mean_mps": -4706.448917781194,
+        "innovation_rms_mps": 5413.709843464893,
+        "rejection_fraction_threshold_9": 0.9983333333333333,
+        "samples": 600
+      },
+      {
+        "offset_hours": 6,
+        "innovation_mean_mps": -3468.1949803005245,
+        "innovation_rms_mps": 4395.287010703573,
+        "rejection_fraction_threshold_9": 1.0,
+        "samples": 600
+      },
+      {
+        "offset_hours": 24,
+        "innovation_mean_mps": -2604.2111556507184,
+        "innovation_rms_mps": 3825.2894384289016,
+        "rejection_fraction_threshold_9": 1.0,
+        "samples": 600
+      }
+    ],
+    "verdict": "Threshold 9 first rejects at least 95% at 1 h; the 6 h case rejects 100%. This supports the gate being no looser than 6 h for this deliberately phase-shifted TLE fixture, but does not validate a real SupGP age-error curve."
+  },
+  "unverified": [
+    "Real-signal measurement distributions and oscillator errors remain unverified.",
+    "The single ISS fixture is a geometry sensitivity instrument, not constellation availability evidence.",
+    "The replay API does not expose process-noise or nuisance-bias configuration; this campaign exercises the same estimator and predictor directly."
+  ]
+}

@@ -400,6 +400,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pnt-studies"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "nalgebra",
+ "pnt-ephemeris",
+ "pnt-estimator",
+ "pnt-predictor",
+ "pnt-types",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "pnt-time"
 version = "0.1.0"
 

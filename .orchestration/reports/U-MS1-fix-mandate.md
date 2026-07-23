@@ -1,0 +1,9 @@
+# U-MS1.1 fix mandate (per FAIL review, .orchestration/reports/U-MS1-review-opus.md, D55)
+The plumbing is honest and kept; the SCIENCE is confounded. Rebuild the experiment with controls:
+1. (F1) Fix the 3 clippy errors (multisat.rs:108 #Errors doc, :225 u64-as-i64 cast, :324 is_multiple_of). Whole-workspace `cargo clippy --all-targets -- -D warnings` MUST be green.
+2. (F2) Add a MANOEUVRING leg — use the real mission generator's coordinated turn + wave/slam (as the highspeed study does), not a benign constant-velocity straight line. The whole point is that a manoeuvre breaks single-sat DR; the study must exercise that.
+3. (F3) THE HEADLINE EXPERIMENT (D54): build a TRUE fixed-single-LOS baseline — one satellite, NO handover (or hold a single LOS) — vs genuine multi-satellite SIMULTANEOUS visibility. Isolate the geometry effect cleanly: the N-sweep must compare like-for-like where the ONLY difference is number of simultaneous distinct LOS directions. Report GDOP per tier.
+4. (F4) Inject a realistic UNKNOWN receiver-clock drift (nonzero, e.g. rubidium-class ppb-level) AND per-SV transmit bias in the generated truth, so the per-SV nuisance augmentation and the receiver-clock state are actually STRESSED (they estimate something real). Zeroing them is an observability gift — remove it. Document the injected values [UNVERIFIED].
+5. (F6) Run MULTIPLE seeds (>=8) before stating ANY error class; report mean/p95/spread, not one lucky draw. Reframe the headline around the controlled N=8 result with realistic clock/manoeuvre, NOT the confounded N=1.
+6. Honesty: if with proper controls multi-sat does NOT reach 100-200 m, REPORT THAT and diagnose (GDOP, clock observability, leg duration) — no target-fitting. State clearly what D51 vs this now shows.
+Gate: cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --all -- --check. No attribution trailers. Update .orchestration/reports/U-MS1.md + STUDY.md honestly.

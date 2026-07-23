@@ -8,12 +8,19 @@ use pnt_types::{
     MeasurementPayload, ReceiverClockId, ReceiverClockSlot, SpeedThroughWater,
 };
 
-const CORE_DIM: usize = 9;
+// Fixed-core state layout. Current (E,N) is permanent physics and lives in the fixed core
+// (U2) — it never enters the dynamic augment/retire index-shift path. POS/VEL/HEADING/CLOCK
+// keep indices 0..8 so accuracy helpers keyed on POS=0/VEL=3 stay valid.
+const CORE_DIM: usize = 11;
 const POS: usize = 0;
 const VEL: usize = 3;
 const HEADING: usize = 6;
 const CLOCK_BIAS: usize = 7;
 const CLOCK_DRIFT: usize = 8;
+const CURRENT_E: usize = 9;
+const CURRENT_N: usize = 10;
+/// Width of the predictor's Doppler Jacobian (`POS..=CLOCK_DRIFT`); it does not observe current.
+const DOPPLER_JACOBIAN_DIM: usize = 9;
 const CLOCK_BIAS_VARIANCE_CAP_M2: f64 = 1.0e8;
 
 pub trait Estimator {
@@ -21,6 +28,11 @@ pub trait Estimator {
     fn update(&mut self, measurement: &MeasurementEnvelope);
     fn state(&self) -> FilterState;
     fn update_predicted_doppler(&mut self, update: &DopplerRangeRateUpdate) -> UpdateResult;
+    /// The navigation-core state and covariance (the fixed `CORE_DIM` block), for the smoother
+    /// reseed contract (U4e). Returned as `(state, covariance)` in `nalgebra` form.
+    fn core_estimate(&self) -> (DVector<f64>, DMatrix<f64>);
+    /// Overwrites the navigation-core block with an accepted smoother reseed (U4e).
+    fn apply_reseed(&mut self, core_state: &DVector<f64>, core_covariance: &DMatrix<f64>);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +41,10 @@ pub struct ProcessNoise {
     pub turn_rate_variance: f64,
     pub clock_drift_variance: f64,
     pub nuisance_random_walk_variance: f64,
+    /// Random-walk spectral density of the ENU current-velocity state (U2). Deliberately
+    /// **much smaller than the velocity process noise** so that, with no speed-through-water
+    /// observation to make current observable, it cannot random-walk into the velocity state.
+    pub current_random_walk_variance: f64,
 }
 
 impl Default for ProcessNoise {
@@ -38,6 +54,7 @@ impl Default for ProcessNoise {
             turn_rate_variance: 1.0e-4,
             clock_drift_variance: 1.0e-4,
             nuisance_random_walk_variance: 1.0e-6,
+            current_random_walk_variance: 1.0e-8,
         }
     }
 }
@@ -56,8 +73,10 @@ pub struct DopplerRangeRateUpdate {
     pub measured_range_rate_mps: f64,
     /// Pure satellite/receiver geometric range rate. Clock terms are represented by H*x.
     pub predicted_range_rate_mps: f64,
-    /// Predictor linearisation with respect to the nine core states.
-    pub core_jacobian: [f64; CORE_DIM],
+    /// Predictor linearisation with respect to the nine `POS..=CLOCK_DRIFT` core states.
+    /// Doppler does not observe current, so this stays 9-wide and is zero-padded onto the
+    /// two current states inside the estimator.
+    pub core_jacobian: [f64; DOPPLER_JACOBIAN_DIM],
     pub variance_mps2: f64,
     pub chi_square_threshold: Option<f64>,
     /// Initial variance for a newly observed satellite's range-rate bias.
@@ -82,6 +101,22 @@ pub struct MslAltitudeUpdate {
     pub chi_square_threshold: Option<f64>,
 }
 
+/// A stationary batch fix handed into the moving filter (U4b). Applied as a *soft* prior — a
+/// measurement update whose covariance is the batch posterior **inflated by elapsed-time
+/// process growth** and clamped so it can never be tighter than the filter already is. This is
+/// the concrete fix for the D39/D43 prior-confounding bug (a tight stale prior the filter
+/// cannot move away from).
+#[derive(Clone, Copy, Debug)]
+pub struct SoftPrior {
+    pub position_ecef_m: [f64; 3],
+    pub velocity_ecef_mps: [f64; 3],
+    /// Batch posterior variances (per ECEF axis) at the moment the fix was taken.
+    pub position_variance_m2: [f64; 3],
+    pub velocity_variance_mps2: [f64; 3],
+    /// Seconds elapsed since the fix was taken; the prior is softened by process growth over it.
+    pub elapsed_seconds: f64,
+}
+
 /// Kept under the historical name so the unmodified executive remains source-compatible.
 #[derive(Debug)]
 pub struct FilterStub {
@@ -95,6 +130,7 @@ pub struct FilterStub {
     nuisance_slots: HashMap<String, usize>,
     receiver_clocks: HashMap<ReceiverClockId, ReceiverClockSlot>,
     robust_gate: bool,
+    vector_stw: bool,
 }
 
 impl Default for FilterStub {
@@ -123,7 +159,20 @@ impl FilterStub {
             nuisance_slots: HashMap::new(),
             receiver_clocks: HashMap::new(),
             robust_gate: false,
+            vector_stw: false,
         }
+    }
+
+    /// Enables the vector water-velocity STW model (U2): speed-through-water is assimilated as
+    /// a 2-component ENU constraint `v_ground − current ≈ STW · û_heading`, making the ENU
+    /// current observable. Default off, which keeps the legacy scalar ground-speed STW model,
+    /// so existing behaviour and synthetic headline numbers are unchanged unless enabled. The
+    /// vector model requires a trustworthy heading and a synthetic/real STW that is genuinely
+    /// water-relative; its maritime tuning is validated by U2's dedicated study.
+    #[must_use]
+    pub const fn with_vector_stw(mut self) -> Self {
+        self.vector_stw = true;
+        self
     }
 
     /// Enables the robust (Huber) measurement cost (U4a): an innovation beyond the chi-square
@@ -211,7 +260,7 @@ impl FilterStub {
         let nuisance =
             self.augment_satellite_bias(&update.satellite_id, update.satellite_bias_variance_mps2);
         let mut h = DVector::zeros(self.x.len());
-        h.rows_mut(0, CORE_DIM)
+        h.rows_mut(0, DOPPLER_JACOBIAN_DIM)
             .copy_from(&DVector::from_column_slice(&update.core_jacobian));
         h[nuisance] = 1.0;
         let predicted = update.predicted_range_rate_mps
@@ -236,7 +285,7 @@ impl FilterStub {
         let nuisance =
             self.augment_satellite_bias(&update.satellite_id, update.satellite_bias_variance_mps2);
         let mut h = DVector::zeros(self.x.len());
-        h.rows_mut(0, CORE_DIM)
+        h.rows_mut(0, DOPPLER_JACOBIAN_DIM)
             .copy_from(&DVector::from_column_slice(&update.core_jacobian));
         h[slot.drift_index] += h[CLOCK_DRIFT];
         h[CLOCK_DRIFT] = 0.0;
@@ -265,14 +314,44 @@ impl FilterStub {
         self.scalar_update_with_innovation(innovation, &h, variance, gate)
     }
 
+    /// Assimilates a speed-through-water reading against the **vector** water-velocity model
+    /// `v_water ≈ STW · û_heading`, i.e. `v_ground_enu − current_enu ≈ STW · (sinψ, cosψ)`
+    /// (U2). This is a 2-component (E,N) constraint — unlike the scalar speed magnitude, which
+    /// is rank-deficient for a 2-vector current — so it makes the ENU current observable from
+    /// the STW-vs-Doppler-ground-velocity discrepancy. Applied as two sequential scalar updates.
+    ///
+    /// The cross-component (sideslip) part is a *model* pseudo-measurement, not a sensor value,
+    /// so the two components share the caller's `variance` only under the zero-sideslip
+    /// assumption; a caller expecting sideslip should widen `variance` accordingly.
     pub fn update_speed_through_water(
         &mut self,
         speed: SpeedThroughWater,
         variance: f64,
         gate: Option<f64>,
     ) -> UpdateResult {
-        let (predicted, h) = speed_model(&self.x);
-        self.scalar_update(speed.metres_per_second, predicted, &h, variance, gate)
+        if !self.vector_stw {
+            // Legacy scalar ground-speed model (current unobserved).
+            let (predicted, h) = speed_model(&self.x);
+            return self.scalar_update(speed.metres_per_second, predicted, &h, variance, gate);
+        }
+        let heading = self.x[HEADING];
+        // Heading is measured from North, clockwise, so the unit heading vector in ENU is
+        // (E, N) = (sin ψ, cos ψ). Expected water velocity components under zero sideslip.
+        let expected = [
+            speed.metres_per_second * heading.sin(),
+            speed.metres_per_second * heading.cos(),
+        ];
+        let mut last = UpdateResult {
+            innovation: 0.0,
+            innovation_variance: variance,
+            normalized_innovation_squared: 0.0,
+            accepted: true,
+        };
+        for (component, &expected_component) in expected.iter().enumerate() {
+            let (predicted, h) = water_velocity_component_model(&self.x, component);
+            last = self.scalar_update(expected_component, predicted, &h, variance, gate);
+        }
+        last
     }
 
     pub fn update_msl_altitude(&mut self, update: MslAltitudeUpdate) -> UpdateResult {
@@ -326,6 +405,77 @@ impl FilterStub {
             ));
         }
         results
+    }
+
+    /// Injects a stationary batch fix as a soft prior (U4b): the batch posterior variance is
+    /// inflated by process-noise growth over `elapsed_seconds`, then **clamped so it is never
+    /// tighter than the filter's current variance** for that state. This prevents a stale,
+    /// over-confident prior from over-constraining the filter (the D39/D43 confounding bug):
+    /// the state is nudged, not reset, and the covariance never shrinks below what the filter
+    /// already earned.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `elapsed_seconds` is negative or non-finite.
+    pub fn apply_soft_prior(&mut self, prior: &SoftPrior) {
+        assert!(prior.elapsed_seconds.is_finite() && prior.elapsed_seconds >= 0.0);
+        let t = prior.elapsed_seconds;
+        // Elapsed-time process growth. Position uncertainty grows with the acceleration random
+        // walk integrated twice (∝ q_a·t³/3, plus the carried velocity uncertainty ∝ t²);
+        // velocity grows ∝ q_a·t. This mirrors the propagate() Q model, conservatively.
+        let position_growth = self.process_noise.acceleration_variance * t.powi(3) / 3.0;
+        let velocity_growth = self.process_noise.acceleration_variance * t;
+        for component in 0..6 {
+            let (index, measured, base_variance, growth) = if component < 3 {
+                (
+                    POS + component,
+                    prior.position_ecef_m[component],
+                    prior.position_variance_m2[component],
+                    position_growth,
+                )
+            } else {
+                (
+                    VEL + component - 3,
+                    prior.velocity_ecef_mps[component - 3],
+                    prior.velocity_variance_mps2[component - 3],
+                    velocity_growth,
+                )
+            };
+            // Inflate the batch posterior by elapsed process growth. Anti-confounding guard:
+            // only apply the prior to a state it is *more certain* about than the filter already
+            // is. A stale, less-certain prior carries no new information, so it is skipped — it
+            // can neither yank the state nor (falsely) shrink the covariance (the D39/D43 bug).
+            let inflated = base_variance + growth;
+            if inflated >= self.covariance[(index, index)] {
+                continue;
+            }
+            let mut h = DVector::zeros(self.x.len());
+            h[index] = 1.0;
+            self.scalar_update(measured, self.x[index], &h, inflated, None);
+        }
+    }
+
+    /// Maritime zero-velocity update (U4c): when the vessel is moored/anchored, its ground
+    /// velocity is ~0. Constrains the three ECEF ground-velocity components to zero with the
+    /// given (tight) `variance`. The measurement touches only the velocity states, so the
+    /// current state is left entirely free — an anchored boat sits still over ground while
+    /// water still flows past it (review H5: a maritime ZUPT is not `v_water = 0`, and it must
+    /// not fight the current estimate).
+    ///
+    /// Callers must only invoke this when a motion classifier confirms the moored condition
+    /// (e.g. near-zero speed-through-water AND near-zero ground track); it asserts ground
+    /// velocity is zero, which is false while making way.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `variance` is non-finite or not strictly positive.
+    pub fn apply_moored_zupt(&mut self, variance: f64) {
+        assert!(variance.is_finite() && variance > 0.0);
+        for axis in 0..3 {
+            let mut h = DVector::zeros(self.x.len());
+            h[VEL + axis] = 1.0;
+            self.scalar_update(0.0, self.x[VEL + axis], &h, variance, None);
+        }
     }
 
     fn scalar_update(
@@ -474,6 +624,11 @@ impl Estimator for FilterStub {
         for index in self.nuisance_slots.values().copied() {
             q[(index, index)] = self.process_noise.nuisance_random_walk_variance * dt;
         }
+        // Current (E,N) random walk (U2). F stays identity for these states (a random walk,
+        // not an integrator), so only Q grows. Kept small so an unobserved current does not
+        // leak into velocity.
+        q[(CURRENT_E, CURRENT_E)] = self.process_noise.current_random_walk_variance * dt;
+        q[(CURRENT_N, CURRENT_N)] = self.process_noise.current_random_walk_variance * dt;
         self.covariance = &f * &self.covariance * f.transpose() + q;
         self.cap_clock_bias_variance(CLOCK_BIAS);
         let receiver_biases: Vec<_> = self
@@ -547,8 +702,53 @@ impl Estimator for FilterStub {
     fn update_predicted_doppler(&mut self, update: &DopplerRangeRateUpdate) -> UpdateResult {
         self.update_doppler(update)
     }
+
+    fn core_estimate(&self) -> (DVector<f64>, DMatrix<f64>) {
+        let state = self.x.rows(0, CORE_DIM).into_owned();
+        let covariance = self
+            .covariance
+            .view((0, 0), (CORE_DIM, CORE_DIM))
+            .into_owned();
+        (state, covariance)
+    }
+
+    /// Overwrites the navigation-core block with an accepted smoother reseed (U4e). Augmented
+    /// states (per-satellite biases, receiver clocks) are left untouched — a stationary batch
+    /// reseed constrains the navigation core, not per-pass nuisances. The caller must have
+    /// already passed the reseed through the `ReseedGate`; this performs the overwrite only.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `core_state`/`core_covariance` are not exactly `CORE_DIM`-sized.
+    fn apply_reseed(&mut self, core_state: &DVector<f64>, core_covariance: &DMatrix<f64>) {
+        assert!(
+            core_state.len() == CORE_DIM
+                && core_covariance.nrows() == CORE_DIM
+                && core_covariance.ncols() == CORE_DIM,
+            "reseed must be core-dimensioned"
+        );
+        for i in 0..CORE_DIM {
+            self.x[i] = core_state[i];
+            for j in 0..CORE_DIM {
+                self.covariance[(i, j)] = core_covariance[(i, j)];
+            }
+        }
+        // The core marginal now comes from a different joint distribution than the augmented
+        // states, so the old core<->augmented cross-covariances are statistically invalid.
+        // Zero them (conservative: drops correlation rather than asserting a stale one), which
+        // keeps the joint covariance consistent and PSD. Augmented marginals are preserved.
+        let total = self.x.len();
+        for i in 0..CORE_DIM {
+            for j in CORE_DIM..total {
+                self.covariance[(i, j)] = 0.0;
+                self.covariance[(j, i)] = 0.0;
+            }
+        }
+    }
 }
 
+/// Legacy scalar STW model: horizontal ground-speed magnitude and its Jacobian (current
+/// unobserved). Used unless the vector water-velocity model (U2) is enabled.
 fn speed_model(x: &DVector<f64>) -> (f64, DVector<f64>) {
     let model = |state: &DVector<f64>| {
         let enu = ecef_vector_to_enu(
@@ -572,6 +772,40 @@ fn speed_model(x: &DVector<f64>) -> (f64, DVector<f64>) {
     (speed, h)
 }
 
+/// The ENU `component` (0 = East, 1 = North) of the horizontal water velocity
+/// `v_ground_enu − current_enu`, and its numeric Jacobian. Used by the vector STW update to
+/// make the ENU current observable. Sensitive to POS (via the ENU rotation), VEL, and the
+/// two current states; zero elsewhere.
+fn water_velocity_component_model(x: &DVector<f64>, component: usize) -> (f64, DVector<f64>) {
+    let model = |state: &DVector<f64>| {
+        let ground_enu = ecef_vector_to_enu(
+            [state[POS], state[POS + 1], state[POS + 2]],
+            [state[VEL], state[VEL + 1], state[VEL + 2]],
+        );
+        let state_current = [state[CURRENT_E], state[CURRENT_N]];
+        ground_enu[component] - state_current[component]
+    };
+    let predicted = model(x);
+    let mut h = DVector::zeros(x.len());
+    // Position (ENU rotation), velocity, and the relevant current component carry sensitivity.
+    let indices = [POS, POS + 1, POS + 2, VEL, VEL + 1, VEL + 2]
+        .into_iter()
+        .chain(std::iter::once(if component == 0 {
+            CURRENT_E
+        } else {
+            CURRENT_N
+        }));
+    for index in indices {
+        let step = 1.0e-6 * x[index].abs().max(1.0);
+        let mut plus = x.clone();
+        plus[index] += step;
+        let mut minus = x.clone();
+        minus[index] -= step;
+        h[index] = (model(&plus) - model(&minus)) / (2.0 * step);
+    }
+    (predicted, h)
+}
+
 fn wrap_angle(angle: f64) -> f64 {
     (angle + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI
 }
@@ -586,6 +820,284 @@ mod tests {
 
     const FD_STEP: f64 = 1.0e-6;
     const JACOBIAN_TOLERANCE: f64 = 2.0e-6;
+
+    // A ground-truth-ish fixture near 56N 12E with a known ground velocity, used by the
+    // current-observability tests.
+    fn current_fixture() -> (FilterStub, [f64; 3]) {
+        // ECEF position ~ (56N, 12E). Any consistent point works; the model is frame-correct.
+        let lat = 56.0_f64.to_radians();
+        let lon = 12.0_f64.to_radians();
+        let r = 6.371e6;
+        let pos = [
+            r * lat.cos() * lon.cos(),
+            r * lat.cos() * lon.sin(),
+            r * lat.sin(),
+        ];
+        let mut filter = FilterStub::default();
+        for (slot, &value) in filter.x.rows_mut(POS, 3).iter_mut().zip(pos.iter()) {
+            *slot = value;
+        }
+        (filter, pos)
+    }
+
+    // Sets the state's ECEF ground velocity from a desired ENU (E, N, U=0) velocity.
+    fn set_ground_velocity_enu(filter: &mut FilterStub, pos: [f64; 3], enu: [f64; 3]) {
+        let rotation = pnt_types::ecef_to_enu_rotation(pos);
+        // ECEF = R^T * ENU (rotation rows are the ENU basis in ECEF).
+        for (axis, slot) in filter.x.rows_mut(VEL, 3).iter_mut().enumerate() {
+            *slot = rotation[0][axis] * enu[0]
+                + rotation[1][axis] * enu[1]
+                + rotation[2][axis] * enu[2];
+        }
+    }
+
+    #[test]
+    fn vector_water_velocity_model_is_sensitive_to_current() {
+        // The vector model (unlike a scalar speed magnitude, which is rank-deficient for a
+        // 2-vector current) has non-zero Jacobian on the current states: the East component is
+        // sensitive to CURRENT_E, the North component to CURRENT_N. This is what makes current
+        // observable.
+        let (mut filter, pos) = current_fixture();
+        set_ground_velocity_enu(&mut filter, pos, [3.0, 0.0, 0.0]);
+        let (_, h_east) = water_velocity_component_model(&filter.x, 0);
+        let (_, h_north) = water_velocity_component_model(&filter.x, 1);
+        assert!(
+            (h_east[CURRENT_E] + 1.0).abs() < 1.0e-6,
+            "East water-velocity component must depend on CURRENT_E (d/dc_E = -1)"
+        );
+        assert!(
+            (h_north[CURRENT_N] + 1.0).abs() < 1.0e-6,
+            "North water-velocity component must depend on CURRENT_N (d/dc_N = -1)"
+        );
+    }
+
+    #[test]
+    fn vector_stw_makes_current_observable() {
+        // With a known heading and STW, the vector water-velocity model resolves a unique
+        // ENU current from the STW-vs-ground-velocity discrepancy.
+        let (filter, pos) = current_fixture();
+        let mut filter = filter.with_vector_stw();
+        // Truth: ground velocity 3 m/s East; current 1 m/s East; so water velocity = 2 m/s East,
+        // heading = 90 deg (due East), STW = 2 m/s.
+        set_ground_velocity_enu(&mut filter, pos, [3.0, 0.0, 0.0]);
+        filter.x[HEADING] = 90.0_f64.to_radians();
+        // Give the current state room to move.
+        filter.covariance[(CURRENT_E, CURRENT_E)] = 4.0;
+        filter.covariance[(CURRENT_N, CURRENT_N)] = 4.0;
+        // Feed several STW observations of 2 m/s (steady leg).
+        for _ in 0..40 {
+            let _ = filter.update_speed_through_water(
+                SpeedThroughWater {
+                    metres_per_second: 2.0,
+                },
+                0.01,
+                None,
+            );
+        }
+        // Current East should converge toward +1 m/s; North stays near 0.
+        assert!(
+            (filter.x[CURRENT_E] - 1.0).abs() < 0.3,
+            "current East {} should converge to ~1.0",
+            filter.x[CURRENT_E]
+        );
+        assert!(
+            filter.x[CURRENT_N].abs() < 0.3,
+            "current North {} should stay near 0",
+            filter.x[CURRENT_N]
+        );
+    }
+
+    #[test]
+    fn current_does_not_leak_into_velocity_without_stw() {
+        // With no STW observation, current must not random-walk into the velocity estimate.
+        let (mut filter, pos) = current_fixture();
+        set_ground_velocity_enu(&mut filter, pos, [3.0, 0.0, 0.0]);
+        let v_before = [filter.x[VEL], filter.x[VEL + 1], filter.x[VEL + 2]];
+        for _ in 0..100 {
+            filter.propagate(ImuSample {
+                acceleration_mps2: [0.0; 3],
+                angular_rate_rps: [0.0; 3],
+            });
+        }
+        for (axis, before) in v_before.iter().enumerate() {
+            assert!(
+                (filter.x[VEL + axis] - before).abs() < 1.0e-6,
+                "velocity leaked without STW"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_reseed_overwrites_the_core_block_and_preserves_augmented_states() {
+        let mut filter = FilterStub::default();
+        // Augment a satellite bias so there is an augmented state beyond the core.
+        let nuisance = filter.augment_satellite_bias("sat", 42.0);
+        filter.x[nuisance] = 7.0;
+        assert!(filter.x.len() > CORE_DIM);
+
+        let mut core_state = DVector::zeros(CORE_DIM);
+        core_state[POS] = 111.0;
+        core_state[VEL] = 2.0;
+        let mut core_cov = DMatrix::identity(CORE_DIM, CORE_DIM) * 3.0;
+        core_cov[(POS, POS)] = 9.0;
+
+        filter.apply_reseed(&core_state, &core_cov);
+
+        assert!((filter.x[POS] - 111.0).abs() < f64::EPSILON);
+        assert!((filter.x[VEL] - 2.0).abs() < f64::EPSILON);
+        assert!((filter.covariance[(POS, POS)] - 9.0).abs() < f64::EPSILON);
+        // The augmented satellite state and its variance are untouched.
+        assert!((filter.x[nuisance] - 7.0).abs() < f64::EPSILON);
+        assert!((filter.covariance[(nuisance, nuisance)] - 42.0).abs() < f64::EPSILON);
+        // Core<->augmented cross-covariances are zeroed (stale after a core overwrite), keeping
+        // the joint covariance consistent.
+        for i in 0..CORE_DIM {
+            assert!(filter.covariance[(i, nuisance)].abs() < f64::EPSILON);
+            assert!(filter.covariance[(nuisance, i)].abs() < f64::EPSILON);
+        }
+        // The result stays symmetric and PSD.
+        assert!((&filter.covariance - filter.covariance.transpose()).amax() < 1.0e-12);
+        assert!(
+            filter
+                .covariance
+                .clone()
+                .symmetric_eigen()
+                .eigenvalues
+                .min()
+                >= -1.0e-9
+        );
+    }
+
+    #[test]
+    fn moored_zupt_pins_ground_velocity_without_touching_current() {
+        // Maritime ZUPT (U4c): when moored/anchored, ground velocity is ~0, but the current
+        // state must stay free (an anchored boat sits still while water flows past it). A
+        // zero-ground-velocity update must NOT fight or corrupt the current estimate.
+        let (mut filter, _pos) = current_fixture();
+        // The filter wrongly believes it is moving; current has a settled non-zero estimate.
+        filter.x[VEL] = 2.0;
+        filter.x[VEL + 1] = -1.0;
+        filter.x[CURRENT_E] = 0.8;
+        filter.x[CURRENT_N] = -0.4;
+        filter.covariance[(CURRENT_E, CURRENT_E)] = 0.1;
+        filter.covariance[(CURRENT_N, CURRENT_N)] = 0.1;
+        let current_before = [filter.x[CURRENT_E], filter.x[CURRENT_N]];
+
+        filter.apply_moored_zupt(1.0e-4);
+
+        // Ground velocity is driven toward zero.
+        for axis in 0..3 {
+            assert!(
+                filter.x[VEL + axis].abs() < 0.2,
+                "ground velocity axis {axis} not pinned: {}",
+                filter.x[VEL + axis]
+            );
+        }
+        // Current is untouched (the ZUPT H has no current column).
+        assert!((filter.x[CURRENT_E] - current_before[0]).abs() < 1.0e-9);
+        assert!((filter.x[CURRENT_N] - current_before[1]).abs() < 1.0e-9);
+    }
+
+    #[test]
+    fn soft_prior_does_not_over_constrain_a_confident_filter() {
+        // The D39/D43 prior-confounding bug: a stale stationary fix injected with an
+        // artificially tight covariance makes the moving filter refuse to move away from it.
+        // The soft prior must never be tighter than the filter already is for a state.
+        let mut filter = FilterStub::default();
+        // Filter is already confident about position (small variance) at the true point.
+        for axis in 0..3 {
+            filter.covariance[(POS + axis, POS + axis)] = 4.0; // 2 m sigma
+            filter.x[POS + axis] = 100.0;
+        }
+        let confident_before = filter.covariance[(POS, POS)];
+        // A STALE prior claims a *different* position with an over-confident 0.01 m^2 variance.
+        filter.apply_soft_prior(&SoftPrior {
+            position_ecef_m: [1000.0, 1000.0, 1000.0],
+            velocity_ecef_mps: [0.0, 0.0, 0.0],
+            position_variance_m2: [0.01, 0.01, 0.01],
+            velocity_variance_mps2: [0.01, 0.01, 0.01],
+            elapsed_seconds: 120.0, // 2 minutes stale
+        });
+        // The guard must prevent the covariance from shrinking below what the filter had, and
+        // the state must not be yanked all the way to the stale prior.
+        assert!(
+            filter.covariance[(POS, POS)] >= confident_before - 1.0e-9,
+            "soft prior over-constrained the filter (confounding bug)"
+        );
+        assert!(
+            filter.x[POS] < 600.0,
+            "state was yanked toward a stale over-confident prior: {}",
+            filter.x[POS]
+        );
+    }
+
+    #[test]
+    fn soft_prior_inflates_variance_by_elapsed_time() {
+        // An honest, non-stale prior should still be softened by how long ago it was taken.
+        let mut filter = FilterStub::default();
+        for axis in 0..3 {
+            filter.covariance[(POS + axis, POS + axis)] = 1.0e6; // filter is very unsure
+        }
+        let mut fresh = FilterStub::default();
+        for axis in 0..3 {
+            fresh.covariance[(POS + axis, POS + axis)] = 1.0e6;
+        }
+        let prior = |elapsed| SoftPrior {
+            position_ecef_m: [10.0, 0.0, 0.0],
+            velocity_ecef_mps: [0.0, 0.0, 0.0],
+            position_variance_m2: [1.0, 1.0, 1.0],
+            velocity_variance_mps2: [1.0, 1.0, 1.0],
+            elapsed_seconds: elapsed,
+        };
+        filter.apply_soft_prior(&prior(600.0)); // 10 min stale
+        fresh.apply_soft_prior(&prior(0.0)); // just taken
+                                             // The fresher prior pulls the state closer to the prior position (10 m) than the stale one.
+        assert!(
+            (fresh.x[POS] - 10.0).abs() < (filter.x[POS] - 10.0).abs(),
+            "a fresher prior should pull harder: fresh={}, stale={}",
+            fresh.x[POS],
+            filter.x[POS]
+        );
+    }
+
+    #[test]
+    fn current_lives_in_the_fixed_core_at_stable_indices() {
+        // Current (E,N) is permanent physics in the fixed core, never shifted by dynamic
+        // augmentation/retirement of satellite biases or receiver clocks.
+        assert_eq!(CORE_DIM, 11);
+        assert_eq!(CURRENT_E, 9);
+        assert_eq!(CURRENT_N, 10);
+        let mut filter = FilterStub::default();
+        assert_eq!(filter.x.len(), CORE_DIM);
+        // Augment then retire a satellite bias; current indices must be untouched.
+        filter.x[CURRENT_E] = 0.7;
+        filter.x[CURRENT_N] = -0.3;
+        filter.augment_satellite_bias("sat-a", 100.0);
+        filter.reserve_receiver_clock(pnt_types::ReceiverClockId("rx".into()));
+        filter.retire_satellite_bias("sat-a");
+        assert!((filter.x[CURRENT_E] - 0.7).abs() < f64::EPSILON);
+        assert!((filter.x[CURRENT_N] - (-0.3)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_doppler_jacobian_does_not_observe_current() {
+        // The predictor Jacobian is 9-wide and gets zero-padded onto the 2 current states,
+        // so a pure-clock Doppler update leaves current unchanged.
+        let mut filter = FilterStub::default();
+        filter.x[CURRENT_E] = 0.5;
+        filter.x[CURRENT_N] = 0.5;
+        let _ = filter.update_doppler(&DopplerRangeRateUpdate {
+            satellite_id: "sat".into(),
+            measured_range_rate_mps: 3.0,
+            predicted_range_rate_mps: 0.0,
+            core_jacobian: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            variance_mps2: 1.0,
+            chi_square_threshold: None,
+            satellite_bias_variance_mps2: 1.0,
+        });
+        assert!((filter.x[CURRENT_E] - 0.5).abs() < 1.0e-9);
+        assert!((filter.x[CURRENT_N] - 0.5).abs() < 1.0e-9);
+    }
 
     #[test]
     fn robust_cost_downweights_a_moderate_outlier_instead_of_rejecting_it() {
@@ -689,11 +1201,22 @@ mod tests {
 
     #[test]
     fn all_measurement_jacobians_match_central_difference() {
-        let x = DVector::from_vec(vec![10.0, 20.0, 30.0, 3.0, 4.0, 0.0, 0.4, 2.0, 0.1]);
-        let (_, speed_h) = speed_model(&x);
-        let numeric_speed =
-            central_difference(|value| DVector::from_element(1, speed_model(value).0), &x);
-        assert!((numeric_speed.row(0).transpose() - speed_h).amax() < JACOBIAN_TOLERANCE);
+        let x = DVector::from_vec(vec![
+            10.0, 20.0, 30.0, 3.0, 4.0, 0.0, 0.4, 2.0, 0.1, 0.0, 0.0,
+        ]);
+        for component in 0..2 {
+            let (_, water_h) = water_velocity_component_model(&x, component);
+            let numeric_water = central_difference(
+                |value| {
+                    DVector::from_element(1, water_velocity_component_model(value, component).0)
+                },
+                &x,
+            );
+            assert!(
+                (numeric_water.row(0).transpose() - water_h).amax() < JACOBIAN_TOLERANCE,
+                "water-velocity component {component} Jacobian mismatch"
+            );
+        }
 
         for index in 0..CORE_DIM {
             let numeric = central_difference(|value| DVector::from_element(1, value[index]), &x);
@@ -724,6 +1247,7 @@ mod tests {
                 turn_rate_variance: 0.0,
                 clock_drift_variance: 0.0,
                 nuisance_random_walk_variance: 0.0,
+                current_random_walk_variance: 0.0,
             },
         );
         with_q.covariance.fill(0.0);
@@ -743,7 +1267,7 @@ mod tests {
             satellite_id: "SV-1".into(),
             measured_range_rate_mps: 2.0,
             predicted_range_rate_mps: 1.0,
-            core_jacobian: [0.0; CORE_DIM],
+            core_jacobian: [0.0; DOPPLER_JACOBIAN_DIM],
             variance_mps2: 1.0,
             chi_square_threshold: Some(10.0),
             satellite_bias_variance_mps2: 1.0e4,
@@ -967,7 +1491,7 @@ mod tests {
             satellite_id: "SV-D".into(),
             measured_range_rate_mps: 1.0,
             predicted_range_rate_mps: 1.0,
-            core_jacobian: [0.0; CORE_DIM],
+            core_jacobian: [0.0; DOPPLER_JACOBIAN_DIM],
             variance_mps2: 3.0,
             chi_square_threshold: None,
             satellite_bias_variance_mps2: 47.0,

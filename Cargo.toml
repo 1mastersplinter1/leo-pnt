@@ -13,6 +13,7 @@ members = [
     "crates/pnt-mission",
     "crates/pnt-tracker",
     "crates/pnt-studies",
+    "crates/pnt-smoother",
 ]
 resolver = "2"
 

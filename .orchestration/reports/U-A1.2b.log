@@ -1,0 +1,914 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.5
+--------
+workdir: /home/od/work/leo-pnt-wt-UA1
+model: gpt-5.6-sol
+provider: openai
+approval: on-request
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 019f8c7d-0de7-7ca1-8223-699ffc5a5ca9
+--------
+user
+You are unit U-A1.2 resuming after an interruption. The worktree has UNCOMMITTED partial work (modified pnt-integrity lib+tests, CONTRACTS.md, report) that currently DOES NOT COMPILE (3 errors in pnt-integrity, one involving items-after-statements). Read DECISIONS.md D31 for the mandate, inspect git diff, fix the compile errors, finish all mandate items (side effects derived from final resolved transition; Disarm/fault dominance incl. self-loop cells; caution-band annunciation on arm tick; both reviewers' exact regression sequences; state/flags consistency invariant in the property test; v5 sentence marked amended), and get the gate green: PATH="$HOME/.cargo/bin:$PATH" cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --all -- --check. Update .orchestration/reports/U-A1.md dispositions. Commit on branch unit/U-A1; never merge to main.
+codex
+I’ll resume from the existing partial work, read D31 and the repository guidance/diff first, then repair and complete the implementation, run the full gate, update the disposition report, and commit only on `unit/U-A1`.
+exec
+/bin/bash -lc "pwd && rg --files -g 'AGENTS.md' -g 'DECISIONS.md' -g 'CONTRACTS.md' -g '.orchestration/reports/U-A1.md' | sort && git status --short --branch && git diff --stat && git diff" in /home/od/work/leo-pnt-wt-UA1
+ succeeded in 0ms:
+/home/od/work/leo-pnt-wt-UA1
+## unit/U-A1
+ M .orchestration/CONTRACTS.md
+ M .orchestration/reports/U-A1.md
+ M crates/pnt-integrity/src/lib.rs
+ M crates/pnt-integrity/tests/authority.rs
+ .orchestration/CONTRACTS.md             |   2 +-
+ .orchestration/reports/U-A1.md          |  23 ++++++-
+ crates/pnt-integrity/src/lib.rs         | 102 +++++++++++++++++++++++++++-----
+ crates/pnt-integrity/tests/authority.rs |  48 +++++++++++++++
+ 4 files changed, 157 insertions(+), 18 deletions(-)
+diff --git a/.orchestration/CONTRACTS.md b/.orchestration/CONTRACTS.md
+index 4f3e67c..d566f98 100644
+--- a/.orchestration/CONTRACTS.md
++++ b/.orchestration/CONTRACTS.md
+@@ -255,7 +255,7 @@ The supervisor consumes clock-service monotonic nanoseconds only, `ArmCommand`,
+ sequence and covariance-derived horizontal-position/horizontal-velocity/heading accuracies,
+ active profile, last-absolute-observation time, ephemeris age/integrity, and calibration ID.
+ Calibration identity is checked by an injected validator; absence is always rejection and
+-the default validator accepts any present, non-empty ID. A renewing frame is exactly
++the default validator accepts any present, non-empty ID. **Amended by v5.1; see below.** A renewing frame is exactly
+ `sequence advanced && G2 && G3`, independent of current lease state. Deadline equality is
+ expiry. Arm defaults false, disarm withdraws G1, and every fault revocation clears the arm
+ latch so a fresh arm command is required.
+diff --git a/.orchestration/reports/U-A1.md b/.orchestration/reports/U-A1.md
+index 21e1e13..4df88dc 100644
+--- a/.orchestration/reports/U-A1.md
++++ b/.orchestration/reports/U-A1.md
+@@ -1,4 +1,4 @@
+-# U-A1 report — authority supervisor fix round U-A1.1
++# U-A1 report — authority supervisor fix rounds U-A1.1 and U-A1.2
+ 
+ Contracts authored: v5 and v5.1. Branch: `unit/U-A1`.
+ 
+@@ -9,6 +9,11 @@ The production executive uses the fail-closed `AuthoritySupervisor`; the explici
+ edges, live simultaneous-event priority, DR-fill delivery, monotonic time, ACK routing, and
+ calibration-validator construction. The red-first checkpoint is commit `9c5de70`.
+ 
++U-A1.2 fixes the shared round-2 same-tick root cause. `apply` now reprojects the arm latch,
++pending edge, and lease from every newly resolved tick outcome; faults retain their higher
++priority and Disarm is unconditional even when its tick-start matrix cell is a self-loop.
++An Arm plus an already-caution-band solution resolves directly to `Caution`/`PreAlert`.
++
+ The live supervisor now merges events sharing a monotonic tick and calls
+ `simultaneous_successor` over the tick's origin state and accumulated events. This wires the
+ normative six-tier priority into the live path (rather than duplicating guard logic), so a
+@@ -45,6 +50,20 @@ only when absolute-observation age exceeds `t_dr`.
+    `with_calibration_validator`. The constructor test proves the hard error.
+ 7. **Report accuracy — fixed below.** Formerly overstated rows now cite live, new regression
+    tests rather than the free helper or broad indirect coverage.
++8. **Sonnet Finding B — fixed in U-A1.2.** The exact `LatchedSafe` → fresh Arm + good
++   solution → same-nanosecond Disarm sequence now resolves to quiet `Disarmed`, clears the
++   lease, and remains quiet past the former lease deadline. The regression is
++   `same_tick_rearm_solution_then_disarm_is_quiet_and_has_no_stale_lease`.
++9. **Opus N1 — fixed in U-A1.2.** A simultaneous successful Arm and caution-band
++   assessment composes to `Caution` on that tick. The regression
++   `arming_with_an_existing_caution_solution_prealerts_on_the_arm_tick` asserts `PreAlert`
++   without a one-tick Nominal interval.
++10. **Opus N2 — fixed in U-A1.2.** The superseded default-validator sentence in v5 is
++    marked “Amended by v5.1; see below” without rewriting v5.
++11. **Consistency invariant — added in U-A1.2.** `consistency_invariant` explicitly requires
++    `Nominal`/`Caution` to own both the arm latch and lease, and all non-authority states to
++    own neither. The deterministic randomized test asserts it after every tick; this also
++    caught and fixed lease renewal while already in Warning.
+ 
+ Opus F5 remains an integration note for U-M1, not a U-A1 defect: U-A1's default-deny
+ supervisor is retained and its executable wiring test remains green.
+@@ -64,7 +83,7 @@ supervisor is retained and its executable wiring test remains green.
+ | §2.2 quiet disarm and latched warning/escalation | destination `AuthorityState::output`; state-gated arm handling | both-order live priority test; warning/escalated stale-arm regression; fresh-arm latch test |
+ | §3.1 live watchdog/monotonic clock | `observe_time`; `tick`; no wall-clock access | `backward_time_revokes_but_repeated_time_is_accepted`; lease boundary test |
+ | §3.2 caution/clear/re-arm dwell and ACK escalation | supervisor timers; `AckCommand` executive route | `dwell_and_ack_boundaries_are_exact`; stale-arm/fresh-arm regressions; `acknowledge_reaches_authority_and_never_filter_update` |
+-| G invariant | final conjunction plus accepted-arm tracking | deterministic randomized test: 6,368 solution/tick iterations including ACK and arm-during-alarm |
++| G invariant | final conjunction, accepted-arm tracking, and explicit state/arm/lease consistency predicate | deterministic randomized test: 6,368 solution/tick iterations including ACK, arm-during-alarm, and a consistency assertion after every tick |
+ | Executive wiring | command-only routes; every update/propagation calls `emit_epoch` | default fail-closed, Arm, ACK, DR-fill, and NDJSON tests |
+ 
+ ## Deviations / limits
+diff --git a/crates/pnt-integrity/src/lib.rs b/crates/pnt-integrity/src/lib.rs
+index 9133824..8ffd8c0 100644
+--- a/crates/pnt-integrity/src/lib.rs
++++ b/crates/pnt-integrity/src/lib.rs
+@@ -171,11 +171,24 @@ pub fn simultaneous_successor(
+         AckTimeout, Acknowledge, Arm, CautionClear, CautionEnter, Disarm, G2Fall, G2Rise, G3Fall,
+         G3Rise, LeaseExpiry,
+     };
+-    const PRIORITY: [AuthorityEvent; 11] = [
+-        G3Fall,
+-        G2Fall,
+-        LeaseExpiry,
+-        Disarm,
++    let arm_enters_authority = arm_guard
++        && events.contains(&Arm)
++        && matches!(state, AuthorityState::Disarmed | AuthorityState::LatchedSafe);
++    if events.contains(&G3Fall) || events.contains(&G2Fall) || events.contains(&LeaseExpiry) {
++        return if matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
++            || arm_enters_authority
++        {
++            AuthorityState::Warning
++        } else {
++            state
++        };
++    }
++    // Disarm is an unconditional tick outcome. In particular, it must not disappear merely
++    // because its matrix cell was a self-loop in the tick-start state before an Arm event.
++    if events.contains(&Disarm) {
++        return AuthorityState::Disarmed;
++    }
++    const PRIORITY: [AuthorityEvent; 7] = [
+         AckTimeout,
+         Acknowledge,
+         Arm,
+@@ -186,8 +199,13 @@ pub fn simultaneous_successor(
+     ];
+     for event in PRIORITY {
+         if events.contains(&event) {
+-            let successor = matrix_successor(state, event, arm_guard);
++            let mut successor = matrix_successor(state, event, arm_guard);
+             if successor != state {
++                // Caution is an annunciation of the accepted solution, so an Arm transition
++                // cannot suppress a simultaneous pre-alert assessment.
++                if event == Arm && events.contains(&CautionEnter) {
++                    successor = matrix_successor(successor, CautionEnter, arm_guard);
++                }
+                 return successor;
+             }
+         }
+@@ -288,6 +306,22 @@ impl AuthoritySupervisor {
+         }
+     }
+ 
++    /// Checks that authority state, the internal arm latch, and lease ownership agree.
++    #[must_use]
++    pub const fn consistency_invariant(&self) -> bool {
++        match self.state {
++            AuthorityState::Nominal | AuthorityState::Caution => {
++                self.armed && self.lease_deadline_ns.is_some()
++            }
++            AuthorityState::Disarmed
++            | AuthorityState::Warning
++            | AuthorityState::Escalated
++            | AuthorityState::LatchedSafe => {
++                !self.armed && self.lease_deadline_ns.is_none()
++            }
++        }
++    }
++
+     pub fn acknowledge(&mut self, now_ns: u64) {
+         if !self.observe_time(now_ns) {
+             return;
+@@ -313,15 +347,35 @@ impl AuthoritySupervisor {
+                     .unwrap_or(event);
+             self.transition = Some((old, new, decisive_event));
+             if new == AuthorityState::Warning {
+-                self.armed = false;
+-                self.pending_arm_edge = false;
+                 self.warning_since_ns = Some(now_ns);
+             }
+             if new == AuthorityState::LatchedSafe {
+                 self.latched_since_ns = Some(now_ns);
+             }
+-            if new == AuthorityState::Disarmed {
++        }
++
++        // Project every mutable authority side effect from the fully merged tick outcome.
++        // Re-running this projection after each newly arrived same-time event prevents an
++        // earlier raw handler from leaving flags belonging to a superseded transition.
++        match new {
++            AuthorityState::Nominal | AuthorityState::Caution => {
++                self.armed = true;
++                self.pending_arm_edge = false;
++            }
++            AuthorityState::Disarmed
++            | AuthorityState::Warning
++            | AuthorityState::Escalated
++            | AuthorityState::LatchedSafe => {
++                self.armed = false;
+                 self.lease_deadline_ns = None;
++                if event != AuthorityEvent::Arm
++                    || !matches!(new, AuthorityState::Disarmed | AuthorityState::LatchedSafe)
++                    || self.event_tick_events.contains(&AuthorityEvent::Disarm)
++                {
++                    self.pending_arm_edge = false;
++                } else {
++                    self.pending_arm_edge = true;
++                }
+             }
+         }
+     }
+@@ -332,6 +386,22 @@ impl AuthoritySupervisor {
+         arm_guard: bool,
+     ) -> Option<AuthorityEvent> {
+         use AuthorityEvent as E;
++        for fault in [E::G3Fall, E::G2Fall, E::LeaseExpiry] {
++            if events.contains(&fault)
++                && (matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
++                    || (arm_guard
++                        && events.contains(&E::Arm)
++                        && matches!(
++                            state,
++                            AuthorityState::Disarmed | AuthorityState::LatchedSafe
++                        )))
++            {
++                return Some(fault);
++            }
++        }
++        if events.contains(&E::Disarm) {
++            return Some(E::Disarm);
++        }
+         const PRIORITY: [E; 11] = [
+             E::G3Fall,
+             E::G2Fall,
+@@ -424,7 +494,12 @@ impl AuthoritySupervisor {
+             .last_sequence
+             .is_none_or(|last| solution.sequence > last);
+         self.last_sequence = Some(solution.sequence);
+-        if advanced && new_g2 && new_g3 {
++        if advanced
++            && new_g2
++            && new_g3
++            && (matches!(self.state, AuthorityState::Nominal | AuthorityState::Caution)
++                || self.pending_arm_edge)
++        {
+             if let Some(seconds) = self.params.t_lease_s {
+                 self.lease_deadline_ns = Some(now_ns.saturating_add(Self::seconds_ns(seconds)));
+             }
+@@ -548,19 +623,16 @@ impl IntegrityAuthorityGate for AuthoritySupervisor {
+         }
+         match command.action {
+             ArmAction::Disarm => {
+-                self.armed = false;
+-                self.pending_arm_edge = false;
+                 self.apply(AuthorityEvent::Disarm, command.host_monotonic_ns, false);
+             }
+             ArmAction::Arm
+-                if !self.armed
++                if !self.pending_arm_edge
+                     && matches!(
+                         self.state,
+                         AuthorityState::Disarmed | AuthorityState::LatchedSafe
+                     ) =>
+             {
+-                self.armed = true;
+-                self.pending_arm_edge = true;
++                self.apply(AuthorityEvent::Arm, command.host_monotonic_ns, false);
+             }
+             ArmAction::Arm => {}
+         }
+diff --git a/crates/pnt-integrity/tests/authority.rs b/crates/pnt-integrity/tests/authority.rs
+index 49a83fc..58e33c3 100644
+--- a/crates/pnt-integrity/tests/authority.rs
++++ b/crates/pnt-integrity/tests/authority.rs
+@@ -251,6 +251,49 @@ fn arm_edges_during_warning_and_escalated_are_ignored() {
+     }
+ }
+ 
++#[test]
++fn same_tick_rearm_solution_then_disarm_is_quiet_and_has_no_stale_lease() {
++    let good = state_with_accuracy(0.5);
++    let bad = state_with_accuracy(9.0);
++    let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
++    arm(&mut s, 0);
++    solution(&mut s, 1, 0, &good);
++    solution(&mut s, 2, 1, &bad);
++    s.acknowledge(2);
++    assert_eq!(s.state(), S::LatchedSafe);
++
++    let rearm_time = 1_000_000_002;
++    arm(&mut s, rearm_time);
++    solution(&mut s, 3, rearm_time, &good);
++    assert_eq!(s.state(), S::Nominal);
++    s.arm_command(&ArmCommand {
++        action: ArmAction::Disarm,
++        host_monotonic_ns: rearm_time,
++        source_id: SourceId("helm".into()),
++    });
++
++    assert_eq!(s.state(), S::Disarmed);
++    assert_eq!(s.output().alarm, AlarmLevel::QuietDisarmed);
++    assert!(!s.output().steering_authorised);
++    assert!(s.consistency_invariant());
++    assert!(!s.steering_authorised(&good, rearm_time + 1_000_000_000));
++    assert_eq!(s.state(), S::Disarmed, "stale lease must not warn later");
++    assert_eq!(s.output().alarm, AlarmLevel::QuietDisarmed);
++}
++
++#[test]
++fn arming_with_an_existing_caution_solution_prealerts_on_the_arm_tick() {
++    let caution = state_with_accuracy(2.5);
++    let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
++    arm(&mut s, 0);
++    solution(&mut s, 1, 0, &caution);
++
++    assert_eq!(s.state(), S::Caution);
++    assert_eq!(s.output().alarm, AlarmLevel::PreAlert);
++    assert!(s.output().steering_authorised);
++    assert!(s.consistency_invariant());
++}
++
+ fn nominal_supervisor(good: &FilterState) -> AuthoritySupervisor {
+     let mut supervisor = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+     arm(&mut supervisor, 0);
+@@ -371,6 +414,11 @@ fn random_sequences_never_authorise_with_a_false_g_condition() {
+                 !authorised || accepted_arm_since_revocation,
+                 "authorised without an accepted post-revocation arm at sequence {sequence}"
+             );
++            assert!(
++                s.consistency_invariant(),
++                "state/armed/lease inconsistency at sequence {sequence}: {:?}",
++                s.output()
++            );
+         }
+     }
+ }
+
+exec
+/bin/bash -lc "find .. -name AGENTS.md -print; ls -la .orchestration; rg -n \"D31|Decision 31|v5\\.1\" .orchestration/DECISIONS.md .orchestration/CONTRACTS.md; sed -n '1,240p' .orchestration/DECISIONS.md; sed -n '230,290p' .orchestration/CONTRACTS.md" in /home/od/work/leo-pnt-wt-UA1
+ succeeded in 0ms:
+total 56
+drwxrwxr-x 4 od od  4096 Jul 23 00:57 .
+drwxrwxr-x 9 od od  4096 Jul 23 01:00 ..
+-rw-rw-r-- 1 od od 18450 Jul 23 01:00 CONTRACTS.md
+-rw-rw-r-- 1 od od 14222 Jul 23 00:57 DECISIONS.md
+-rw-rw-r-- 1 od od  2803 Jul 23 00:19 PLAN.md
+drwxrwxr-x 2 od od  4096 Jul 23 00:19 briefs
+drwxrwxr-x 2 od od  4096 Jul 23 00:45 reports
+.orchestration/CONTRACTS.md:258:the default validator accepts any present, non-empty ID. **Amended by v5.1; see below.** A renewing frame is exactly
+.orchestration/CONTRACTS.md:275:## v5.1 (2026-07-23)
+.orchestration/CONTRACTS.md:277:v5.1 amends, but does not replace, v5. `AckCommand` is the helm acknowledgement sibling of
+.orchestration/DECISIONS.md:33:- D31 (2026-07-23, Fable arbitration): U-A1 round 2 split (Opus PASS w/ N1 tracked; Sonnet FAIL w/ Finding B reproduced) ruled FAIL — B and N1 share one root cause: same-tick event merge resolves from the tick-start snapshot and apply()'s side effects (armed/pending/lease clears) key to raw event handlers, not the final resolved transition, desyncing state/annunciation from the authority flags (never fail-open — output() is a defense-in-depth AND — but helm-facing annunciation is wrong, incl. quiet-disarm shown as Nominal then spurious Warning). U-A1.2: rework the merge so side effects derive from the resolved destination and Disarm/faults short-circuit regardless of self-loop cells; fix Opus N1 (caution-band suppression) and N2 (stale v5 sentence → mark amended in v5.1); add a state/flags consistency invariant to the property test; regression tests for both reviewers' exact sequences. Both seats re-verify.
+# DECISIONS.md — one line per ruling; never re-litigate
+
+- D1 (2026-07-22, Fable): Superpowers brainstorming's interactive approval gate is satisfied by the handoff document itself (product of prior design work; user directive given autonomously) — design baseline still goes to user for review before code units expand beyond the executive skeleton.
+- D2 (2026-07-22, Fable): Header assigns docs to Fable; user's token-budget instruction overrides — Sol/Sonnet draft documents, Fable reviews and signs. User instruction > header.
+- D3 (2026-07-22, Fable): Wave-1 units are docs-only with disjoint file ownership; they share the main worktree and do NOT commit (Fable commits post-review). Per-unit worktrees begin with code units (U-C1 onward).
+- D4 (2026-07-22, Fable): Repo lives at /home/od/work/leo-pnt, branch main. Superpowers plan location overridden by header: unit plan in .orchestration/PLAN.md, task-level TDD detail lives in each brief.
+- D5 (2026-07-22, Fable): Research units (U-R1/U-R2) run on Grok for web-search + cost; every factual claim needs URL + access date and VERIFIED/ASSUMED split; a non-Grok reviewer must confirm before any claim becomes load-bearing in the BOM or design.
+- D6 (2026-07-22, Fable): Headless grok (`-p`) invokes no tools under `--permission-mode acceptEdits` (exits 0 with narration only, no files — verified by streaming-json diagnostic); all headless grok units run with `--permission-mode auto`. First U-R1/U-R2 runs discarded as no-ops, relaunched.
+- D7 (2026-07-22, Fable, arbitration): U-D1 review split (Opus FAIL / Sonnet PASS) ruled FAIL — Opus blockers F1/F2/F3 are verified omissions that would force U-C1/U-F1/U-M1 to invent physical/interface facts; Sonnet independently found the same Orbcomm gap. One fix round (U-D1.1) to Sol; wave-2 dispatch gated on re-review of the diffs.
+- D9 (2026-07-22, Fable): U-R2's grok runs invoked tools but never persisted file writes (3 same-gate failures; U-R1 identical invocation worked) — reset per gate rule to U-R2b: deliverables emitted to stdout between markers, Fable persists. Pattern available for future flaky grok write paths.
+- D8 (2026-07-22, Fable): GPS_INPUT-over-ODOMETRY rationale must be recorded normatively in DESIGN_BASELINE (Opus F8): handle_odometry() hard-codes velocity error to 0, so ODOMETRY cannot transport per-epoch velocity uncertainty; ODOMETRY is excluded as an interface.
+- D10 (2026-07-22, Opus verify → Fable): Orbcomm's independent receiver introduces a second unmodeled receiver clock; Orbcomm observations must NOT enter fusion until a second receiver-clock state or per-receiver nuisance term exists (binding on U-C1 contracts and U-F1 EKF).
+- D11 (2026-07-22, Fable): U-D1 gate closed — Opus verify PASS on all findings; baseline v2026-07-22 committed as normative.
+- D12 (2026-07-22, Fable): U-S1 authored by Opus → Opus excluded from its review (no model reviews its own output beats always-include-Opus); seats: Sol (deep) + Sonnet (completeness). Escalation target for disagreements remains Fable per header (Opus conflicted).
+- D13 (2026-07-22, Fable): Sonnet U-S1 review B3 — the G1 human-arm grant condition needs an arm/disarm input that ARCHITECTURE.md's bus does not define; ruled a real architecture gap: an arm-command bus message + helm arm input becomes a contracts requirement (routed to U-C1 follow-up in contracts v3, executive routing), and SAFETY_CASE marks the dependency until then.
+- D14 (2026-07-22, Fable): U-S1 review round 1 — both seats FAIL (Sol: revocation-ordering guarantee conflates internal state with ArduPilot-observable behavior, shared companion fault domain cited as independent mitigation, single-threshold "hysteresis"; Sonnet: B1 G3/ephemeris conflation, B3 arm input, C2 undefined calibration expiry). One fix round to the Opus author; re-verify by both seats on the diff.
+- D15 (2026-07-22, Fable): U-C1 gate closed (dual PASS; fmt evidence re-verified by Fable). Review minors routed: F1/F2/F5/F6 (OneWeb gate, reject-journal edge, off-mode process test, missing route tests) + F7 executive seams → integration unit U-I2 after wave 3; F3/F4 (real covariance + accuracies in state/epoch) + D13 arm-command message → U-F1 authors contracts v3. Cargo.lock tracked; target/ ignored (Fable glue).
+- D16 (2026-07-22, Fable): Grok failed to persist U-M1 outputs (same silent-write pathology as U-R2; second occurrence on file-producing units). Availability-fallback applied: Sol (codex) absorbs U-M1. Grok remains usable for stdout-contract research units only (D9 pattern) until the write path is explained.
+- D17 (2026-07-22, Fable arbitration, U-S1 round 2): Sol verify FAIL vs Sonnet verify PASS. Rulings: (a) Sol's new blocker CONFIRMED — ArduPilot Rover behaviour on GPS_INPUT silence is asserted, not evidenced; recast as [UNVERIFIED] residual, and U-M1 acquires a mandatory SITL characterisation requirement (mode/actuation/timing at pinned firmware on GPS_INPUT silence and on Case-A handoff commands) checked at U-M1 review. (b) Baseline "companion process stalls" row amended by Fable (glue edit, this ruling) to distinguish fault classes and responders — supervisor-alive faults get the watchdog; whole-process death gets only autopilot-side [UNVERIFIED] backstop + physical layer. (c) State/event matrix incompleteness = real doc defect, fix now with a total transition matrix or explicit precedence + default rule. (d) Numeric [UNVERIFIED] parameters = NOT a doc defect; the fix is one fail-closed sentence: authority shall never be granted while any authority-contract parameter remains [UNVERIFIED]. (e) Sol finding 3 (hand-to-helm recipe): candidates stay [UNVERIFIED]; sea-trial gate requires SITL-proven Case-A recipe. Fix executes as fresh-context unit U-S1.2 (reset-beats-retry).
+- D18 (2026-07-22, Fable arbitration): U-E1 split (Opus PASS / Sonnet FAIL) ruled FIX ROUND — both seats independently verified the physics correct; Sonnet's decoy-GMST-test and false-provenance findings are verified test-integrity majors (the pattern D14 already rejected). U-E1.1 executes the merged fix list (.orchestration/reports/U-E1-review-summary.md); single-seat re-verify (Sonnet context) then merge. AFSPC-mode production propagation (Opus F1) switched to improved mode per fix item 5.
+- D19 (2026-07-22, Fable): U-F1 dual FAIL (Opus: wrong-frame accuracy surface, Q-insensitive growth test, decoy Jacobian tests; Sonnet: half the update surface untested). Fix round U-F1.1 per .orchestration/reports/U-F1-fix-mandate.md; re-verify by Opus seat on the diff. Accuracy convention fixed as DRMS over ENU; recorded here so it is never re-litigated.
+- D20 (2026-07-22, Fable): U-S1 gate CLOSED — Sonnet verify PASS (round 2), Sol verify PASS after Fable's baseline re-amendment removed the 'bounded backstop' crediting (micro-verify PASS on items 5/6). Safety case + baseline amendments committed as normative. U-M1's SITL characterisation obligation (D17a) remains open and gates sea trials.
+- D21 (2026-07-22, Fable): U-E1 gate CLOSED (Sonnet re-verify PASS; both round-1 blockers genuinely fixed, all numerics independently re-derived). Residuals routed to U-I2: restore the t=0 Vallado assertion alongside t=360; add [UNVERIFIED] tag for improved-mode propagation's lack of local literature-anchored numeric validation. Merged to main.
+- D22 (2026-07-22, Fable): U-F1 gate CLOSED (Opus re-verify PASS with personal Q=0 fault injection; all dual-FAIL findings verifiably fixed through real code paths). Carried to U-I2: N1 — CONTRACTS must pin whether predicted_range_rate_mps includes clock-drift terms and reconcile update_doppler vs update_doppler_for_receiver against pnt-predictor's definition BEFORE Orbcomm ingress-rejection is lifted; N2 — note geocentric-latitude approximation in ENU rotation. Merged to main.
+- D23 (2026-07-22, Fable): U-M1 dual FAIL. Blockers: yaw-unavailable sentinel 65535 (spec says 0; pinned ArduPilot parses 65535 as a false 295.35° heading), bridge ignores HDOP so EK3_GPS_CHECK's HDOP gate permanently blocks GPS aiding (root cause of flags=167, source-diagnosed by Opus seat), D17a characterisation absent. Fix round U-M1.1 per .orchestration/reports/U-M1-fix-mandate.md; re-verify by Opus seat. HDOP fix ruled bridge-side (send real DOP), never by weakening EK3_GPS_CHECK.
+- D24 (2026-07-22, Fable): U-M1 gate CLOSED (Opus re-verify PASS; all 13 dual-FAIL findings fixed and independently verified from raw evidence; D17a satisfied). Key evidence for the safety case: native ArduPilot response to GPS_INPUT silence at pinned Rover-4.6.3 is EKF-failsafe→HOLD at ~5.07 s (armed, throttle 0, no manoeuvre); companion-commanded HOLD lands in ~51 ms. SAFETY_CASE.md's [UNVERIFIED] ArduPilot-silence markers may now cite tools/sitl/evidence/D17a.md (SITL-only; sea-trial confirmation still pending) — doc amendment due at final gate. Low residuals N1 (HDOP-proxy units, conservative direction), N2 (evidence filename provenance), N3 (dynamic-motion fusion accuracy [UNVERIFIED]) recorded.
+- D25 (2026-07-22, Fable): U-I2 dual FAIL (Opus: unguarded hand-built Doppler H with innovation-zero e2e blind spot, ingress-reject journal incompleteness, NDJSON NaN emission; Sonnet: elevation gate silently disabled by -90-rad sentinel default undisclosed, chi-square reject path untested, unpinned NORAD source_id convention). Fix round U-I2.1 per .orchestration/reports/U-I2-fix-mandate.md; re-verify by Opus seat. Elevation default ruled: real mask value, [UNVERIFIED] tuning, Option/degrees-safe API.
+- D26 (2026-07-23, Fable): U-I2 gate CLOSED (Opus re-verify PASS with empirical fault-injection of the FD guard; linearisation relocated to pnt-predictor per ARCHITECTURE module 7; contracts v4.1 appended). Low residuals: double predict() call per observation (perf, not correctness); e2e velocity band loose (FD test is the discriminator). Merged to main. FINAL GATE begins: Fable + Opus (least-author frontier model — zero shipped code; Sol as primary author cannot co-sign; Grok excluded from arbitration per roster).
+- D27 (2026-07-23, FINAL GATE — SHIP RECORD): End-to-end review passed by BOTH co-signers — Opus (least-author seat; ran gates independently: 41 Rust tests, clippy clean, 20 pytest; audited all 6 handoff deliverables satisfied, all 10 failure modes structurally guarded in shipped code, honesty-sampled 5 [UNVERIFIED] claims all genuinely open) CO-SIGNED conditional on two record fixes, both now applied: (1) D17a SITL-characterised status propagated to DESIGN_BASELINE and all SAFETY_CASE locations; (2) this line states plainly: **the authority supervisor is NOT built — crates/pnt-integrity is IntegrityStub, which unconditionally returns steering_authorised=true (fail-open). It is a skeleton placeholder, not the safety supervisor; no powered trial may occur before the real fail-closed supervisor implementing SAFETY_CASE §1–§3 exists.** Fable (coordinator seat) audited deliverables presence, contracts chain v1–v4.1, plan/decision-log completeness, and independently re-ran every unit gate at merge time — CO-SIGNED. Shipped scope is honestly bounded: a review-hardened research skeleton (executive, ephemeris/predictor, EKF, bridge+SITL evidence, docs, BOM) — NOT a sea-ready navigator. Standing between this repo and a sea trial: real-IQ signal tracker; authority supervisor + arm input (D13) implementation; on-disk journal codecs; all authority-contract numeric freezes (fail-closed gate); hardware purchase/integration + lever-arm and reference calibration; 24 h OneWeb occupancy survey; replayed real captures incl. the aided-vs-withheld headline delta; on-vessel D17a confirmation, Case-A SITL-proven handoff recipe, kill-cord wiring test.
+- D28 (2026-07-23, Fable): Post-ship wave 4 opened per user continue: U-A1 (authority supervisor per SAFETY_CASE §1-§3, Sol authors, Opus must review — safety-critical) and U-J1 (on-disk journals, Sol authors). Disjoint ownership: U-A1 owns pnt-integrity+executive+CONTRACTS v5; U-J1 owns pnt-journal only, codec decision deferred to integration folding.
+- D29 (2026-07-23, Fable): U-J1 gate CLOSED (dual PASS; Opus byte-level truncation probes at every offset + dir-fsync verified; Sonnet CRC-32 reference-vector check). Carried to integration: (a) a latched sink write-error must route to abort-and-recover, NEVER finalize (Opus F1 — sealing a corrupt tail into an immutable .seg); (b) fix RecoveryReason mislabel on clean reopen (Sonnet #1); (c) CONTRACTS v2's "indexed by time/source/kind" was deliberately scoped OUT of U-J1 — indexing is deferred to a future replay-tooling unit (ruling, not omission); (d) manifest's serde_json usage to be documented in README. Merged to main.
+- D30 (2026-07-23, Fable): U-A1 dual FAIL — both seats independently reproduced the arm-during-alarm latch bypass (pending_arm_edge survives the fault transition); Sonnet additionally: simultaneous-priority dead code, DR-fill frames never reach the supervisor. Fix round U-A1.1 per .orchestration/reports/U-A1-fix-mandate.md; re-verify by both seats on the diff (safety-critical). Also ruled: concurrent reviewers must not share a worktree with write-probes (S review found the deep seat's leftover probe artifact; handled correctly and disclosed).
+- D31 (2026-07-23, Fable arbitration): U-A1 round 2 split (Opus PASS w/ N1 tracked; Sonnet FAIL w/ Finding B reproduced) ruled FAIL — B and N1 share one root cause: same-tick event merge resolves from the tick-start snapshot and apply()'s side effects (armed/pending/lease clears) key to raw event handlers, not the final resolved transition, desyncing state/annunciation from the authority flags (never fail-open — output() is a defense-in-depth AND — but helm-facing annunciation is wrong, incl. quiet-disarm shown as Nominal then spurious Warning). U-A1.2: rework the merge so side effects derive from the resolved destination and Disarm/faults short-circuit regardless of self-loop cells; fix Opus N1 (caution-band suppression) and N2 (stale v5 sentence → mark amended in v5.1); add a state/flags consistency invariant to the property test; regression tests for both reviewers' exact sequences. Both seats re-verify.
+journalled rejects.
+
+The production Doppler pipeline applies a 5-degree elevation mask, converted to radians
+at its degrees-safe API boundary. The value is `[UNVERIFIED]` pending link-budget and
+replay tuning; callers may explicitly disable the mask for geometry-independent tests.
+
+Correction to v4 wording: horizontal, speed, and vertical accuracy values are derived by
+the `SolutionEpoch` accessors at emission, not materialised when the epoch is constructed.
+An epoch containing any non-finite state, covariance, or derived accuracy value is not
+written to NDJSON and produces a journalled integrity event instead.
+
+## v5 (2026-07-23)
+
+v5 retains v1--v4.1 and replaces the fail-open integrity placeholder with the authority
+supervisor contract from `SAFETY_CASE.md` §1--§3.
+
+`AuthorityParams` carries separate aided and denied `ProtectionLimits` for horizontal
+position (m), horizontal velocity (m/s), and heading (rad), plus `Option<f64>` fields for
+`t_lease`, `t_dr`, `t_eph`, `dwell_clear`, `dwell_rearm`, `caution_enter`,
+`caution_clear`, `revoke_threshold`, and `T_ack` (seconds for all time values). Every
+numeric must be present, finite, and non-negative. If any field is `None` or invalid, the
+supervisor can never grant steering authority. This is the literal D17 fail-closed gate;
+there are no numeric defaults.
+
+The supervisor consumes clock-service monotonic nanoseconds only, `ArmCommand`, solution
+sequence and covariance-derived horizontal-position/horizontal-velocity/heading accuracies,
+active profile, last-absolute-observation time, ephemeris age/integrity, and calibration ID.
+Calibration identity is checked by an injected validator; absence is always rejection and
+the default validator accepts any present, non-empty ID. **Amended by v5.1; see below.** A renewing frame is exactly
+`sequence advanced && G2 && G3`, independent of current lease state. Deadline equality is
+expiry. Arm defaults false, disarm withdraws G1, and every fault revocation clears the arm
+latch so a fresh arm command is required.
+
+Outputs are `AuthorityOutput { steering_authorised, state, alarm, transition }`. `transition`
+identifies only supervisor state transitions. The output type deliberately has no vehicle
+mode, manoeuvre, RTL, Loiter, or disarm command. The six states, eleven events, guarded arm
+cells, destination-state authority/annunciation, simultaneous priority, dwells, ACK timeout,
+and latched recovery are exactly the total matrix in `SAFETY_CASE.md` §2.2.
+
+The executive routes `ArmCommand` only to integrity and supplies every emitted solution to
+the supervisor before deriving `SolutionEpoch.steering_authorised`. Its production-default
+skeleton constructor installs the real supervisor with an incomplete parameter register and
+is therefore fail-closed. `test_stub` remains explicitly stub-backed for focused legacy
+executive tests.
+
+## v5.1 (2026-07-23)
+
+v5.1 amends, but does not replace, v5. `AckCommand` is the helm acknowledgement sibling of
+`ArmCommand` on the measurement bus. It carries clock-service-stamped
+`host_monotonic_ns: u64` and `source_id: SourceId`, is journalled, and is routed by the
+executive only to `IntegrityAuthorityGate::acknowledge`; it never enters the estimator.
+Acknowledgement changes annunciation/latch state only as specified by the §2.2 matrix and
+does not itself restore steering authority.
+
+Every accepted IMU propagation emits a DR-fill solution epoch through both
+`IntegrityAuthorityGate::solution` and the NDJSON seam. This intentionally uses the IMU
+propagation cadence rather than an unverified decimator: lease renewal remains conditional
+on sequence advance plus G2/G3, while absolute-observation age independently revokes at
+`t_dr`. A grant-capable supervisor can be constructed only with complete parameters and an
+explicit calibration validator; the incomplete-register constructor is a hard error if
+given complete parameters.
+
+codex
+D31 matches the partial patch’s intended direction. I’m now compiling the focused crate to identify the three concrete failures before adjusting semantics; after that I’ll run the targeted regressions and inspect the full property-test behavior.
+exec
+/bin/bash -lc 'PATH="$HOME/.cargo/bin:$PATH" cargo test -p pnt-integrity' in /home/od/work/leo-pnt-wt-UA1
+ succeeded in 0ms:
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/pnt_integrity-692fee7c81656524)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/authority.rs (target/debug/deps/authority-ca381f8f927f32e4)
+
+running 12 tests
+test arming_with_an_existing_caution_solution_prealerts_on_the_arm_tick ... ok
+test arm_edges_during_warning_and_escalated_are_ignored ... ok
+test complete_params_require_an_explicit_calibration_validator ... ok
+test backward_time_revokes_but_repeated_time_is_accepted ... ok
+test dwell_and_ack_boundaries_are_exact ... ok
+test exhaustive_safety_case_section_2_2_matrix ... ok
+test every_missing_parameter_is_fail_closed ... ok
+test lease_is_non_circular_and_requires_sequence_advance ... ok
+test live_supervisor_fault_beats_disarm_in_both_same_tick_orders ... ok
+test revocation_is_latched_until_ack_dwell_and_fresh_arm ... ok
+test same_tick_rearm_solution_then_disarm_is_quiet_and_has_no_stale_lease ... ok
+test random_sequences_never_authorise_with_a_false_g_condition ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests pnt_integrity
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+exec
+/bin/bash -lc "sed -n '1,720p' crates/pnt-integrity/src/lib.rs; sed -n '1,480p' crates/pnt-integrity/tests/authority.rs; PATH=\""'$HOME/.cargo/bin:$PATH" cargo fmt --all -- --check; PATH="$HOME/.cargo/bin:$PATH" cargo clippy --all-targets -- -D warnings' in /home/od/work/leo-pnt-wt-UA1
+ exited 101 in 202ms:
+    Checking pnt-integrity v0.1.0 (/home/od/work/leo-pnt-wt-UA1/crates/pnt-integrity)
+error: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/pnt-integrity/src/lib.rs:191:5
+    |
+191 | /     const PRIORITY: [AuthorityEvent; 7] = [
+192 | |         AckTimeout,
+193 | |         Acknowledge,
+194 | |         Arm,
+...   |
+198 | |         CautionClear,
+199 | |     ];
+    | |______^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#items_after_statements
+    = note: `-D clippy::items-after-statements` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::items_after_statements)]`
+
+error: this if-then-else expression assigns a bool literal
+   --> crates/pnt-integrity/src/lib.rs:371:17
+    |
+371 | /                 if event != AuthorityEvent::Arm
+372 | |                     || !matches!(new, AuthorityState::Disarmed | AuthorityState::LatchedSafe)
+373 | |                     || self.event_tick_events.contains(&AuthorityEvent::Disarm)
+...   |
+377 | |                     self.pending_arm_edge = true;
+378 | |                 }
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_bool_assign
+    = note: `-D clippy::needless-bool-assign` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_bool_assign)]`
+help: you can reduce it to
+    |
+371 ~                 self.pending_arm_edge = !(event != AuthorityEvent::Arm
+372 +                     || !matches!(new, AuthorityState::Disarmed | AuthorityState::LatchedSafe) || self.event_tick_events.contains(&AuthorityEvent::Disarm));
+    |
+
+error: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/pnt-integrity/src/lib.rs:405:9
+    |
+405 | /         const PRIORITY: [E; 11] = [
+406 | |             E::G3Fall,
+407 | |             E::G2Fall,
+408 | |             E::LeaseExpiry,
+...   |
+416 | |             E::CautionClear,
+417 | |         ];
+    | |__________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#items_after_statements
+
+error: could not compile `pnt-integrity` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `pnt-integrity` (lib test) due to 3 previous errors
+
+exec
+/bin/bash -lc "rg -n \"Finding B|Opus N1|caution-band|same.tick|self-loop|U-A1.2\" .orchestration -g '*.md'" in /home/od/work/leo-pnt-wt-UA1
+ succeeded in 0ms:
+.orchestration/reports/U-S1.md:70:  three separated timers, real caution-band hysteresis, and a structurally testable
+.orchestration/reports/U-S1.md:103:| 5 | State machine claims "exactly one outcome per Boolean transition" but omits G1↓ from WARNING/ESCALATED/LATCHED-SAFE, G2/G3/G4 recovery in those states, G4 expiry while DISARMED, ack/recovery races | **Fixed per D17(c-matrix)** — §2.2 replaced with a **total 6-state × 11-event matrix** (every state × G1↓/↑, G2↓/↑, G3↓/↑, G4↯, Tack↯, ACK, ce, cc). Explicit self-loops define every previously-missing cell (recovery does not auto-clear a latch; G4↯ inert while DISARMED; G1↑ ignored in W/E). Added a precedence priority order + default rule proving **exactly one successor per cell** for all 66 cells. |
+.orchestration/DECISIONS.md:33:- D31 (2026-07-23, Fable arbitration): U-A1 round 2 split (Opus PASS w/ N1 tracked; Sonnet FAIL w/ Finding B reproduced) ruled FAIL — B and N1 share one root cause: same-tick event merge resolves from the tick-start snapshot and apply()'s side effects (armed/pending/lease clears) key to raw event handlers, not the final resolved transition, desyncing state/annunciation from the authority flags (never fail-open — output() is a defense-in-depth AND — but helm-facing annunciation is wrong, incl. quiet-disarm shown as Nominal then spurious Warning). U-A1.2: rework the merge so side effects derive from the resolved destination and Disarm/faults short-circuit regardless of self-loop cells; fix Opus N1 (caution-band suppression) and N2 (stale v5 sentence → mark amended in v5.1); add a state/flags consistency invariant to the property test; regression tests for both reviewers' exact sequences. Both seats re-verify.
+.orchestration/reports/U-A1.md:1:# U-A1 report — authority supervisor fix rounds U-A1.1 and U-A1.2
+.orchestration/reports/U-A1.md:12:U-A1.2 fixes the shared round-2 same-tick root cause. `apply` now reprojects the arm latch,
+.orchestration/reports/U-A1.md:14:priority and Disarm is unconditional even when its tick-start matrix cell is a self-loop.
+.orchestration/reports/U-A1.md:15:An Arm plus an already-caution-band solution resolves directly to `Caution`/`PreAlert`.
+.orchestration/reports/U-A1.md:35:2. **Sonnet S2 — fixed.** `AuthoritySupervisor::apply` performs live same-tick event merging
+.orchestration/reports/U-A1.md:36:   through `simultaneous_successor`. `live_supervisor_fault_beats_disarm_in_both_same_tick_orders`
+.orchestration/reports/U-A1.md:53:8. **Sonnet Finding B — fixed in U-A1.2.** The exact `LatchedSafe` → fresh Arm + good
+.orchestration/reports/U-A1.md:56:   `same_tick_rearm_solution_then_disarm_is_quiet_and_has_no_stale_lease`.
+.orchestration/reports/U-A1.md:57:9. **Opus N1 — fixed in U-A1.2.** A simultaneous successful Arm and caution-band
+.orchestration/reports/U-A1.md:61:10. **Opus N2 — fixed in U-A1.2.** The superseded default-validator sentence in v5 is
+.orchestration/reports/U-A1.md:63:11. **Consistency invariant — added in U-A1.2.** `consistency_invariant` explicitly requires
+.orchestration/reports/U-A1.md:82:| §2.2 total matrix and simultaneous priority | `matrix_successor`; live `apply` accumulation into `simultaneous_successor` | 66-cell `exhaustive_safety_case_section_2_2_matrix`; `live_supervisor_fault_beats_disarm_in_both_same_tick_orders` |
+
+codex
+The compile failures are all Clippy/format issues, but inspection also exposed a substantive edge hidden by the focused passing tests: an Arm followed by a bad same-tick solution could leave a pending arm edge because the fault event was never merged from a self-loop origin. I’m fixing that as part of D31’s explicit self-loop dominance requirement and adding a regression so a later good solution cannot grant without a fresh Arm.
+apply patch
+patch: completed
+/home/od/work/leo-pnt-wt-UA1/crates/pnt-integrity/src/lib.rs
+/home/od/work/leo-pnt-wt-UA1/crates/pnt-integrity/tests/authority.rs
+diff --git a/crates/pnt-integrity/src/lib.rs b/crates/pnt-integrity/src/lib.rs
+index 8ffd8c023a4fc8e2496fc6d63c0ffc3895d27f5d..80b5473af6a1e7ce07468d7aecc7971ed1e93f80
+--- a/crates/pnt-integrity/src/lib.rs
++++ b/crates/pnt-integrity/src/lib.rs
+@@ -171,6 +171,15 @@
+         AckTimeout, Acknowledge, Arm, CautionClear, CautionEnter, Disarm, G2Fall, G2Rise, G3Fall,
+         G3Rise, LeaseExpiry,
+     };
++    const PRIORITY: [AuthorityEvent; 7] = [
++        AckTimeout,
++        Acknowledge,
++        Arm,
++        G2Rise,
++        G3Rise,
++        CautionEnter,
++        CautionClear,
++    ];
+     let arm_enters_authority = arm_guard
+         && events.contains(&Arm)
+         && matches!(state, AuthorityState::Disarmed | AuthorityState::LatchedSafe);
+@@ -188,15 +197,6 @@
+     if events.contains(&Disarm) {
+         return AuthorityState::Disarmed;
+     }
+-    const PRIORITY: [AuthorityEvent; 7] = [
+-        AckTimeout,
+-        Acknowledge,
+-        Arm,
+-        G2Rise,
+-        G3Rise,
+-        CautionEnter,
+-        CautionClear,
+-    ];
+     for event in PRIORITY {
+         if events.contains(&event) {
+             let mut successor = matrix_successor(state, event, arm_guard);
+@@ -368,14 +368,21 @@
+             | AuthorityState::LatchedSafe => {
+                 self.armed = false;
+                 self.lease_deadline_ns = None;
+-                if event != AuthorityEvent::Arm
+-                    || !matches!(new, AuthorityState::Disarmed | AuthorityState::LatchedSafe)
+-                    || self.event_tick_events.contains(&AuthorityEvent::Disarm)
+-                {
+-                    self.pending_arm_edge = false;
+-                } else {
+-                    self.pending_arm_edge = true;
+-                }
++                let fault_or_disarm = self.event_tick_events.iter().any(|event| {
++                    matches!(
++                        event,
++                        AuthorityEvent::G2Fall
++                            | AuthorityEvent::G3Fall
++                            | AuthorityEvent::LeaseExpiry
++                            | AuthorityEvent::Disarm
++                    )
++                });
++                self.pending_arm_edge = !fault_or_disarm
++                    && self.event_tick_events.contains(&AuthorityEvent::Arm)
++                    && matches!(
++                        self.event_tick_start_state,
++                        AuthorityState::Disarmed | AuthorityState::LatchedSafe
++                    );
+             }
+         }
+     }
+@@ -386,6 +393,19 @@
+         arm_guard: bool,
+     ) -> Option<AuthorityEvent> {
+         use AuthorityEvent as E;
++        const PRIORITY: [E; 11] = [
++            E::G3Fall,
++            E::G2Fall,
++            E::LeaseExpiry,
++            E::Disarm,
++            E::AckTimeout,
++            E::Acknowledge,
++            E::Arm,
++            E::G2Rise,
++            E::G3Rise,
++            E::CautionEnter,
++            E::CautionClear,
++        ];
+         for fault in [E::G3Fall, E::G2Fall, E::LeaseExpiry] {
+             if events.contains(&fault)
+                 && (matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
+@@ -402,19 +422,6 @@
+         if events.contains(&E::Disarm) {
+             return Some(E::Disarm);
+         }
+-        const PRIORITY: [E; 11] = [
+-            E::G3Fall,
+-            E::G2Fall,
+-            E::LeaseExpiry,
+-            E::Disarm,
+-            E::AckTimeout,
+-            E::Acknowledge,
+-            E::Arm,
+-            E::G2Rise,
+-            E::G3Rise,
+-            E::CautionEnter,
+-            E::CautionClear,
+-        ];
+         PRIORITY.into_iter().find(|event| {
+             events.contains(event) && matrix_successor(state, *event, arm_guard) != state
+         })
+@@ -513,15 +520,16 @@
+         };
+         self.g2 = new_g2;
+         self.g3 = new_g3;
+-        let fault_can_revoke = matches!(
++        let fault_can_revoke_or_cancel_arm = matches!(
+             self.state,
+             AuthorityState::Nominal | AuthorityState::Caution
+-        ) || (self.event_tick_ns == Some(now_ns)
+-            && matches!(
+-                self.event_tick_start_state,
+-                AuthorityState::Nominal | AuthorityState::Caution
+-            ));
+-        if fault_can_revoke && (!new_g3 || !new_g2) {
++        ) || self.pending_arm_edge
++            || (self.event_tick_ns == Some(now_ns)
++                && matches!(
++                    self.event_tick_start_state,
++                    AuthorityState::Nominal | AuthorityState::Caution
++                ));
++        if fault_can_revoke_or_cancel_arm && (!new_g3 || !new_g2) {
+             self.apply(
+                 fault.unwrap_or(if new_g3 {
+                     AuthorityEvent::G2Fall
+diff --git a/crates/pnt-integrity/tests/authority.rs b/crates/pnt-integrity/tests/authority.rs
+index 58e33c3aa44e30379feaf64fcddd22f975d2b9b9..c95b98ae11372a5f0623cd427b2084142ccb764f
+--- a/crates/pnt-integrity/tests/authority.rs
++++ b/crates/pnt-integrity/tests/authority.rs
+@@ -123,6 +123,11 @@
+         simultaneous_successor(S::Warning, &[E::Acknowledge, E::AckTimeout], true),
+         S::Escalated
+     );
++    assert_eq!(
++        simultaneous_successor(S::Disarmed, &[E::Arm, E::G2Fall], true),
++        S::Warning,
++        "fault must dominate an Arm even though its origin-state cell is a self-loop"
++    );
+     for state in states {
+         let (authorised, alarm) = state.output();
+         assert_eq!(authorised, matches!(state, S::Nominal | S::Caution));
+@@ -294,6 +299,27 @@
+     assert!(s.consistency_invariant());
+ }
+ 
++#[test]
++fn same_tick_fault_cancels_arm_from_a_self_loop_origin() {
++    let good = state_with_accuracy(0.5);
++    let bad = state_with_accuracy(9.0);
++    let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
++
++    arm(&mut s, 0);
++    solution(&mut s, 1, 0, &bad);
++    assert_eq!(s.state(), S::Disarmed);
++    assert!(s.consistency_invariant());
++
++    solution(&mut s, 2, 1, &good);
++    assert_eq!(s.state(), S::Disarmed, "fault must consume the stale Arm edge");
++    assert!(!s.output().steering_authorised);
++
++    arm(&mut s, 2);
++    solution(&mut s, 3, 2, &good);
++    assert_eq!(s.state(), S::Nominal, "a fresh Arm may grant normally");
++    assert!(s.consistency_invariant());
++}
++
+ fn nominal_supervisor(good: &FilterState) -> AuthoritySupervisor {
+     let mut supervisor = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+     arm(&mut supervisor, 0);
+
+diff --git a/crates/pnt-integrity/src/lib.rs b/crates/pnt-integrity/src/lib.rs
+index 8ffd8c023a4fc8e2496fc6d63c0ffc3895d27f5d..80b5473af6a1e7ce07468d7aecc7971ed1e93f80
+--- a/crates/pnt-integrity/src/lib.rs
++++ b/crates/pnt-integrity/src/lib.rs
+@@ -171,6 +171,15 @@
+         AckTimeout, Acknowledge, Arm, CautionClear, CautionEnter, Disarm, G2Fall, G2Rise, G3Fall,
+         G3Rise, LeaseExpiry,
+     };
++    const PRIORITY: [AuthorityEvent; 7] = [
++        AckTimeout,
++        Acknowledge,
++        Arm,
++        G2Rise,
++        G3Rise,
++        CautionEnter,
++        CautionClear,
++    ];
+     let arm_enters_authority = arm_guard
+         && events.contains(&Arm)
+         && matches!(state, AuthorityState::Disarmed | AuthorityState::LatchedSafe);
+@@ -188,15 +197,6 @@
+     if events.contains(&Disarm) {
+         return AuthorityState::Disarmed;
+     }
+-    const PRIORITY: [AuthorityEvent; 7] = [
+-        AckTimeout,
+-        Acknowledge,
+-        Arm,
+-        G2Rise,
+-        G3Rise,
+-        CautionEnter,
+-        CautionClear,
+-    ];
+     for event in PRIORITY {
+         if events.contains(&event) {
+             let mut successor = matrix_successor(state, event, arm_guard);
+@@ -368,14 +368,21 @@
+             | AuthorityState::LatchedSafe => {
+                 self.armed = false;
+                 self.lease_deadline_ns = None;
+-                if event != AuthorityEvent::Arm
+-                    || !matches!(new, AuthorityState::Disarmed | AuthorityState::LatchedSafe)
+-                    || self.event_tick_events.contains(&AuthorityEvent::Disarm)
+-                {
+-                    self.pending_arm_edge = false;
+-                } else {
+-                    self.pending_arm_edge = true;
+-                }
++                let fault_or_disarm = self.event_tick_events.iter().any(|event| {
++                    matches!(
++                        event,
++                        AuthorityEvent::G2Fall
++                            | AuthorityEvent::G3Fall
++                            | AuthorityEvent::LeaseExpiry
++                            | AuthorityEvent::Disarm
++                    )
++                });
++                self.pending_arm_edge = !fault_or_disarm
++                    && self.event_tick_events.contains(&AuthorityEvent::Arm)
++                    && matches!(
++                        self.event_tick_start_state,
++                        AuthorityState::Disarmed | AuthorityState::LatchedSafe
++                    );
+             }
+         }
+     }
+@@ -386,6 +393,19 @@
+         arm_guard: bool,
+     ) -> Option<AuthorityEvent> {
+         use AuthorityEvent as E;
++        const PRIORITY: [E; 11] = [
++            E::G3Fall,
++            E::G2Fall,
++            E::LeaseExpiry,
++            E::Disarm,
++            E::AckTimeout,
++            E::Acknowledge,
++            E::Arm,
++            E::G2Rise,
++            E::G3Rise,
++            E::CautionEnter,
++            E::CautionClear,
++        ];
+         for fault in [E::G3Fall, E::G2Fall, E::LeaseExpiry] {
+             if events.contains(&fault)
+                 && (matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
+@@ -402,19 +422,6 @@
+         if events.contains(&E::Disarm) {
+             return Some(E::Disarm);
+         }
+-        const PRIORITY: [E; 11] = [
+-            E::G3Fall,
+-            E::G2Fall,
+-            E::LeaseExpiry,
+-            E::Disarm,
+-            E::AckTimeout,
+-            E::Acknowledge,
+-            E::Arm,
+-            E::G2Rise,
+-            E::G3Rise,
+-            E::CautionEnter,
+-            E::CautionClear,
+-        ];
+         PRIORITY.into_iter().find(|event| {
+             events.contains(event) && matrix_successor(state, *event, arm_guard) != state
+         })
+@@ -513,15 +520,16 @@
+         };
+         self.g2 = new_g2;
+         self.g3 = new_g3;
+-        let fault_can_revoke = matches!(
++        let fault_can_revoke_or_cancel_arm = matches!(
+             self.state,
+             AuthorityState::Nominal | AuthorityState::Caution
+-        ) || (self.event_tick_ns == Some(now_ns)
+-            && matches!(
+-                self.event_tick_start_state,
+-                AuthorityState::Nominal | AuthorityState::Caution
+-            ));
+-        if fault_can_revoke && (!new_g3 || !new_g2) {
++        ) || self.pending_arm_edge
++            || (self.event_tick_ns == Some(now_ns)
++                && matches!(
++                    self.event_tick_start_state,
++                    AuthorityState::Nominal | AuthorityState::Caution
++                ));
++        if fault_can_revoke_or_cancel_arm && (!new_g3 || !new_g2) {
+             self.apply(
+                 fault.unwrap_or(if new_g3 {
+                     AuthorityEvent::G2Fall
+diff --git a/crates/pnt-integrity/tests/authority.rs b/crates/pnt-integrity/tests/authority.rs
+index 58e33c3aa44e30379feaf64fcddd22f975d2b9b9..c95b98ae11372a5f0623cd427b2084142ccb764f
+--- a/crates/pnt-integrity/tests/authority.rs
++++ b/crates/pnt-integrity/tests/authority.rs
+@@ -123,6 +123,11 @@
+         simultaneous_successor(S::Warning, &[E::Acknowledge, E::AckTimeout], true),
+         S::Escalated
+     );
++    assert_eq!(
++        simultaneous_successor(S::Disarmed, &[E::Arm, E::G2Fall], true),
++        S::Warning,
++        "fault must dominate an Arm even though its origin-state cell is a self-loop"
++    );
+     for state in states {
+         let (authorised, alarm) = state.output();
+         assert_eq!(authorised, matches!(state, S::Nominal | S::Caution));
+@@ -294,6 +299,27 @@
+     assert!(s.consistency_invariant());
+ }
+ 
++#[test]
++fn same_tick_fault_cancels_arm_from_a_self_loop_origin() {
++    let good = state_with_accuracy(0.5);
++    let bad = state_with_accuracy(9.0);
++    let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
++
++    arm(&mut s, 0);
++    solution(&mut s, 1, 0, &bad);
++    assert_eq!(s.state(), S::Disarmed);
++    assert!(s.consistency_invariant());
++
++    solution(&mut s, 2, 1, &good);
++    assert_eq!(s.state(), S::Disarmed, "fault must consume the stale Arm edge");
++    assert!(!s.output().steering_authorised);
++
++    arm(&mut s, 2);
++    solution(&mut s, 3, 2, &good);
++    assert_eq!(s.state(), S::Nominal, "a fresh Arm may grant normally");
++    assert!(s.consistency_invariant());
++}
++
+ fn nominal_supervisor(good: &FilterState) -> AuthoritySupervisor {
+     let mut supervisor = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+     arm(&mut supervisor, 0);
+
+exec
+/bin/bash -lc 'PATH="$HOME/.cargo/bin:$PATH" cargo fmt --all && PATH="$HOME/.cargo/bin:$PATH" cargo test -p pnt-integrity && PATH="$HOME/.cargo/bin:$PATH" cargo clippy -p pnt-integrity --all-targets -- -D warnings' in /home/od/work/leo-pnt-wt-UA1

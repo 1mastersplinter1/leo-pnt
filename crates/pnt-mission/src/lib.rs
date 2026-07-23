@@ -5,7 +5,10 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use pnt_ephemeris::{EphemerisError, EphemerisStore};
 use pnt_journal::{FileJournals, JournalError, RunManifest, RunMetadata};
 use pnt_predictor::{predict, ReceiverState, SatelliteState};
-use pnt_replay::{replay_paired, ReplayError, ReplayReport};
+use pnt_replay::{
+    replay_paired, replay_paired_configured, ReceiverPrior, ReplayDopplerConfig, ReplayError,
+    ReplayReport, RunSummary,
+};
 use pnt_tracker::synth::{BpskReference, SynthConfig, Synthesizer};
 use pnt_tracker::{ConfigError, EnvelopeMetadata, TrackOutcome, TrackerConfig};
 use pnt_types::{
@@ -94,8 +97,16 @@ pub struct StudyReport {
     pub caveat: String,
     pub mission: MissionSummary,
     pub replay: ReplayReport,
+    pub three_way: ThreeWayTable,
     pub qualitative_demonstration: QualitativeDemonstration,
     pub integration_gaps: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThreeWayTable {
+    pub aided: RunSummary,
+    pub denied_dr_only: RunSummary,
+    pub denied_with_doppler: RunSummary,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -345,20 +356,39 @@ pub fn run_study(
     let output = output.as_ref();
     let mission = generate_mission(output, config)?;
     let replay = replay_paired(output, 1)?;
+    let doppler_config = ReplayDopplerConfig {
+        ephemeris_tle: TLE.to_owned(),
+        // The denied filter intentionally has no GNSS-derived geodetic initialization.
+        // Disable elevation screening while retaining the same ephemeris and measurements.
+        elevation_mask_degrees: None,
+        chi_square_threshold: None,
+        receiver_prior: Some(ReceiverPrior {
+            position_ecef_m: local_to_ecef(0.0, 0.0),
+            velocity_ecef_mps: local_vector_to_ecef(
+                config.speed_through_water_mps + config.current_north_mps,
+                config.current_east_mps,
+            ),
+            position_variance_m2: [1.0; 3],
+            velocity_variance_mps2: [1.0; 3],
+        }),
+    };
+    let doppler_replay = replay_paired_configured(output, 1, Some(&doppler_config))?;
     let aided = replay.aided.horizontal_position_error_m.rms;
     let withheld = replay.withheld.horizontal_position_error_m.rms;
     let report = StudyReport {
         caveat: "SYNTHETIC DEMONSTRATION ONLY — not a performance claim; real-signal behavior is [UNVERIFIED].".into(),
+        three_way: ThreeWayTable {
+            aided: replay.aided.clone(),
+            denied_dr_only: replay.withheld.clone(),
+            denied_with_doppler: doppler_replay.withheld,
+        },
         qualitative_demonstration: QualitativeDemonstration {
             aided_smaller_than_withheld: aided.zip(withheld).is_some_and(|(a, w)| a < w),
             doppler_rich_constant_heading_present: mission.doppler_count > 0
                 && mission.constant_heading_samples > 0,
             outage_or_turn_present: mission.turn_samples > 0,
         },
-        integration_gaps: vec![
-            "pnt-replay does not attach an EphemerisStore/DopplerPipeline, so recorded Doppler is rejected during paired replay".into(),
-            "pnt-replay exposes no comparison-pair exclusion count (D35 integration field)".into(),
-        ],
+        integration_gaps: vec![],
         mission,
         replay,
     };

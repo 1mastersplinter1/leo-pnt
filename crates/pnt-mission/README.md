@@ -12,6 +12,8 @@ Run the smoke study with:
 cargo run -p pnt-mission --bin mission-study -- --seed 1 --out /tmp/mission-run
 ```
 
-The emitted headline table is a synthetic demonstration, not a real-signal performance
-claim. Tracker-in-loop generation and Doppler assimilation in paired replay are explicitly
-reported integration gaps in this checkout.
+The emitted `three_way` table reports aided, denied dead-reckoning-only, and denied with
+Doppler from the same immutable journal. The configured replay reconstructs the mission's
+fixture ephemeris and elevation mask, so the final column assimilates journaled tracker
+Doppler. This is a synthetic demonstration of integration and qualitative improvement, not
+a real-signal or operational performance claim; real-signal behavior remains unverified.

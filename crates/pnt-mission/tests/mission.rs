@@ -1,7 +1,9 @@
 use pnt_config::GnssAuthority;
 use pnt_journal::{MeasurementJournalRecord, MeasurementReader, TruthJournalRecord, TruthReader};
 use pnt_mission::{generate_mission, read_manifest, run_study, MissionConfig};
-use pnt_replay::replay_directory;
+use pnt_replay::{
+    replay_directory, replay_directory_configured, ReceiverPrior, ReplayDopplerConfig,
+};
 use pnt_types::{MeasurementPayload, Provenance};
 use std::{fs, path::Path};
 use tempfile::TempDir;
@@ -109,6 +111,17 @@ fn paired_study_is_a_synthetic_qualitative_rehearsal() {
         report.mission.truth_count
     );
     assert_eq!(report.replay.withheld.gnss_fusion_routes, 0);
+    let dr = &report.three_way.denied_dr_only;
+    let doppler = &report.three_way.denied_with_doppler;
+    assert!(doppler.doppler_fusion_routes > 0);
+    assert!(doppler.measurement_updates > dr.measurement_updates);
+    assert!(
+        doppler.horizontal_position_error_m.rms.unwrap()
+            < dr.horizontal_position_error_m.rms.unwrap(),
+        "synthetic Doppler rehearsal should improve position RMS: DR={:?}, Doppler={:?}",
+        dr.horizontal_position_error_m.rms,
+        doppler.horizontal_position_error_m.rms
+    );
 }
 
 #[test]
@@ -154,15 +167,44 @@ fn d35_comparison_sign_input_identity_and_production_repeat() {
         "paired modes must receive the identical input count"
     );
 
-    // D35 requests a comparison-pair exclusion count, but schema v1 exposes exclusions only
-    // on each run. Keep the observable invariant direct and leave the API gap in the report.
+    // Schema v2 separates missing mode pairs from pairs lacking nearby truth.
     assert!(report.replay.aided.excluded_no_near_truth > 0);
     assert!(
         report.replay.comparison.horizontal_position_error_m.n
             <= report.replay.aided.matched_epochs
     );
-    assert!(report
-        .integration_gaps
-        .iter()
-        .any(|gap| gap.contains("comparison-pair exclusion count")));
+    assert_eq!(
+        report.replay.comparison.excluded_no_paired_epoch
+            + report.replay.comparison.excluded_no_near_truth
+            + report.replay.comparison.horizontal_position_error_m.n,
+        report.replay.aided.matched_epochs + report.replay.aided.excluded_no_near_truth
+    );
+
+    let configured = ReplayDopplerConfig {
+        ephemeris_tle: include_str!("../../pnt-ephemeris/tests/fixtures/iss.tle").into(),
+        elevation_mask_degrees: None,
+        chi_square_threshold: None,
+        receiver_prior: Some(ReceiverPrior {
+            position_ecef_m: [6_378_137.0, 0.0, 0.0],
+            velocity_ecef_mps: [0.0, -0.1, 3.25],
+            position_variance_m2: [1.0; 3],
+            velocity_variance_mps2: [1.0; 3],
+        }),
+    };
+    let first = replay_directory_configured(
+        directory.path(),
+        GnssAuthority::RecordedOnly,
+        Some(&configured),
+    )
+    .unwrap();
+    let second = replay_directory_configured(
+        directory.path(),
+        GnssAuthority::RecordedOnly,
+        Some(&configured),
+    )
+    .unwrap();
+    assert_eq!(
+        first, second,
+        "denied-with-Doppler replay must be bit-exact"
+    );
 }

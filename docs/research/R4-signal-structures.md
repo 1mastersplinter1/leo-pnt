@@ -1,0 +1,305 @@
+# U-R4 — LEO downlink signal structures for `pnt-tracker` correlation
+
+**Access date for all live sources:** 2026-07-23  
+**Contract:** v5.1 (read against `.orchestration/CONTRACTS.md`)  
+**Scope:** Published structure usable for **Doppler correlation** (beacon / preamble / sync), not full payload decode.  
+**Legal baseline (all constellations):** Passive receive-only SoOP for research navigation is the intended use of the cited academic reverse-engineering literature. None of the sources grant a commercial license to SpaceX/Iridium/Orbcomm/OneWeb intellectual property. **Do not retransmit.** Content decoding of user traffic may be restricted by local law; this tracker only needs **known or capture-derived reference waveforms for correlation peaks**, not message content. Open-source tools (e.g. gr-iridium) carry their own license (GPL-family for GNU Radio OOT modules). Academic papers are copyrighted; sequence values are published for scientific replication—treat citation and fair research use as mandatory.
+
+---
+
+## 1. Starlink Ku-band downlink (PSS / SSS)
+
+### 1.1 Primary sources
+
+| Source | URL | Access |
+|--------|-----|--------|
+| Humphreys et al., *Signal Structure of the Starlink Ku-Band Downlink* (IEEE TAES / UT Austin PDF) | https://radionavlab.ae.utexas.edu/wp-content/uploads/starlink_structure.pdf | 2026-07-23 **[VERIFIED]** |
+| Qin et al., *Timing Properties of the Starlink Ku-Band Downlink* (arXiv) | https://arxiv.org/html/2501.05302v1 | 2026-07-23 **[VERIFIED]** |
+| Kozhaya & Kassas / “Unveiling Starlink for PNT” / joint tracking (full OFDM beacon vs PSS/SSS; tone degradation) | e.g. https://people.engineering.osu.edu/media/document/2025-09-26/kassas_joint_tracking_and_beacon_refinement_of_wideband_starlink_leo_signals_for_pnt.pdf ; NAVI / OSU PDFs | 2026-07-23 **[VERIFIED]** secondary |
+| Tone power reduction post-2023 | Same Kassas line + Soualle survey citing Kozhaya/Lichtenberger | 2026-07-23 **[VERIFIED]** as reported in secondary literature |
+
+### 1.2 Channelization and frame numerology **[VERIFIED]**
+
+From Humphreys et al. Table II / results:
+
+| Parameter | Value |
+|-----------|--------|
+| Channel bandwidth / info rate \(F_s\) | **240 MHz** |
+| Subcarriers \(N\) | **1024** |
+| Cyclic prefix samples \(N_g\) | **32** |
+| Subcarrier spacing \(F\) | **234375 Hz** |
+| OFDM symbol duration \(T_{\mathrm{sym}}\) | **4.4 µs** (\(T = 4.266…\) µs useful + \(T_g = 0.133…\) µs CP) |
+| Frame period \(T_f\) | **1/750 s ≈ 1.333 ms** |
+| Nonzero OFDM symbols per frame \(N_{\mathrm{sf}}\) | **302** |
+| Frame guard \(T_{\mathrm{fg}}\) | **≈ 4.533 µs** |
+| Nominal channels | **8 × 250 MHz** spacing in 10.7–12.7 GHz; **10 MHz** inter-channel guard |
+| Channel centers | \(F_{c_i} = 10.7 + F_s/2 + 0.25(i - 1/2)\) GHz (i.e. mid-channel gutter at channel midpoint) |
+| Mid-channel gutter | **4 subcarriers** vacant in OFDM symbols (not in PSS) |
+| Channels 1–2 | Reported **vacant** (radio-astronomy protection near 10.6–10.7 GHz) at time of paper |
+
+Frames may be **present or absent** depending on demand; Humphreys observed occupancy never below ~1 frame / 30 slots (~40 ms) in studied captures—**not a guaranteed always-on continuous stream**.
+
+### 1.3 PSS construction (exact published generator) **[VERIFIED]**
+
+- **Role:** Primary time/frequency acquisition; natively **time-domain** (not a standard frequency-domain OFDM symbol).
+- **Length:** Full symbol interval including CP: \((N+N_g)\) samples at \(F_s\) → duration \(T_{\mathrm{sym}}\).
+- **Structure:** Cyclic prefix + **8 repetitions** of a length-\(N/8 = 128\) subsequence; **CP and first repetition polarity-inverted**.
+- **Subsequence source:** Length-**127** maximal m-sequence from 7-stage Fibonacci LFSR with primitive polynomial **\(1 + D^3 + D^7\)**, initial state \((a_{-1},\ldots,a_{-7}) = (0,0,1,1,0,1,0)\). Append 0 → 128-bit hex:
+  - **`qpss = C1B5D191024D3DC3F8EC52FAA16F3958`**
+- **Modulation:** Symmetric DPSK (\(\pm\pi/2\) phase steps) of that m-sequence; closed form in paper eqs. (35)–(37).
+- **Universality:** **Identical PSS on every frame and every satellite** in the studied fleet → **SV identity is not in the sequence**; resolve SV via Doppler + ephemeris (SupGP/TLE).
+
+### 1.4 SSS construction **[VERIFIED]**
+
+- Second symbol: **standard 4QAM OFDM** with published frequency-domain bit pattern **`qsss`** (long hex in Humphreys §VI; first nonzero symbols \((s_2,\ldots)=(3,0,0,0,0,2,1,1)\)).
+- Mid-channel gutter zeros; usable for channel estimation across subcarriers.
+- **Identical across constellation.**
+
+### 1.5 CSS / CM1SS / pilots **[PARTIALLY VERIFIED]**
+
+- Coda (last nonzero symbol) and coda-minus-one partially predictable; full CSS/CM1SS deferred by Humphreys to a later publication (as of 2023 paper).
+- Successors (Neinavaie, Kassas “full OFDM beacon”) estimate **additional default/pilot structure** by capture when demand is low—**not fully closed-form published like PSS/SSS**.
+
+### 1.6 Does 2.5–5 MHz suffice?
+
+**Yes for PSS/SSS correlation Doppler, with caveats—supported by published practice.**
+
+| Fact | Implication |
+|------|-------------|
+| PSS energy spans **full 240 MHz** (time-domain m-sequence subsequence) | Narrowband replica is a **band-limited** PSS/SSS; correlation still works but processing gain and delay resolution drop vs full band |
+| Kassas / OSU: **5 MHz LNBF** receivers correlating PSS/SSS vs “full OFDM beacon” | PSS/SSS-only is usable; full beacon gave **~18 dB** higher empirical \(C/N_0\) at 5 MHz |
+| Contract / design baseline: **2.5–5 MHz** tracker BW | Matches published SoOP practice for LNBF + SDR |
+| Doppler search at Ku LEO | Hundreds of kHz; acquisition needs coarse ephemeris wipe-off + residual search |
+
+**Conclusion for correlator design:**  
+- **Minimum published reference:** coherent **PSS (+ optional SSS)** at the channel IF after LNB, sample rate covering **2.5–5 MHz** processing BW.  
+- **Preferred if capture allows:** longer predictable segment / “full beacon” estimated offline (capture-based), not fully published.
+
+### 1.7 Post-2023 changes **[VERIFIED in secondary literature]**
+
+- **Pilot / gutter tone comb** (historically ~9 tones, ~44 kHz spacing) used in early Doppler papers: **power reduced after ~Dec 2023** below reliable LNBF tracking thresholds (Kassas et al.; Soualle survey).  
+- **Handoff brief is correct:** do **not** architect on tones.  
+- **PSS/SSS structure** remains the tractable published observable; Qin et al. (2025) still use coherent PSS+SSS on v1.0/v1.5/v2.0-Mini (captures through 2024) for timing—**no published report of PSS/SSS redesign**.  
+- Frame-clock quirks (once-per-second jumps on some SV versions; 15 s FAI boundaries; loose GPS disciplining) matter for **pseudorange**, less for **short-term Doppler** from correlation peaks—but flag for estimator integrity.
+
+### 1.8 Correlator reference generator — needs list
+
+| Item | Fully published? |
+|------|------------------|
+| PSS samples from LFSR + `qpss` + inversion rules + \(F_s,N,N_g\) | **Yes** |
+| SSS frequency-domain symbols from `qsss` | **Yes** |
+| Relative PSS–SSS phase for coherent dual-symbol replica | **Yes** (constant across frames/SVs per Humphreys) |
+| Channel \(F_c\), LNB LO → IF | Public regulatory + Humphreys formula |
+| CSS / full-frame default payload | **No** — capture RE / third-party |
+| Per-SV unique sequence | **None** — combinatorial SV association required |
+
+**Licensing:** Paper © authors / IEEE; sequence publication is for scientific use. No SpaceX license. Passive research correlation is the stated purpose of the paper.
+
+---
+
+## 2. Iridium (ring-alert / simplex / broadcast bursts)
+
+### 2.1 Primary sources
+
+| Source | URL | Access |
+|--------|-----|--------|
+| gr-iridium README (muccc) | https://github.com/muccc/gr-iridium | 2026-07-23 **[VERIFIED]** |
+| Decode Systems Iridium notes | http://www.decodesystems.com/iridium.html | 2026-07-23 (fetch failed once; content from search cache / prior crawl) **[ASSUMED partial]** |
+| Orabi, Khalife, Kassas — Iridium NEXT + Orbcomm Doppler SoOP | https://people.engineering.osu.edu/sites/default/files/2022-10/Kassas_Opportunistic_navigation_with_Doppler_measurements_from_Iridium_Next_and_Orbcomm_LEO_satellites.pdf | 2026-07-23 **[VERIFIED]** |
+| Tan et al. / Oligeri IRA spoofing-detection literature (simplex always present) | MDPI / arXiv line | secondary |
+
+### 2.2 RF and access structure **[VERIFIED / literature consensus]**
+
+| Item | Published value |
+|------|-----------------|
+| Band | **1616–1626.5 MHz** L-band (gr-iridium: currently ~**1618–1626.5** MHz used, ~8.5 MHz) |
+| Channel spacing | **41.6667 kHz**, ~**35 kHz** occupied BW; ~252 carriers |
+| Access | **TDMA** on downlink + FDMA across carriers |
+| TDMA frame | **90 ms** class (literature / toolkit) |
+| Modulation | **DE-QPSK** (emission **41K7Q7W** class), **25 000 symbols/s** |
+| Simplex strip | Upper edge **~1626–1626.5 MHz** reserved for **paging / acquisition / ring alert** (not full duplex traffic) |
+
+### 2.3 What is “always on” for Doppler?
+
+**Not a continuous CW beacon.** Usable SoOP is **periodic broadcast bursts** on simplex channels:
+
+| Burst class | Timing (published) | Notes |
+|-------------|-------------------|--------|
+| **Ring Alert (IRA)** | Beam schedule ~**90 ms** step across beams; **per-beam revisit ~4.32 s**; burst length often cited **~2.56 ms** (Orabi) or **7–20 ms** class (Decode Systems—treat exact length as **uncertain**) | Unencrypted broadcast used heavily in SoOP / spoofing-detection literature |
+| **Paging / acquisition / “Global Burst”** | Same simplex region; gr-iridium example RTL configs tune **Ring Alert + Pager/Global Burst + STL-related** channels | Regular but not continuous |
+| **Duplex user traffic** | Demand-driven; weaker for always-available correlation | Optional, not primary SoOP |
+
+**No continuous always-on tone** on subscriber downlink comparable to old Starlink tone combs.
+
+### 2.4 Burst / preamble structure for correlation **[VERIFIED from gr-iridium + SoOP papers]**
+
+From gr-iridium and related reverse engineering:
+
+1. **12-symbol BPSK unique word / sync** at the start of each frame (detector timestamp = middle of first sync symbol).  
+2. Rest of frame: **QPSK** data (ring-alert frames short—order **~115 symbols** in GitHub discussion).  
+3. SoOP papers (Orabi et al.): classic Iridium burst model = **unmodulated tone prefix** + unique word + payload; Doppler extracted by **M-th power / FFT** on QPSK-wiped blocks (non-coherent to full known data).
+
+**STL (Iridium Time & Location commercial):** separate engineered continuous-wave marker + PRN-like structure once every ~1.4 s—**proprietary / licensed**, not free open structure for this tracker.
+
+### 2.5 Correlator reference generator — needs list
+
+| Item | Status |
+|------|--------|
+| Channel centers in simplex (ring alert / pager) | **Published / community maps** (gr-iridium examples) |
+| Symbol rate 25 ksps, DE-QPSK | **Published** |
+| **12-symbol BPSK sync word bit pattern** | Used by gr-iridium; **exact bits are in open-source implementation**—treat as **community-RE published** (verify against live capture before freezing tracker constants) |
+| Unmodulated tone length | **Literature disagrees** (ms-scale); **capture-verify** |
+| Full IRA payload sequences | **Not needed** for Doppler; content may be decoded by toolkit but is not a stable global PRN |
+| Burst epoch prediction | Needs ephemeris + beam schedule model; **partially published, residual RE** |
+
+**Recommended tracker path (Doppler):**
+
+1. Energy / FFT acquisition on simplex channels; or  
+2. Correlate against **local 12-symbol BPSK UW + optional short tone replica**;  
+3. FLL/PLL or block Doppler on residual QPSK after UW lock.
+
+**Licensing:** gr-iridium + iridium-toolkit are open source (research-friendly). Iridium constellation operator does not publish an open ICD for ring-alert correlation. Passive reception of unencrypted IRA for research is established in peer-reviewed literature; still **jurisdiction-dependent**.
+
+---
+
+## 3. Orbcomm (137 MHz downlink)
+
+### 3.1 Primary sources
+
+| Source | URL | Access |
+|--------|-----|--------|
+| ORBCOMM System Overview (regulatory/system PDF) | https://ctu.gov.cz/sites/default/files/cs/download/oznamene_typy_rozhrani/orbcomm-rozhrani_02_06_2010.pdf | 2026-07-23 **[VERIFIED]** excerpts via search/tooling |
+| Orabi / Kassas multi-constellation Doppler paper | same OSU PDF as Iridium | 2026-07-23 **[VERIFIED]** |
+| Yang et al. OG2 Doppler estimation (Electronics 2024) | https://www.mdpi.com/2079-9292/13/24/4882 | 2026-07-23 (abstract/content via search) |
+| Hobby decoder | https://github.com/fbieberly/ORBCOMM-receiver | secondary |
+
+### 3.2 Published RF format **[VERIFIED]**
+
+| Item | Value |
+|------|--------|
+| User / subscriber downlink band | **137–138 MHz** VHF |
+| Multiplexing | **FDMA** (classically **12 subscriber downlink channels** + gateway channel; OG2 papers also describe **~15 × 25 kHz** FDMA packing) |
+| Subscriber downlink rate | **4800 bps continuous** stream (capability **9600 bps** noted in system docs) |
+| Modulation | **SDPSK** (symmetric differential PSK: 0 → −90°, 1 → +90°), raised-cosine spectral shaping |
+| Gateway downlink | **57.6 kbps OQPSK TDMA** (not the primary SoOP target) |
+| Continuity | **Continuous** subscriber transmitter while satellite is active—**best continuous Doppler source** in the four-constellation set |
+
+Packet content (announcement / control / user) is partially reverse-engineered by hobby tools; **there is no GNSS-like published PRN**.
+
+### 3.3 What published SoOP trackers actually correlate against
+
+Orabi/Kassas-class receivers:
+
+- Treat Orbcomm as **continuous M-PSK** (SDPSK / SD-QPSK family).  
+- **Wipe modulation by raising to M-th power** → residual tone at \(M \cdot f_D\).  
+- FFT peak → Doppler.  
+- **No known-sequence correlator required** for the published Doppler results.
+
+Yang et al. (OG2): continuous **SDPSK**, **4800 bit/s**, channels **25 kHz** in 137–138 MHz—consistent with correlator-free Doppler estimation.
+
+### 3.4 Correlator reference generator — needs list
+
+| Item | Status |
+|------|--------|
+| Carrier list / 25 kHz plan | **Partially published** (system docs + empirical maps); **site survey still needed** |
+| Symbol rate 4800 baud, SDPSK phase rules | **Published** |
+| Pulse shape (raised cosine α) | System docs say raised cosine; **exact α often assumed / fitted** |
+| Known packet sync markers for matched filter | **Hobby RE only**—not a constellation-wide invariant like Starlink PSS |
+| Continuous reference waveform | **Random data-bearing SDPSK**—stable **sequence replica does not exist** without live RE of fixed announcement fields |
+
+**Practical tracker design for Orbcomm:**
+
+- Prefer **non-coherent continuous Doppler** (M-power / PLL on residual) over long coherent sequence correlation.  
+- Optional: capture-based estimation of **semi-static control fields** if present, for short matched filters—**requires RE**.  
+- Bandwidth: **tens of kHz per channel** (not 2.5–5 MHz). Fits easily on a second RX path or after channelization; **independent front-end (no Ku LNB)** is the architectural win (design baseline D10 clock note still applies for fusion).
+
+**Licensing:** Regulatory system descriptions are public. Packet payloads may be service traffic—Do not retransmit; prefer Doppler-only processing that never stores message content.
+
+---
+
+## 4. OneWeb Ku-band
+
+### 4.1 Primary sources
+
+| Source | URL | Access |
+|--------|-----|--------|
+| Kozhaya & Kassas, *A First Look at the OneWeb LEO Constellation* | https://people.engineering.osu.edu/media/document/2024-07-16/kassas_a_first_look_at_the_oneweb_leo_constellation_beacons_beams_and_positioning.pdf | 2026-07-23 **[VERIFIED]** |
+| Komodromos & Humphreys, *Signal parameter estimation and demodulation of the OneWeb Ku-band downlink* (npj Wireless Technology 2026) | https://radionavlab.ae.utexas.edu/wp-content/uploads/komodromos_oneweb_parameter_estimation.pdf | 2026-07-23 **[VERIFIED]** |
+
+### 4.2 Beyond the known 10 ms repetition
+
+| Topic | Published finding | Certainty |
+|-------|-------------------|-----------|
+| Waveform | **Single-carrier QPSK**, not OFDM | **VERIFIED** (Komodromos) |
+| Symbol rate \(F_{\mathrm{sym}}\) | **230.4 MHz** | **VERIFIED** |
+| SRRC rolloff \(\beta_r\) | **0.1** | **VERIFIED** |
+| Channels | **8 × 250 MHz**; \(F_{c_i} = 10.7 + 0.25(i-0.5)\) GHz | **VERIFIED** |
+| 10 ms structure | Frame of **10 × 1 ms slots**, each header + payload; **\(N_f = 2\,304\,000\)** symbols / 10 ms | **VERIFIED** |
+| **1 ms synchronization sequence (SS)** | **400 QPSK symbols (~1.73 µs)** near mid-header of **every slot**; **common across beams, channels, satellites** | **VERIFIED** (hex `qss` published) |
+| Default 10 ms payload | **Demand-dependent**; low demand → default PL frames, **~1 h constancy** per beam/channel across SVs | **VERIFIED** (authors’ interpretation + captures) |
+| Beam activity | **~20 s** illumination windows; **alternating channels** on successive beams (no adjacent beams same channel) | **VERIFIED** empirically |
+| Trackability | Continuous track **not guaranteed**; survey gate in design baseline remains mandatory | **VERIFIED** as risk |
+
+### 4.3 Published SS hex (correlator seed) **[VERIFIED]**
+
+Komodromos & Humphreys publish 400-symbol SS as hex `qss` (800 bits, 2 bits/symbol), with formula \(a_m = \lfloor q_{\mathrm{ss}} / 4^m \rfloor \bmod 4\). First symbols \((a_0,\ldots,a_7)=(2,2,3,2,1,3,2,0)\).  
+**Caveat:** symbols at indices **m ∈ {10, 25, 42}** sometimes vary—flag as **partially unstable**.
+
+### 4.4 Correlator reference generator — needs list
+
+| Item | Status |
+|------|--------|
+| SS 400-symbol sequence + 1 ms period | **Fully published** |
+| Pulse shape SRRC β=0.1, \(F_{\mathrm{sym}}=230.4\) MHz | **Fully published** |
+| 10 ms default payload replica | **Capture-based only**; beam/channel/time specific; disappears under load |
+| Beam schedule / channel occupancy | **Empirical pattern only**—**24 h site survey required** (already project policy) |
+| Absolute time alignment of SS to operator time | **Not published** |
+
+**Bandwidth note:** SS is only ~2 µs / 400 symbols at 230.4 Mbaud → intrinsic RF bandwidth is **hundreds of MHz**. A **2.5–5 MHz** capture sees a **heavily filtered fragment** of the SS/pulse train. Kassas successfully used **2.5 MHz** with **blind beacon estimation** (not necessarily the published 400-symbol SS matched filter at full rate).  
+
+**Two implementable strategies:**
+
+1. **Narrowband:** blind or capture-refined beacon (Kassas-style) at 2.5–5 MHz—works without full-rate demod.  
+2. **Wideband (research):** full-rate SS matched filter after 230.4 Mbaud demod—**not compatible** with 2.5–5 MHz-only bladeRF allocation unless IF is further channelized offline from wide captures.
+
+For `pnt-tracker` as contracted (**2.5–5 MHz**), treat OneWeb as **capture-calibrated narrowband beacon**, with published SS as **ground truth when wideband RE is available**.
+
+**Licensing:** npj article is **CC BY 4.0** (explicit open reuse with attribution). Kozhaya/Kassas IEEE correspondence is copyrighted; cite properly. No operator ICD.
+
+---
+
+## 5. Cross-constellation summary for `pnt-tracker`
+
+| Constellation | Best published reference for correlation | Rate / period | Fully closed-form? | 2.5–5 MHz OK? | Always present? |
+|---------------|------------------------------------------|---------------|--------------------|---------------|------------------|
+| **Starlink** | PSS (+SSS); optional full-frame RE beacon | PSS every **1/750 s** when frame present | **Yes** for PSS/SSS | **Yes** (band-limited) | Frames often regular; not 100% duty |
+| **Iridium** | 12-sym BPSK UW + optional tone; or M-power Doppler | **Burst ~4.32 s/beam**; TDMA 90 ms lattice | **Partial** (UW in FOSS; tone length fuzzy) | **Yes** (channel ~35 kHz; band ~8.5 MHz total) | Simplex **periodic**, not continuous |
+| **Orbcomm** | Continuous SDPSK residual (M-power / PLL) | **4800 baud continuous** | **Waveform class yes; sequence no** | Overkill; need **kHz-class** channel | **Best continuous** downlink |
+| **OneWeb** | 400-sym SS @ 1 ms; or blind 10 ms beacon | **1 ms SS**; **10 ms** frame | **SS yes**; default PL **no** | Narrowband **with reduced gain** | **Demand + beam** gated |
+
+### Reference generator minimum inputs (implementation checklist)
+
+1. **Starlink:** `qpss`, LFSR poly/state, inversion rule, \(N,N_g,F_s\), optional `qsss`, channel index → \(F_c\), LNB LO.  
+2. **Iridium:** simplex channel table, 25 ksps, 12-symbol UW bits (from gr-iridium + live verify), burst gate logic.  
+3. **Orbcomm:** channel frequency list, 4800 baud SDPSK modulator model **or** pure residual-carrier tracker (no bit replica).  
+4. **OneWeb:** `qss` + SRRC(0.1) if wideband; else **site-survey beacon template** at 2.5–5 MHz + occupancy gate.
+
+### Uncertainties / RE still required
+
+- Starlink **CSS/CM1SS** exact sequences; post-2023 **tone** irrelevance confirmed but residual gutter artifacts may still appear.  
+- Iridium **exact ring-alert length / tone duration** inconsistency across sources.  
+- Orbcomm **exact α** and any **fixed announcement field** for optional coherent correlation.  
+- OneWeb **SS symbol positions 10/25/42** instability; **default payload** lifetime under real European maritime demand; **IF channel occupancy** at operating latitude.  
+- Absolute operator time discipline for all four (only Starlink frame timing studied in depth—and it is **not** tight GPS-like).
+
+### Legal / licensing (operational)
+
+| Use | Guidance |
+|-----|----------|
+| Passive RF capture + Doppler correlator | Aligns with published SoOP research; confirm **local spectrum / privacy law** (DK/EU maritime) |
+| Using published sequences (Humphreys / Komodromos) | Cite; academic fair research use; CC BY for npj OneWeb paper |
+| gr-iridium / hobby Orbcomm decoders | Comply with **GPL / repo license**; do not ship noncompliant binary blobs |
+| Commercial STL / operator APIs | Out of scope unless separately licensed |
+| User payload content | **Out of scope** for tracker; discard after correlation |
+
+---

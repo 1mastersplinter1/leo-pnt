@@ -74,31 +74,35 @@ The six protection limits are the per-epoch heart of G2. All are one-sigma covar
 ceilings; each profile is selected by `gnss_authority` (aided under `production`, denied under
 `recorded_only`/`off`, `SAFETY_CASE.md` §0).
 
-### 1.1 Horizontal position — `aided = 12 m`, `denied = 100 m`
+### 1.1 Horizontal position — `aided = 12 m`, `denied = 250 m`
 
-**Derivation.** Acceptance profile (baseline): aided ≤ 25 m, denied ≤ 200 m horizontal error
-(both **estimate**-tagged in the baseline). With `k = 2` on the one-sigma DRMS metric:
-`PL_aided = 25 / 2 = 12.5 → 12 m` (2-DRMS = 24 m ≤ 25 m); `PL_denied = 200 / 2 = 100 m`
-(2-DRMS = 200 m = acceptance). The denied limit is set numerically equal to
-`revoke_threshold` (§3.1) so the profile check and the scalar revoke term align in denied
-operation — with the exactness caveat that the profile test is `≤ 100` while the scalar G2
-conjunct is `< 100`, so at *exactly* 100.0 m only the scalar rejects; the scalar is thus
-marginally the tighter (and slightly conservative) binding term at the boundary, and the
-effective denied horizontal revoke is `metric < 100 m`. The 12 m aided limit is the binding
-horizontal revoke in aided operation, tripping long before the 100 m scalar term.
+**Derivation.** The D56-amended baseline retains aided ≤ 25 m and sets denied horizontal error
+at **≤ 500 m p50 AND ≤ 750 m p95 over a ≥100 km constant-heading-dominated passage**.
+With the existing proposed `k = 2` on the one-sigma DRMS metric:
+`PL_aided = 25 / 2 = 12.5 → 12 m`; the p50-referenced denied proposal is
+`PL_denied = 500 / 2 = 250 m`. The p95 acceptance separately maps to `750 / 2 = 375 m`,
+the worst-case-derived ceiling informing future tuning rather than the proposed normal
+per-epoch gate. The tighter 250 m typical-performance reference is proposed here. Exact trial
+confidence/segment definitions and every PL mapping, including `k = 2`, remain **PROPOSED,
+NOT FROZEN, [UNVERIFIED]**. The aided limit is unchanged because relaxing it could hide
+failure-mode-2 (whether GNSS actually helps).
 
 **Sensitivity.** 2× too tight (aided 6 m): authority is revoked while the solution is still
 inside operational grade — availability collapses and honest degradation reads as failure. 2×
 too loose (aided 24 m): 2-DRMS = 48 m, roughly double the 25 m acceptance — per-epoch
 integrity would no longer *imply* the campaign statistic, violating the `SAFETY_CASE.md` §0
-"no looser than implied" rule. Denied 200 m PL (2× loose) would put 2-DRMS at 400 m, twice the
-research envelope.
+"no looser than implied" rule. For denied operation, 125 m is 2× tighter than the proposed
+250 m and reduces availability; 500 m is 2× looser and exceeds the D56-derived 375 m
+worst-case ceiling.
 
-**Validation plan.** GNSS-withheld replay (baseline verification obligation; U-R3 harness) with
-NEES/coverage scoring against the truth journal: confirm that epochs passing `HPL ≤ PL`
-actually contain horizontal error within the acceptance limit at the claimed confidence.
-Freeze `k` and the percentile definition together. Aided limit additionally checked in
-`production` replay against the fused-GNSS solution.
+**Validation plan.** Reproduce the controlled U-MS1.1 multi-satellite N=8 replay
+(116 m p50 / 554 m p95), then extend it with independent-truth withheld replay and
+NEES/coverage scoring: confirm epochs passing `HPL ≤ PL` contain horizontal error within the
+amended 500 m p50 / 750 m p95 passage acceptance at the frozen confidence. Stratify by
+geometry, sea state, manoeuvre/converged leg, and time since last absolute fix. The replay
+makes the amended denied acceptance evidence-MET where the old target was not reliably
+deliverable; it does not verify `k`, the 250 m per-epoch PL, or real-signal performance.
+Freeze only after real-signal coverage validation. Check aided separately in `production`.
 
 ### 1.2 Horizontal velocity — `aided = 0.014 m/s`, `denied = 0.028 m/s`
 
@@ -202,7 +206,8 @@ first (`SAFETY_CASE.md` §1.1/§2.3). Proposed **120 s**: long enough to ride th
 multi-satellite handover gaps (tens of seconds of no valid correlation), short enough that an
 optimistic covariance cannot let a badly-drifted DR solution retain authority. At a
 conservative post-loss residual velocity-error scale of ~0.05 m/s, 120 s of pure DR is ~6 m of
-velocity-driven drift — well inside the 100 m denied PL — so under a *correct* covariance the
+velocity-driven drift — well inside both the retained 100 m scalar revoke ceiling and the
+proposed 250 m denied PL — so under a *correct* covariance the
 PL check remains the primary bound and `t_dr` is the backstop against an *incorrect* one.
 **This is the weakest-evidence timer in the set**: no replayed LEO-gap statistics exist yet, so
 120 s is a displacement-hull engineering estimate.
@@ -281,25 +286,31 @@ be enforced upstream (executive/integrity ingress) and their freeze tracked sepa
 The metric for the caution/revoke scalars is the horizontal-accuracy metre value (§0.1);
 `dwell_clear`, `dwell_rearm`, `T_ack` are seconds. Ordering constraint (`SAFETY_CASE.md`
 §3.2): `caution_clear (60) < caution_enter (75) < revoke_threshold (100)`.
+These scalars are retained pending an authority-policy ruling, but the 100 m revoke threshold
+now disagrees with and overrides the proposed 250 m denied PL (§3.1).
 
 ### 3.1 `revoke_threshold` — `100 m`
 
-**Derivation.** A single, profile-independent hard horizontal-accuracy ceiling at which the
-metric forces WARNING (`metric < revoke_threshold` is a G2 conjunct in `lib.rs`). Set equal to
-the **denied** horizontal PL (§1.1) so that in denied operation the scalar term and the profile
-PL bind at the same 100 m value (the scalar `<` being marginally tighter at exactly 100.0 m,
-§1.1), and in aided operation the tighter 12 m profile PL trips first. It is a backstop against
+**Reconciliation after D56.** A single, profile-independent hard horizontal-accuracy ceiling
+at which the metric forces WARNING (`metric < revoke_threshold` is a G2 conjunct in `lib.rs`).
+It was set equal to the former 100 m denied PL. It now **disagrees with the proposed 250 m
+denied PL and remains the effective denied horizontal ceiling**: strict `< 100 m` revokes
+before the profile `≤ 250 m` check. It is retained rather than silently raised because the
+caution/revoke ladder is a coupled authority-policy choice and §5.1 requires owner resolution.
+In aided operation the tighter 12 m profile PL still trips first. It is a backstop against
 a **finite-but-dangerously-loose profile limit**, not against an *absent* one: an absent
 (`None`) profile limit already fails closed independently, because `AuthorityParams::is_complete()`
 is itself a G2 conjunct (`lib.rs`) and rejects any missing limit regardless of `revoke_threshold`.
 The scalar's value is a second, profile-independent ceiling under a mis-set-but-present limit.
 
-**Sensitivity.** 2× loose (200 m): coincides with the raw denied *acceptance* error number —
-no per-epoch margin. 2× tight (50 m): would override the denied profile PL and revoke denied
-operation at half its intended envelope.
+**Sensitivity.** Raising the scalar toward 250 m would make more of the amended denied
+envelope usable, but requires re-deriving the caution band and hazard evidence `[UNVERIFIED]`.
+Leaving it at 100 m conservatively preserves the former authority gate but prevents the
+relaxed PL from changing denied availability.
 
-**Validation plan.** Same withheld-replay coverage study as §1.1; confirm the scalar backstop
-never binds tighter than the intended active profile.
+**Validation plan.** Use the §1.1 multi-satellite and real-signal withheld-replay coverage
+study; resolve whether the backstop should align with the denied PL, then re-derive
+`caution_enter`/`caution_clear` and verify useful helm lead time before changing any scalar.
 
 ### 3.2 `caution_enter` — `75 m` · `caution_clear` — `60 m`
 
@@ -538,10 +549,10 @@ appendix; it is nonetheless a steering-relevant `[UNVERIFIED]` value with its ow
 
 ### 5.1 Single-scalar caution/revoke thresholds vs per-profile protection limits
 
-`AuthorityParams` carries `ProtectionLimits` **per profile** (aided/denied, 8× apart on
+`AuthorityParams` carries `ProtectionLimits` **per profile** (aided/denied, about 21× apart on
 position) but `caution_enter`/`caution_clear`/`revoke_threshold` are **single scalars** compared
 against the same metre metric. With the aided PL at 12 m and the caution band referenced to the
-100 m denied envelope, **aided mode has no caution pre-alert** — the profile PL revokes before
+retained 100 m denied scalar ceiling, **aided mode has no caution pre-alert** — the profile PL revokes before
 the caution metric is ever reached. This proposal makes the band meaningful in the mode where it
 matters most (denied/degrading) and accepts the aided-mode gap. **Recommended contracts change:
 make the caution band (and revoke backstop) per-profile**, matching `ProtectionLimits`. Routed
@@ -576,6 +587,24 @@ fail-closed gate does not cover the entire safety-case register. Proposed values
 field or record that ephemeris freshness is governed by `t_eph`. Until then these deadlines must
 be enforced upstream (executive/integrity ingress) and their freeze tracked outside
 `is_complete()`. Routed to the contracts owner; not assumed resolved here.
+
+### 5.5 Coupled denied-authority rulings after D56
+
+D56's proposed 250 m denied horizontal-position PL and open ruling **U-P1-O1** are both
+denied-mode authority tuning but govern different G2 predicates. The params/safety-case owners
+must resolve two coupled parts before denied-authority freeze:
+
+1. G2p/profile policy: the retained 100 m scalar currently overrides the proposed 250 m denied
+   PL, so the profile-aware caution/revoke policy needs a ruling and validation.
+2. G2e/ephemeris policy: decide whether `t_eph_s` moves from 6 h to the graduated 30 h hard
+   ceiling or receives a separately justified authority-age bound, with measurement inflation
+   retaining accuracy honesty.
+
+Neither decision is made here. Both remain `[UNVERIFIED]` and fail closed until validated and
+frozen. **Open safety-case owner item:** update G2's protection-limit derivation/reference from
+the superseded denied acceptance to D56's p50/p95 passage profile, then reconcile G2p, the
+scalar revoke backstop, and G2e/U-P1-O1 in one denied-authority review. `SAFETY_CASE.md` is
+intentionally not edited by U-AC1.
 
 ---
 
@@ -616,7 +645,7 @@ dwell_clear_s    = 5.0       # §3.3  CAUTION->NOMINAL sustain dwell       [UNVE
 dwell_rearm_s    = 10.0      # §3.4  L->N re-arm dwell                    [UNVERIFIED]
 caution_enter    = 75.0      # §3.2  metres (horizontal_accuracy_m)       [UNVERIFIED]
 caution_clear    = 60.0      # §3.2  metres; clear < enter < revoke       [UNVERIFIED]
-revoke_threshold = 100.0     # §3.1  metres; scalar `<` binds at 100.0    [UNVERIFIED]
+revoke_threshold = 100.0     # §3.1  retained; overrides denied PL        [UNVERIFIED]
 t_ack_s          = 10.0      # §3.5  WARNING->ESCALATED ack timeout        [UNVERIFIED]
 
 # --- Protection limits: AIDED profile (gnss_authority = production) ---------
@@ -627,7 +656,7 @@ heading_rad             = 0.01745  # §1.3  1.0deg (acceptance 2/2) [UNVERIFIED]
 
 # --- Protection limits: DENIED profile (recorded_only | off) ---------------
 [denied]
-horizontal_position_m   = 100.0    # §1.1  acceptance 200 m / k=2  [UNVERIFIED]
+horizontal_position_m   = 250.0    # §1.1  D56 p50 500 m / k=2     [UNVERIFIED]
 horizontal_velocity_mps = 0.028    # §1.2  per-axis 0.04 -> DRMS   [UNVERIFIED]
 heading_rad             = 0.04363  # §1.3  2.5deg (acceptance 5/2) [UNVERIFIED]
 ```
@@ -660,8 +689,9 @@ speed_log    = 1.00       # §2.4  ~5x the 5 Hz nominal period      [UNVERIFIED]
 ## 7. Status
 
 This document is **subordinate to `DESIGN_BASELINE.md` (normative) and `SAFETY_CASE.md`**; where
-either governs, it governs. It adds no sensor, estimator or acceptance requirement and revises
-neither the baseline nor the safety case. **Every value herein is a proposal, [UNVERIFIED until
+either governs, it governs. It adds no sensor or estimator requirement and does not revise the
+safety case; it derives a proposed denied PL from the baseline's D56 acceptance amendment.
+**Every value herein is a proposal, [UNVERIFIED until
 validated]; nothing in this document grants steering authority.** Per `SAFETY_CASE.md` §1 the
 authority-contract parameters remain a **fail-closed gate** until each is frozen by its named
 validation evidence and a signed `DECISIONS.md` decision. This proposal's role is to make each

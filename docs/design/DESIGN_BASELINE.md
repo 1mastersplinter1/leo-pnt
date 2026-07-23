@@ -154,7 +154,7 @@ window and confidence definitions remain `[UNVERIFIED]` and must be frozen befor
 
 | Criterion | Aided (`production`) | Denied (`recorded_only` or `off`) |
 |---|---:|---:|
-| Horizontal position error | <= 25 m (**estimate**, operational-grade target inferred from the handoff's example of a correct operational limit) | <= 200 m after an uninterrupted 20-minute constant-heading convergence leg (**estimate**, conservative edge of the stated approximately 100--200 m expectation) |
+| Horizontal position error | <= 25 m (**estimate**, operational-grade target inferred from the handoff's example of a correct operational limit) | ~~<= 200 m after an uninterrupted 20-minute constant-heading convergence leg (**estimate**, conservative edge of the stated approximately 100--200 m expectation)~~ **Superseded by the 2026-07-23 D56 amendment below.** |
 | Horizontal velocity error, each axis | <= 0.02 m/s (**estimate**, operational target within the handoff's 0.007--0.04 m/s expectation) | <= 0.04 m/s (**estimate**, upper edge of the stated 0.7--4 cm/s expectation) |
 | Heading error | <= 2 degrees (**estimate**) | <= 5 degrees (**estimate**) |
 | Horizontal current-vector error | Recorded and scored, but no pass/fail threshold until local truth instrumentation and current variability are characterised (`[UNVERIFIED]`) | Same; omission of a threshold does not make publication optional |
@@ -226,3 +226,23 @@ reconciled.
 graduated hard ceiling (recommended, with measurement inflation carrying accuracy honesty)
 or G2e gains a separately justified authority-age bound. Update the parameter register and
 G2e claim together after ruling; this amendment does not alter `SAFETY_CASE.md`.
+
+## Amendment 2026-07-23 — denied passage acceptance (D56)
+
+This amendment replaces only the superseded denied horizontal-position cell in the
+Acceptance profiles table. Over a **>= 100 km constant-heading-dominated passage**, denied
+horizontal-position error shall be **<= 500 m at p50 AND <= 750 m at p95**. Exact
+segment-selection and confidence definitions remain `[UNVERIFIED]` and must be frozen before
+trials.
+
+D56 sets this usable passage-scale target after D55 showed that the former approximately
+100--200 m target was not reliably deliverable. Controlled U-MS1.1 N=8 replay evidence reports
+**116 m p50 and 554 m p95**, meeting both amended synthetic-evidence gates. Real-signal
+validation remains required before production freeze; this evidence-MET statement does not
+turn controlled synthetic evidence into a certified or real-world performance claim.
+
+The **aided horizontal-position target remains <= 25 m**. It stays tight because failure-mode 2
+requires a discriminating aided comparator: loosening it could hide whether GNSS actually
+helps. Denied horizontal-velocity and heading limits also remain unchanged at **<= 0.04 m/s
+per axis** and **<= 5 degrees**; D56/U-MS1.1 changes only denied horizontal position and
+provides no evidence for changing those limits.

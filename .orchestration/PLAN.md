@@ -33,3 +33,5 @@ Ordering rationale (from handoff failure modes): executive before modules (#4), 
 - Ruflo MCP tools not connected this session — worker spawn/routing via CLIs (header: ruflo is routing-only anyway).
 
 | U-I2 | Integration: Doppler pipeline wired through executive + contracts v4/v4.1 | Sol (codex) | SERIAL | U-E1, U-F1 | **done — merged (D26)** |
+| U-A1 | Authority supervisor (SAFETY_CASE §1–§3, fail-closed) | Sol (codex) | wave 4 | U-S1, U-I2 | **done — merged (D33)** |
+| U-J1 | On-disk journals (FileJournals) | Sol (codex) | wave 4 | U-C1 | **done — merged (D29)** |

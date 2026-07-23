@@ -271,3 +271,20 @@ the supervisor before deriving `SolutionEpoch.steering_authorised`. Its producti
 skeleton constructor installs the real supervisor with an incomplete parameter register and
 is therefore fail-closed. `test_stub` remains explicitly stub-backed for focused legacy
 executive tests.
+
+## v5.1 (2026-07-23)
+
+v5.1 amends, but does not replace, v5. `AckCommand` is the helm acknowledgement sibling of
+`ArmCommand` on the measurement bus. It carries clock-service-stamped
+`host_monotonic_ns: u64` and `source_id: SourceId`, is journalled, and is routed by the
+executive only to `IntegrityAuthorityGate::acknowledge`; it never enters the estimator.
+Acknowledgement changes annunciation/latch state only as specified by the §2.2 matrix and
+does not itself restore steering authority.
+
+Every accepted IMU propagation emits a DR-fill solution epoch through both
+`IntegrityAuthorityGate::solution` and the NDJSON seam. This intentionally uses the IMU
+propagation cadence rather than an unverified decimator: lease renewal remains conditional
+on sequence advance plus G2/G3, while absolute-observation age independently revokes at
+`t_dr`. A grant-capable supervisor can be constructed only with complete parameters and an
+explicit calibration validator; the incomplete-register constructor is a hard error if
+given complete parameters.

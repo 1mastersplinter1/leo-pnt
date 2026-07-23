@@ -1,6 +1,6 @@
 //! Deterministic solution-integrity and steering-authority supervisor.
 
-use pnt_types::{ArmAction, ArmCommand, FilterState};
+use pnt_types::{AckCommand, ArmAction, ArmCommand, FilterState};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ProtectionLimits {
@@ -69,6 +69,7 @@ pub trait IntegrityAuthorityGate {
     fn solution(&mut self, _solution: AuthoritySolution<'_>, _monotonic_ns: u64) {}
     fn steering_authorised(&mut self, state: &FilterState, monotonic_ns: u64) -> bool;
     fn arm_command(&mut self, _command: &ArmCommand) {}
+    fn acknowledge(&mut self, _command: &AckCommand) {}
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -209,16 +210,38 @@ pub struct AuthoritySupervisor {
     caution_clear_since_ns: Option<u64>,
     pending_arm_edge: bool,
     transition: Option<(AuthorityState, AuthorityState, AuthorityEvent)>,
+    last_now_ns: Option<u64>,
+    event_tick_ns: Option<u64>,
+    event_tick_start_state: AuthorityState,
+    event_tick_events: Vec<AuthorityEvent>,
+    event_tick_arm_guard: bool,
 }
 
 impl AuthoritySupervisor {
     #[must_use]
-    pub fn new(params: AuthorityParams) -> Self {
-        Self::with_calibration_validator(params, |_| true)
+    /// Constructs a supervisor that cannot grant. Complete parameters require the
+    /// explicit-validator constructor so calibration identity can never be default-accepted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `params` is complete; use [`Self::with_calibration_validator`] then.
+    pub fn fail_closed(params: AuthorityParams) -> Self {
+        assert!(
+            !params.is_complete(),
+            "complete authority parameters require an explicit calibration validator"
+        );
+        Self::build(params, |_| false)
     }
 
     #[must_use]
     pub fn with_calibration_validator<F>(params: AuthorityParams, validator: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        Self::build(params, validator)
+    }
+
+    fn build<F>(params: AuthorityParams, validator: F) -> Self
     where
         F: Fn(&str) -> bool + Send + Sync + 'static,
     {
@@ -236,6 +259,11 @@ impl AuthoritySupervisor {
             caution_clear_since_ns: None,
             pending_arm_edge: false,
             transition: None,
+            last_now_ns: None,
+            event_tick_ns: None,
+            event_tick_start_state: AuthorityState::Disarmed,
+            event_tick_events: Vec::new(),
+            event_tick_arm_guard: false,
         }
     }
 
@@ -261,17 +289,32 @@ impl AuthoritySupervisor {
     }
 
     pub fn acknowledge(&mut self, now_ns: u64) {
+        if !self.observe_time(now_ns) {
+            return;
+        }
         self.apply(AuthorityEvent::Acknowledge, now_ns, false);
     }
 
     fn apply(&mut self, event: AuthorityEvent, now_ns: u64, arm_guard: bool) {
-        let old = self.state;
-        let new = matrix_successor(old, event, arm_guard);
-        if new != old {
+        if self.event_tick_ns != Some(now_ns) {
+            self.event_tick_ns = Some(now_ns);
+            self.event_tick_start_state = self.state;
+            self.event_tick_events.clear();
+            self.event_tick_arm_guard = false;
+        }
+        self.event_tick_events.push(event);
+        self.event_tick_arm_guard |= arm_guard;
+        let old = self.event_tick_start_state;
+        let new = simultaneous_successor(old, &self.event_tick_events, self.event_tick_arm_guard);
+        if new != self.state {
             self.state = new;
-            self.transition = Some((old, new, event));
+            let decisive_event =
+                Self::decisive_event(old, &self.event_tick_events, self.event_tick_arm_guard)
+                    .unwrap_or(event);
+            self.transition = Some((old, new, decisive_event));
             if new == AuthorityState::Warning {
                 self.armed = false;
+                self.pending_arm_edge = false;
                 self.warning_since_ns = Some(now_ns);
             }
             if new == AuthorityState::LatchedSafe {
@@ -281,6 +324,50 @@ impl AuthoritySupervisor {
                 self.lease_deadline_ns = None;
             }
         }
+    }
+
+    fn decisive_event(
+        state: AuthorityState,
+        events: &[AuthorityEvent],
+        arm_guard: bool,
+    ) -> Option<AuthorityEvent> {
+        use AuthorityEvent as E;
+        const PRIORITY: [E; 11] = [
+            E::G3Fall,
+            E::G2Fall,
+            E::LeaseExpiry,
+            E::Disarm,
+            E::AckTimeout,
+            E::Acknowledge,
+            E::Arm,
+            E::G2Rise,
+            E::G3Rise,
+            E::CautionEnter,
+            E::CautionClear,
+        ];
+        PRIORITY.into_iter().find(|event| {
+            events.contains(event) && matrix_successor(state, *event, arm_guard) != state
+        })
+    }
+
+    fn observe_time(&mut self, now_ns: u64) -> bool {
+        if self.last_now_ns.is_some_and(|last| now_ns < last) {
+            let old = self.state;
+            self.g2 = false;
+            self.g3 = false;
+            self.armed = false;
+            self.pending_arm_edge = false;
+            self.lease_deadline_ns = None;
+            if matches!(old, AuthorityState::Nominal | AuthorityState::Caution) {
+                self.state = AuthorityState::Warning;
+                self.warning_since_ns = Some(now_ns);
+                self.transition = Some((old, AuthorityState::Warning, AuthorityEvent::G2Fall));
+            }
+            debug_assert!(false, "authority supervisor monotonic time regressed");
+            return false;
+        }
+        self.last_now_ns = Some(now_ns);
+        true
     }
 
     fn seconds_ns(value: f64) -> u64 {
@@ -351,11 +438,15 @@ impl AuthoritySupervisor {
         };
         self.g2 = new_g2;
         self.g3 = new_g3;
-        if matches!(
+        let fault_can_revoke = matches!(
             self.state,
             AuthorityState::Nominal | AuthorityState::Caution
-        ) && (!new_g3 || !new_g2)
-        {
+        ) || (self.event_tick_ns == Some(now_ns)
+            && matches!(
+                self.event_tick_start_state,
+                AuthorityState::Nominal | AuthorityState::Caution
+            ));
+        if fault_can_revoke && (!new_g3 || !new_g2) {
             self.apply(
                 fault.unwrap_or(if new_g3 {
                     AuthorityEvent::G2Fall
@@ -429,10 +520,16 @@ impl AuthoritySupervisor {
 
 impl IntegrityAuthorityGate for AuthoritySupervisor {
     fn solution(&mut self, solution: AuthoritySolution<'_>, monotonic_ns: u64) {
+        if !self.observe_time(monotonic_ns) {
+            return;
+        }
         self.evaluate_solution(solution, monotonic_ns);
     }
 
     fn steering_authorised(&mut self, _state: &FilterState, monotonic_ns: u64) -> bool {
+        if !self.observe_time(monotonic_ns) {
+            return false;
+        }
         self.tick(monotonic_ns);
         let mut output = self.output();
         if output.steering_authorised
@@ -446,17 +543,30 @@ impl IntegrityAuthorityGate for AuthoritySupervisor {
     }
 
     fn arm_command(&mut self, command: &ArmCommand) {
+        if !self.observe_time(command.host_monotonic_ns) {
+            return;
+        }
         match command.action {
             ArmAction::Disarm => {
                 self.armed = false;
                 self.pending_arm_edge = false;
                 self.apply(AuthorityEvent::Disarm, command.host_monotonic_ns, false);
             }
-            ArmAction::Arm if !self.armed => {
+            ArmAction::Arm
+                if !self.armed
+                    && matches!(
+                        self.state,
+                        AuthorityState::Disarmed | AuthorityState::LatchedSafe
+                    ) =>
+            {
                 self.armed = true;
                 self.pending_arm_edge = true;
             }
             ArmAction::Arm => {}
         }
+    }
+
+    fn acknowledge(&mut self, command: &AckCommand) {
+        self.acknowledge(command.host_monotonic_ns);
     }
 }

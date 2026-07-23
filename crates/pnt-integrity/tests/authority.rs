@@ -171,15 +171,15 @@ fn lease_is_non_circular_and_requires_sequence_advance() {
     solution(&mut s, 1, 0, &good);
     assert!(s.steering_authorised(&good, 999_999_999));
     assert!(!s.steering_authorised(&good, 1_000_000_000));
-    s.acknowledge(1_000_000_000);
-    arm(&mut s, 2_000_000_000);
-    solution(&mut s, 1, 2_000_000_000, &good);
+    s.acknowledge(1_000_000_001);
+    arm(&mut s, 2_000_000_001);
+    solution(&mut s, 1, 2_000_000_001, &good);
     assert!(
-        !s.steering_authorised(&good, 2_000_000_000),
+        !s.steering_authorised(&good, 2_000_000_001),
         "same sequence renewed"
     );
-    solution(&mut s, 2, 2_000_000_001, &good);
-    assert!(s.steering_authorised(&good, 2_000_000_001));
+    solution(&mut s, 2, 2_000_000_002, &good);
+    assert!(s.steering_authorised(&good, 2_000_000_002));
 }
 
 #[test]
@@ -298,7 +298,10 @@ fn backward_time_revokes_but_repeated_time_is_accepted() {
         solution(&mut backward, 2, 9, &good);
     }));
     if cfg!(debug_assertions) {
-        assert!(result.is_err(), "debug builds diagnose the clock regression");
+        assert!(
+            result.is_err(),
+            "debug builds diagnose the clock regression"
+        );
     }
     assert_eq!(backward.state(), S::Warning);
     assert!(!backward.output().steering_authorised);

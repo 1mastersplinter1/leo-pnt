@@ -556,8 +556,8 @@ fn wrap_angle(angle: f64) -> f64 {
 mod tests {
     use super::*;
     use pnt_types::{
-        ArmAction, ArmCommand, Frame, GnssFix, Provenance, QualityFlags, SourceId, TimeTag,
-        TrackerDoppler,
+        AckCommand, ArmAction, ArmCommand, Frame, GnssFix, Provenance, QualityFlags, SourceId,
+        TimeTag, TrackerDoppler,
     };
 
     const FD_STEP: f64 = 1.0e-6;
@@ -861,6 +861,13 @@ mod tests {
             (
                 MeasurementPayload::ArmCommand(ArmCommand {
                     action: ArmAction::Arm,
+                    host_monotonic_ns: 1,
+                    source_id: SourceId("helm".into()),
+                }),
+                0,
+            ),
+            (
+                MeasurementPayload::AckCommand(AckCommand {
                     host_monotonic_ns: 1,
                     source_id: SourceId("helm".into()),
                 }),

@@ -145,8 +145,9 @@ fn synthetic_imu_and_measurement_emit_a_solution_epoch() {
     ));
     executive.process(envelope(2, MeasurementPayload::Gnss(GnssFix::default())));
     let epochs = executive.take_solution_epochs();
-    assert_eq!(epochs.len(), 1);
-    assert_eq!(epochs[0].monotonic_ns, 2);
+    assert_eq!(epochs.len(), 2);
+    assert_eq!(epochs[0].monotonic_ns, 1);
+    assert_eq!(epochs[1].monotonic_ns, 2);
 }
 
 #[test]
@@ -324,9 +325,8 @@ fn dr_params() -> AuthorityParams {
 #[test]
 fn imu_dr_fill_renews_lease_until_absolute_observation_exceeds_t_dr() {
     let clock = ScriptedClock([0, 1, 2, 3, 4, 5, 6, 7].into());
-    let supervisor = AuthoritySupervisor::with_calibration_validator(dr_params(), |id| {
-        id == "cal-1"
-    });
+    let supervisor =
+        AuthoritySupervisor::with_calibration_validator(dr_params(), |id| id == "cal-1");
     let mut executive = Executive::new(
         Config {
             gnss_authority: GnssAuthority::Production,
@@ -359,7 +359,10 @@ fn imu_dr_fill_renews_lease_until_absolute_observation_exceeds_t_dr() {
         !epochs[6].steering_authorised,
         "t_dr, not the continuously renewed t_lease, revokes authority"
     );
-    assert_eq!(executive.integrity().state(), pnt_integrity::AuthorityState::Warning);
+    assert_eq!(
+        executive.integrity().state(),
+        pnt_integrity::AuthorityState::Warning
+    );
 }
 
 #[test]

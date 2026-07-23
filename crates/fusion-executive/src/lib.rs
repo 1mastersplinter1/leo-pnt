@@ -148,7 +148,9 @@ where
             {
                 Vec::new()
             }
-            MeasurementPayload::ArmCommand(_) => vec![RoutingDestination::Fusion],
+            MeasurementPayload::ArmCommand(_) | MeasurementPayload::AckCommand(_) => {
+                vec![RoutingDestination::Fusion]
+            }
             _ => Self::routing_table(self.config.gnss_authority).non_gnss,
         }
     }
@@ -159,8 +161,13 @@ where
             self.integrity.arm_command(command);
             return;
         }
+        if let MeasurementPayload::AckCommand(command) = &envelope.payload {
+            self.integrity.acknowledge(command);
+            return;
+        }
         if let MeasurementPayload::Imu(imu) = &envelope.payload {
             self.filter.propagate(*imu);
+            self.emit_epoch(envelope, true);
             return;
         }
         if matches!(envelope.payload, MeasurementPayload::TrackerDoppler(_)) {
@@ -374,7 +381,7 @@ impl Executive<ManualClock, FilterStub, AuthoritySupervisor, MemoryJournals> {
             },
             ManualClock::default(),
             FilterStub::default(),
-            AuthoritySupervisor::new(AuthorityParams::default()),
+            AuthoritySupervisor::fail_closed(AuthorityParams::default()),
             MemoryJournals::default(),
         )
     }

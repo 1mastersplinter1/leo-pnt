@@ -1,0 +1,168 @@
+{
+  "orbital_extremes": [
+    {
+      "band": "Ku-low",
+      "carrier_hz": 11325000000.0,
+      "altitude_km": 550.0,
+      "orbital_speed_m_s": 7585.088535158763,
+      "max_doppler_hz": 263788.30578723416,
+      "overhead_max_drift_hz_s": 3637.9230071558254
+    },
+    {
+      "band": "Ku-low",
+      "carrier_hz": 11325000000.0,
+      "altitude_km": 1200.0,
+      "orbital_speed_m_s": 7252.498734616008,
+      "max_doppler_hz": 230587.92467887016,
+      "overhead_max_drift_hz_s": 1393.615526626031
+    },
+    {
+      "band": "Ku-high",
+      "carrier_hz": 11575000000.0,
+      "altitude_km": 550.0,
+      "orbital_speed_m_s": 7585.088535158763,
+      "max_doppler_hz": 269611.4471953408,
+      "overhead_max_drift_hz_s": 3718.2303583071684
+    },
+    {
+      "band": "Ku-high",
+      "carrier_hz": 11575000000.0,
+      "altitude_km": 1200.0,
+      "orbital_speed_m_s": 7252.498734616008,
+      "max_doppler_hz": 235678.16584175912,
+      "overhead_max_drift_hz_s": 1424.3796662866496
+    },
+    {
+      "band": "L-band",
+      "carrier_hz": 1616000000.0,
+      "altitude_km": 550.0,
+      "orbital_speed_m_s": 7585.088535158763,
+      "max_doppler_hz": 37640.786062001804,
+      "overhead_max_drift_hz_s": 519.1067178422794
+    },
+    {
+      "band": "L-band",
+      "carrier_hz": 1616000000.0,
+      "altitude_km": 1200.0,
+      "orbital_speed_m_s": 7252.498734616008,
+      "max_doppler_hz": 32903.31887691427,
+      "overhead_max_drift_hz_s": 198.85939876623982
+    },
+    {
+      "band": "VHF",
+      "carrier_hz": 137000000.0,
+      "altitude_km": 550.0,
+      "orbital_speed_m_s": 7585.088535158763,
+      "max_doppler_hz": 3191.0814916424793,
+      "overhead_max_drift_hz_s": 44.008428430935815
+    },
+    {
+      "band": "VHF",
+      "carrier_hz": 137000000.0,
+      "altitude_km": 1200.0,
+      "orbital_speed_m_s": 7252.498734616008,
+      "max_doppler_hz": 2789.4521572631534,
+      "overhead_max_drift_hz_s": 16.858748534019096
+    }
+  ],
+  "ramp_sweeps": [
+    {
+      "ramp_hz_s": 0.0,
+      "detected_blocks": 16,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.35592058475253907
+    },
+    {
+      "ramp_hz_s": 75.0,
+      "detected_blocks": 16,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.36207325088014386
+    },
+    {
+      "ramp_hz_s": 250.0,
+      "detected_blocks": 16,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.33770382313684877
+    },
+    {
+      "ramp_hz_s": 500.0,
+      "detected_blocks": 16,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.29831341757085283
+    },
+    {
+      "ramp_hz_s": 1000.0,
+      "detected_blocks": 16,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.21350324173454283
+    },
+    {
+      "ramp_hz_s": 2000.0,
+      "detected_blocks": 16,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.20792793519879638
+    },
+    {
+      "ramp_hz_s": 4000.0,
+      "detected_blocks": 16,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.3872983207379832
+    },
+    {
+      "ramp_hz_s": 8000.0,
+      "detected_blocks": 8,
+      "total_blocks": 16,
+      "max_abs_error_hz": 0.4423441717227945
+    },
+    {
+      "ramp_hz_s": 16000.0,
+      "detected_blocks": 0,
+      "total_blocks": 16,
+      "max_abs_error_hz": null
+    },
+    {
+      "ramp_hz_s": 32000.0,
+      "detected_blocks": 0,
+      "total_blocks": 16,
+      "max_abs_error_hz": null
+    }
+  ],
+  "escape": [
+    {
+      "initial_offset_hz": 3500.0,
+      "ramp_hz_s": 2000.0,
+      "first_outside_block": 9,
+      "first_no_detection_block": 10,
+      "wrong_lock_blocks": 9
+    },
+    {
+      "initial_offset_hz": 3500.0,
+      "ramp_hz_s": 8000.0,
+      "first_outside_block": 2,
+      "first_no_detection_block": 1,
+      "wrong_lock_blocks": 9
+    }
+  ],
+  "block_length_sensitivity": [
+    {
+      "reference_length": 64,
+      "block_seconds": 0.0078125,
+      "largest_all_detected_ramp_hz_s": 4000.0
+    },
+    {
+      "reference_length": 128,
+      "block_seconds": 0.015625,
+      "largest_all_detected_ramp_hz_s": 8000.0
+    },
+    {
+      "reference_length": 256,
+      "block_seconds": 0.03125,
+      "largest_all_detected_ramp_hz_s": 4000.0
+    },
+    {
+      "reference_length": 512,
+      "block_seconds": 0.0625,
+      "largest_all_detected_ramp_hz_s": 2000.0
+    }
+  ]
+}

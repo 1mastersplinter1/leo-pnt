@@ -1,0 +1,89 @@
+{
+  "bins": [
+    {
+      "quality_min": 32.0,
+      "quality_max": 40.0,
+      "samples": 603,
+      "mean_quality": 35.9860298766561,
+      "error_variance_hz2": 80239.99617595882,
+      "fitted_variance_hz2": 145454.63171931106,
+      "residual_log_variance": -0.5948421325034534
+    },
+    {
+      "quality_min": 40.0,
+      "quality_max": 55.0,
+      "samples": 919,
+      "mean_quality": 47.3538473281981,
+      "error_variance_hz2": 42827.6734393206,
+      "fitted_variance_hz2": 44928.40252270933,
+      "residual_log_variance": -0.04788569831434941
+    },
+    {
+      "quality_min": 55.0,
+      "quality_max": 75.0,
+      "samples": 1030,
+      "mean_quality": 64.81235035905044,
+      "error_variance_hz2": 15966.010710249586,
+      "fitted_variance_hz2": 11727.77704385146,
+      "residual_log_variance": 0.3085019976615264
+    },
+    {
+      "quality_min": 75.0,
+      "quality_max": 100.0,
+      "samples": 1123,
+      "mean_quality": 86.91359175035194,
+      "error_variance_hz2": 6176.747095539418,
+      "fitted_variance_hz2": 3341.031152151649,
+      "residual_log_variance": 0.6145122854175114
+    },
+    {
+      "quality_min": 100.0,
+      "quality_max": 130.0,
+      "samples": 948,
+      "mean_quality": 113.46810616036991,
+      "error_variance_hz2": 1952.2370728456385,
+      "fitted_variance_hz2": 1067.517392771857,
+      "residual_log_variance": 0.6036401728865561
+    },
+    {
+      "quality_min": 130.0,
+      "quality_max": 160.0,
+      "samples": 955,
+      "mean_quality": 145.93137576415717,
+      "error_variance_hz2": 422.25113504044344,
+      "fitted_variance_hz2": 363.6923588107818,
+      "residual_log_variance": 0.149291901582564
+    },
+    {
+      "quality_min": 160.0,
+      "quality_max": 180.0,
+      "samples": 1209,
+      "mean_quality": 171.35667179883905,
+      "error_variance_hz2": 65.08914701604867,
+      "fitted_variance_hz2": 182.90672977327765,
+      "residual_log_variance": -1.0332185267303755
+    },
+    {
+      "quality_min": 180.0,
+      "quality_max": 195.0,
+      "samples": 6536,
+      "mean_quality": 189.80247504227546,
+      "error_variance_hz2": 2.232511587515646,
+      "fitted_variance_hz2": null,
+      "residual_log_variance": null
+    },
+    {
+      "quality_min": 195.0,
+      "quality_max": 220.0,
+      "samples": 24,
+      "mean_quality": 196.2499021515473,
+      "error_variance_hz2": 6.264099358893168,
+      "fitted_variance_hz2": null,
+      "residual_log_variance": null
+    }
+  ],
+  "log_log_fit_intercept": 27.221594169497656,
+  "log_log_fit_slope": -4.279490618710711,
+  "residual_rms_log_variance": 0.5711065810429597,
+  "saturation_quality_above": 180.0
+}

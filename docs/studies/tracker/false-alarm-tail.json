@@ -1,0 +1,82 @@
+{
+  "blocks": 1000000,
+  "threshold_32_exceedances": 0,
+  "observed_quantiles": [
+    {
+      "probability": 0.5,
+      "quality": 11.50335762770281
+    },
+    {
+      "probability": 0.9,
+      "quality": 13.39596665475312
+    },
+    {
+      "probability": 0.99,
+      "quality": 15.774312220958125
+    },
+    {
+      "probability": 0.999,
+      "quality": 18.094851776727403
+    },
+    {
+      "probability": 1.0,
+      "quality": 24.784554017508736
+    }
+  ],
+  "exceedance": [
+    {
+      "threshold": 10.0,
+      "observed_count": 954989,
+      "observed_probability": 0.954989,
+      "fisher_union_prediction": 1.0
+    },
+    {
+      "threshold": 12.0,
+      "observed_count": 344516,
+      "observed_probability": 0.344516,
+      "fisher_union_prediction": 0.5291759375345032
+    },
+    {
+      "threshold": 14.0,
+      "observed_count": 56513,
+      "observed_probability": 0.056513,
+      "fisher_union_prediction": 0.0789520924937053
+    },
+    {
+      "threshold": 16.0,
+      "observed_count": 7960,
+      "observed_probability": 0.00796,
+      "fisher_union_prediction": 0.011941340396934117
+    },
+    {
+      "threshold": 18.0,
+      "observed_count": 1091,
+      "observed_probability": 0.001091,
+      "fisher_union_prediction": 0.0018312621240641912
+    },
+    {
+      "threshold": 20.0,
+      "observed_count": 131,
+      "observed_probability": 0.000131,
+      "fisher_union_prediction": 0.0002847009817124215
+    },
+    {
+      "threshold": 24.0,
+      "observed_count": 3,
+      "observed_probability": 3e-6,
+      "fisher_union_prediction": 7.16397573008435e-6
+    },
+    {
+      "threshold": 28.0,
+      "observed_count": 0,
+      "observed_probability": 0.0,
+      "fisher_union_prediction": 1.899699386976175e-7
+    },
+    {
+      "threshold": 32.0,
+      "observed_count": 0,
+      "observed_probability": 0.0,
+      "fisher_union_prediction": 5.300810442783233e-9
+    }
+  ]
+}

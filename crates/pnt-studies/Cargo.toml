@@ -7,12 +7,15 @@ license.workspace = true
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 nalgebra = "0.33"
+num-complex = "0.4.6"
 pnt-ephemeris = { path = "../pnt-ephemeris" }
 pnt-estimator = { path = "../pnt-estimator" }
 pnt-predictor = { path = "../pnt-predictor" }
+pnt-tracker = { path = "../pnt-tracker" }
 pnt-types = { path = "../pnt-types" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 thiserror = "2"
 
 [lints]

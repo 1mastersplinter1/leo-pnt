@@ -1,0 +1,325 @@
+{
+  "cw": [
+    {
+      "interferer_offset_hz": -3000.0,
+      "js_db": -20.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": -0.12904735564780878
+    },
+    {
+      "interferer_offset_hz": -3000.0,
+      "js_db": -10.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 0.06638817758035884
+    },
+    {
+      "interferer_offset_hz": -3000.0,
+      "js_db": 0.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 5.28721352667772
+    },
+    {
+      "interferer_offset_hz": -3000.0,
+      "js_db": 10.0,
+      "trials": 200,
+      "detections": 0,
+      "false_locks": 0,
+      "mean_error_hz": null
+    },
+    {
+      "interferer_offset_hz": -3000.0,
+      "js_db": 20.0,
+      "trials": 200,
+      "detections": 0,
+      "false_locks": 0,
+      "mean_error_hz": null
+    },
+    {
+      "interferer_offset_hz": 0.0,
+      "js_db": -20.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 0.5971943175184401
+    },
+    {
+      "interferer_offset_hz": 0.0,
+      "js_db": -10.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 2.188982277318033
+    },
+    {
+      "interferer_offset_hz": 0.0,
+      "js_db": 0.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 9.629962929457331
+    },
+    {
+      "interferer_offset_hz": 0.0,
+      "js_db": 10.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 41,
+      "mean_error_hz": 52.09330389578494
+    },
+    {
+      "interferer_offset_hz": 0.0,
+      "js_db": 20.0,
+      "trials": 200,
+      "detections": 0,
+      "false_locks": 0,
+      "mean_error_hz": null
+    },
+    {
+      "interferer_offset_hz": 480.0,
+      "js_db": -20.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 0.4691080962211427
+    },
+    {
+      "interferer_offset_hz": 480.0,
+      "js_db": -10.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 1.4778745325102485
+    },
+    {
+      "interferer_offset_hz": 480.0,
+      "js_db": 0.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": 4.673104333807443
+    },
+    {
+      "interferer_offset_hz": 480.0,
+      "js_db": 10.0,
+      "trials": 200,
+      "detections": 0,
+      "false_locks": 0,
+      "mean_error_hz": null
+    },
+    {
+      "interferer_offset_hz": 480.0,
+      "js_db": 20.0,
+      "trials": 200,
+      "detections": 0,
+      "false_locks": 0,
+      "mean_error_hz": null
+    },
+    {
+      "interferer_offset_hz": 2000.0,
+      "js_db": -20.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": -0.3313887966138867
+    },
+    {
+      "interferer_offset_hz": 2000.0,
+      "js_db": -10.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": -2.00064524379293
+    },
+    {
+      "interferer_offset_hz": 2000.0,
+      "js_db": 0.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 0,
+      "mean_error_hz": -15.696747495605655
+    },
+    {
+      "interferer_offset_hz": 2000.0,
+      "js_db": 10.0,
+      "trials": 200,
+      "detections": 200,
+      "false_locks": 200,
+      "mean_error_hz": -142.34757103983782
+    },
+    {
+      "interferer_offset_hz": 2000.0,
+      "js_db": 20.0,
+      "trials": 200,
+      "detections": 0,
+      "false_locks": 0,
+      "mean_error_hz": null
+    }
+  ],
+  "clock": [
+    {
+      "carrier_hz": 137000000.0,
+      "fractional_error": 1e-9,
+      "expected_bias_hz": 0.137,
+      "measured_bias_hz": 0.17518063153710273
+    },
+    {
+      "carrier_hz": 137000000.0,
+      "fractional_error": 1e-8,
+      "expected_bias_hz": 1.37,
+      "measured_bias_hz": 1.4178189068274492
+    },
+    {
+      "carrier_hz": 137000000.0,
+      "fractional_error": 1e-7,
+      "expected_bias_hz": 13.7,
+      "measured_bias_hz": 13.662982042680767
+    },
+    {
+      "carrier_hz": 1616000000.0,
+      "fractional_error": 1e-9,
+      "expected_bias_hz": 1.616,
+      "measured_bias_hz": 1.6653332862951515
+    },
+    {
+      "carrier_hz": 1616000000.0,
+      "fractional_error": 1e-8,
+      "expected_bias_hz": 16.16,
+      "measured_bias_hz": 16.095445064679552
+    },
+    {
+      "carrier_hz": 1616000000.0,
+      "fractional_error": 1e-7,
+      "expected_bias_hz": 161.6,
+      "measured_bias_hz": 161.64413701981653
+    },
+    {
+      "carrier_hz": 11575000000.0,
+      "fractional_error": 1e-9,
+      "expected_bias_hz": 11.575000000000001,
+      "measured_bias_hz": 11.566382081963638
+    },
+    {
+      "carrier_hz": 11575000000.0,
+      "fractional_error": 1e-8,
+      "expected_bias_hz": 115.75,
+      "measured_bias_hz": 115.66711465033643
+    },
+    {
+      "carrier_hz": 11575000000.0,
+      "fractional_error": 1e-7,
+      "expected_bias_hz": 1157.5,
+      "measured_bias_hz": 1157.5408784668227
+    }
+  ],
+  "reacquisition": [
+    {
+      "outage_blocks": 1,
+      "latency_blocks": 1
+    },
+    {
+      "outage_blocks": 2,
+      "latency_blocks": 1
+    },
+    {
+      "outage_blocks": 4,
+      "latency_blocks": 1
+    },
+    {
+      "outage_blocks": 8,
+      "latency_blocks": 1
+    },
+    {
+      "outage_blocks": 16,
+      "latency_blocks": 1
+    }
+  ],
+  "two_signal": [
+    {
+      "second_offset_hz": -1000.0,
+      "second_to_primary_db": -10.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": -1000.0,
+      "second_to_primary_db": 0.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": -1000.0,
+      "second_to_primary_db": 10.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": 0.0,
+      "second_to_primary_db": -10.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": 0.0,
+      "second_to_primary_db": 0.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": 0.0,
+      "second_to_primary_db": 10.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": 1500.0,
+      "second_to_primary_db": -10.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": 1500.0,
+      "second_to_primary_db": 0.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    },
+    {
+      "second_offset_hz": 1500.0,
+      "second_to_primary_db": 10.0,
+      "trials": 200,
+      "primary_captures": 0,
+      "secondary_captures": 0,
+      "other_locks": 200,
+      "no_detections": 0
+    }
+  ]
+}

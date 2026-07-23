@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "deterministic_seed_scheme": "xorshift64*: trial index XOR parameter bits",
+  "fixture": {
+    "sample_rate_hz": 8192.0,
+    "reference_length": 256,
+    "search_min_hz": -4080.0,
+    "search_max_hz": 4080.0,
+    "frequency_bin_hz": 32.0,
+    "detection_threshold": 32.0,
+    "tracking_half_width_hz": 128.0
+  },
+  "requested": {
+    "seeds_per_cn0": 500,
+    "noise_blocks": 1000000,
+    "impairment_trials": 200
+  },
+  "wall_time_seconds": {
+    "detection_accuracy": 2.42820928,
+    "false_alarm_tail": 197.113248371,
+    "dynamics": 0.226596614,
+    "impairments": 1.3142917459999999,
+    "total": 201.082575308
+  }
+}

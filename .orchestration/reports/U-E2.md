@@ -1,17 +1,21 @@
 # U-E2 — synthetic end-to-end mission capstone
 
-Status: implemented within the owned-file boundary. The generator, journal capture, paired
-study, CLI, deterministic tests, and all feasible D35 assertions are present in
-`crates/pnt-mission`.
+Status: implemented. The follow-up integrates `pnt-tracker` into the synthetic pass while
+preserving the generator, journal capture, paired study, CLI, deterministic tests, and all
+feasible D35 assertions in `crates/pnt-mission`.
 
 ## Evidence
 
 - `cargo test -p pnt-mission`: 4 integration tests pass (determinism, journal round-trip,
-  paired rehearsal, and D35 public-API assertions).
+  tracker-in-loop paired rehearsal, and D35 public-API assertions). The paired rehearsal
+  asserts tracker capture provenance, a nonzero tracker observation count, one-for-one
+  tracker/Doppler counts, <=4 Hz error from the direct true-trajectory prediction, and
+  aided position RMS < withheld position RMS.
 - `cargo clippy -p pnt-mission --all-targets -- -D warnings`: pass.
 - Smoke: `cargo run -p pnt-mission --bin mission-study -- --seed 23 --duration 20 --out DIR`:
-  2,085 measurement records, 21 independent truth records, and 21 fixture-ephemeris Doppler
-  observations; JSON run report emitted.
+  2,085 measurement records, 21 independent truth records, and 21 tracker-derived Doppler
+  observations; maximum tracker versus direct predictor error was 2.188 Hz; JSON run report
+  emitted.
 - The final workspace-wide test/clippy/fmt gate is recorded in the unit commit handoff.
 
 ## Mission physics
@@ -35,8 +39,11 @@ than WGS-84 geodetic transport, is a deliberate synthetic-fixture approximation.
 
 The fixture ISS state is propagated through `pnt-ephemeris`; visibility and noiseless
 correlation-peak Doppler are calculated by `pnt-predictor` from the true receiver position
-and velocity. Seeded noise is then added in hertz. GNSS measurement records are noisy while
-the physically separate truth journal is noise-free.
+and velocity. For the visible pass, each prediction drives a seeded `pnt-tracker` BPSK IQ
+block. One stateful tracker processes the blocks and `Detection::into_envelope` supplies the
+journal observation in place of the former direct Doppler envelope. The direct prediction
+is retained only as a test oracle. GNSS measurement records are noisy while the physically
+separate truth journal is noise-free.
 
 ## Synthetic headline table
 
@@ -44,9 +51,9 @@ Seed 23, 20-second smoke fixture:
 
 | Replay | Position RMS (m) | Speed RMS (m/s) | Matched epochs |
 |---|---:|---:|---:|
-| Aided / production | 0.525 | 0.478 | 84 |
-| GNSS-withheld / recorded_only | 18.584 | 3.323 | 63 |
-| Aided minus withheld mean | -14.700 | -2.888 | 84 comparison pairs |
+| Aided / production | 0.616 | 0.485 | 84 |
+| GNSS-withheld / recorded_only | 14.443 | 4.239 | 63 |
+| Aided minus withheld mean | -11.373 | -3.523 | 84 comparison pairs |
 
 **SYNTHETIC DEMONSTRATION ONLY — these values are not performance claims; behavior with
 real signals is [UNVERIFIED].** Negative comparison values assert the documented
@@ -66,21 +73,19 @@ because of the public API gap below.
 
 ## API gaps
 
-1. No `pnt-tracker` crate exists in this checkout. The optional tracker synth+tracker path
-   therefore cannot be linked; `tracker_in_loop_count` is honestly zero.
-2. `pnt-replay::replay_paired` creates executives without an `EphemerisStore` /
+1. `pnt-replay::replay_paired` creates executives without an `EphemerisStore` /
    `DopplerPipeline`, and has no injection/configuration parameter. Generated Doppler records
    are consequently rejected as “Doppler pipeline unavailable.” This blocks the requested
    replay proof of Doppler-rich versus outage/turn behavior without editing `pnt-replay`,
    which the brief forbids.
-3. `pnt_replay::ComparisonSummary` exposes no comparison-pair exclusion count. Only aided and
+2. `pnt_replay::ComparisonSummary` exposes no comparison-pair exclusion count. Only aided and
    withheld `excluded_no_near_truth` counts are public.
-4. Replay uses its estimator's fixed 0.01-second propagation interval. The mission therefore
+3. Replay uses its estimator's fixed 0.01-second propagation interval. The mission therefore
    emits IMU at 100 Hz to remain consistent; replay does not derive `dt` from journal times.
 
 ## [UNVERIFIED]
 
-- Real-IQ tracker behavior and tracker-to-mission integration.
+- Real-signal tracker behavior (the integrated IQ path remains seeded synthetic BPSK/AWGN).
 - Real-signal Doppler noise, nuisance bias, multipath, visibility, and ephemeris error.
 - Withheld position observability or boundedness from the generated Doppler until replay can
   attach its public Doppler pipeline.

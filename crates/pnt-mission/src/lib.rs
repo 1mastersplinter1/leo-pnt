@@ -6,10 +6,11 @@ use pnt_ephemeris::{EphemerisError, EphemerisStore};
 use pnt_journal::{FileJournals, JournalError, RunManifest, RunMetadata};
 use pnt_predictor::{predict, ReceiverState, SatelliteState};
 use pnt_replay::{replay_paired, ReplayError, ReplayReport};
+use pnt_tracker::synth::{BpskReference, SynthConfig, Synthesizer};
+use pnt_tracker::{ConfigError, EnvelopeMetadata, TrackOutcome, TrackerConfig};
 use pnt_types::{
     Constellation, Frame, GnssFix, Heading, ImuSample, MeasurementEnvelope, MeasurementPayload,
-    Provenance, QualityFlags, SourceId, SpeedThroughWater, TimeTag, TrackerDoppler, UtcTime,
-    SCHEMA_VERSION,
+    Provenance, QualityFlags, SourceId, SpeedThroughWater, TimeTag, UtcTime, SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::{f64::consts::FRAC_PI_2, path::Path};
@@ -17,6 +18,9 @@ use std::{f64::consts::FRAC_PI_2, path::Path};
 const EARTH_RADIUS_M: f64 = 6_378_137.0;
 const NORAD_ID: u64 = 25_544;
 const CARRIER_HZ: f64 = 1_600_000_000.0;
+const TRACKER_SAMPLE_RATE_HZ: f64 = 131_072.0;
+const TRACKER_REFERENCE_LEN: usize = 256;
+const TRACKER_TOLERANCE_HZ: f64 = 4.0;
 const TLE: &str = include_str!("../../pnt-ephemeris/tests/fixtures/iss.tle");
 
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +31,8 @@ pub enum MissionError {
     Ephemeris(#[from] EphemerisError),
     #[error(transparent)]
     Replay(#[from] ReplayError),
+    #[error(transparent)]
+    TrackerConfig(#[from] ConfigError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
@@ -79,6 +85,7 @@ pub struct MissionSummary {
     pub constant_heading_samples: u64,
     pub turn_samples: u64,
     pub tracker_in_loop_count: u64,
+    pub tracker_max_direct_error_hz: Option<f64>,
     pub synthetic_only: bool,
 }
 
@@ -133,6 +140,10 @@ pub fn generate_mission(
     let mut measurement_count = 0_u64;
     let mut truth_count = 0_u64;
     let mut doppler_count = 0_u64;
+    let mut tracker_in_loop_count = 0_u64;
+    let mut tracker_max_direct_error_hz: Option<f64> = None;
+    let tracker_reference = BpskReference::pn(TRACKER_REFERENCE_LEN, config.seed ^ 0x5452_4143);
+    let mut tracker = None;
     let mut turn_samples = 0_u64;
     let mut constant_heading_samples = 0_u64;
     let mut north = 0.0;
@@ -252,23 +263,58 @@ pub fn generate_mission(
                 CARRIER_HZ,
                 config.elevation_mask_rad,
             ) {
-                journals.try_write_measurement(&envelope(
-                    sequence,
-                    timestamp,
-                    Some(utc),
-                    &NORAD_ID.to_string(),
-                    Frame::AntennaPhaseCenter,
-                    vec![config.doppler_noise_std_hz.powi(2)],
-                    MeasurementPayload::TrackerDoppler(TrackerDoppler {
+                let predicted_hz = prediction.correlation_peak_hz;
+                let receiver = match tracker.as_mut() {
+                    Some(receiver) => receiver,
+                    None => tracker.insert(
+                        TrackerConfig {
+                            sample_rate_hz: TRACKER_SAMPLE_RATE_HZ,
+                            min_frequency_hz: predicted_hz - 512.0,
+                            max_frequency_hz: predicted_hz + 512.0,
+                            frequency_bin_hz: 32.0,
+                            detection_threshold: TrackerConfig::DEFAULT_DETECTION_THRESHOLD,
+                            tracking_half_width_hz: 128.0,
+                        }
+                        .build(tracker_reference.samples.clone())?,
+                    ),
+                };
+                let mut synthesizer = Synthesizer::new(
+                    SynthConfig {
+                        sample_rate_hz: TRACKER_SAMPLE_RATE_HZ,
+                        initial_offset_hz: predicted_hz,
+                        offset_ramp_hz_per_s: 0.0,
+                        delay_samples: 37,
+                        cn0_db_hz: 90.0,
+                        seed: config.seed ^ tick ^ 0x4951_5041,
+                    },
+                    tracker_reference.clone(),
+                );
+                if let TrackOutcome::Detection(detection) =
+                    receiver.process_block(&synthesizer.next_block(), timestamp)
+                {
+                    let error_hz = (detection.correlation_peak_hz - predicted_hz).abs();
+                    tracker_max_direct_error_hz = Some(
+                        tracker_max_direct_error_hz.map_or(error_hz, |prior| prior.max(error_hz)),
+                    );
+                    journals.try_write_measurement(&detection.into_envelope(EnvelopeMetadata {
+                        norad_catalog_id: &NORAD_ID.to_string(),
+                        sequence,
+                        host_receive_monotonic_ns: timestamp,
+                        utc: UtcTime {
+                            rfc3339: utc.to_rfc3339_opts(SecondsFormat::Nanos, true),
+                            uncertainty_ns: 0,
+                        },
                         constellation: Constellation::Iridium,
-                        correlation_peak_hz: prediction.correlation_peak_hz
-                            + config.doppler_noise_std_hz * rng.normal(),
                         nominal_carrier_hz: CARRIER_HZ,
-                    }),
-                ))?;
-                sequence += 1;
-                measurement_count += 1;
-                doppler_count += 1;
+                        frequency_variance_hz2: TRACKER_TOLERANCE_HZ.powi(2),
+                        calibration_id: "synthetic-cal-v1",
+                        capture_record: "seeded-pnt-tracker-iq-pass",
+                    }))?;
+                    sequence += 1;
+                    measurement_count += 1;
+                    doppler_count += 1;
+                    tracker_in_loop_count += 1;
+                }
             }
         }
     }
@@ -281,7 +327,8 @@ pub fn generate_mission(
         doppler_count,
         constant_heading_samples,
         turn_samples,
-        tracker_in_loop_count: 0,
+        tracker_in_loop_count,
+        tracker_max_direct_error_hz,
         synthetic_only: true,
     })
 }
@@ -309,7 +356,6 @@ pub fn run_study(
             outage_or_turn_present: mission.turn_samples > 0,
         },
         integration_gaps: vec![
-            "pnt-tracker is absent from this checkout; tracker-in-loop count is zero".into(),
             "pnt-replay does not attach an EphemerisStore/DopplerPipeline, so recorded Doppler is rejected during paired replay".into(),
             "pnt-replay exposes no comparison-pair exclusion count (D35 integration field)".into(),
         ],

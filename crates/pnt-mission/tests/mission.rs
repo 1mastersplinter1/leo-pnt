@@ -2,6 +2,7 @@ use pnt_config::GnssAuthority;
 use pnt_journal::{MeasurementJournalRecord, MeasurementReader, TruthJournalRecord, TruthReader};
 use pnt_mission::{generate_mission, read_manifest, run_study, MissionConfig};
 use pnt_replay::replay_directory;
+use pnt_types::{MeasurementPayload, Provenance};
 use std::{fs, path::Path};
 use tempfile::TempDir;
 
@@ -69,6 +70,36 @@ fn paired_study_is_a_synthetic_qualitative_rehearsal() {
             .doppler_rich_constant_heading_present
     );
     assert!(report.qualitative_demonstration.outage_or_turn_present);
+    assert!(report.mission.tracker_in_loop_count > 0);
+    assert_eq!(
+        report.mission.tracker_in_loop_count,
+        report.mission.doppler_count
+    );
+    assert!(
+        report
+            .mission
+            .tracker_max_direct_error_hz
+            .is_some_and(|error| error <= 4.0),
+        "tracker error: {:?}",
+        report.mission.tracker_max_direct_error_hz
+    );
+    let tracker_observations = MeasurementReader::open(directory.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|record| {
+            matches!(
+                record,
+                MeasurementJournalRecord::Envelope(envelope)
+                    if matches!(envelope.payload, MeasurementPayload::TrackerDoppler(_))
+                        && matches!(
+                            envelope.provenance,
+                            Provenance::CaptureRecord(ref capture)
+                                if capture == "seeded-pnt-tracker-iq-pass"
+                        )
+            )
+        })
+        .count() as u64;
+    assert_eq!(tracker_observations, report.mission.tracker_in_loop_count);
     assert_eq!(
         report.replay.input_measurement_count,
         report.mission.measurement_count

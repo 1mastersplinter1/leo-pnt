@@ -22,6 +22,8 @@ shipped here. Adding one requires a verified published definition, documented re
 and polarity conventions, and validation against real captures. OneWeb remains forbidden
 until its separate occupancy-survey gate passes.
 
+Constraint (review F16): `TrackerConfig::build` currently requires the reference length to be a power of two ≥ 4 (FFT sizing choice, not a rustfft requirement — rustfft supports arbitrary lengths). A real PSS/SSS/Iridium/Orbcomm sequence of arbitrary length must be resampled or zero-padded to a power-of-two length until this restriction is relaxed.
+
 The envelope constructor requires UTC and a decimal NORAD catalogue ID, preserving contract
 v4.1. `correlation_peak_hz` is always offset from nominal per v4.
 

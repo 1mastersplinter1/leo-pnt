@@ -50,7 +50,9 @@ fn detection(outcome: TrackOutcome) -> pnt_tracker::Detection {
 fn constant_offsets_recovered_at_high_and_moderate_cn0() {
     // The coarse grid is 32 Hz. Adjacent-sample phase refinement estimates the residual
     // continuously (not quantised to a bin); a conservative noise-tested bound is 4 Hz,
-    // one eighth of a bin. Near-Nyquist fixtures remain inside the configured ±4080 Hz.
+    // The 4 Hz bound is governed by the phase-discriminator noise sigma (~0.5 Hz at the
+    // lowest tested C/N0; bound ≈ 8 sigma), not by the 32 Hz bin width (review F4).
+    // Near-Nyquist fixtures remain inside the configured ±4080 Hz.
     for cn0_db_hz in [78.0, 62.0] {
         for offset_hz in [-4_030.0, -713.25, 487.5, 4_025.0] {
             let mut generator = synth(offset_hz, 0.0, cn0_db_hz, 91);

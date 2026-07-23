@@ -26,6 +26,23 @@
 //!   versus the EKF is deliberately **not** the rejection criterion; staleness is handled by
 //!   the lag growth, and degenerate over-confidence by the floor;
 //! - **fail-closed** — on any rejection the live EKF state is held unchanged.
+//!
+//! # Open blockers before any production (live-vessel) reseed  [UNVERIFIED]
+//!
+//! This crate ships the gate and the executive seam as reviewed scaffolding; the seam is
+//! refused unless the executive is in smoother-owns-measurements mode (which production never
+//! enters yet). The following must land before a reseed may reach a live autopilot, per the
+//! two-model safety review (Grok + Codex, 2026-07-23):
+//! - **State lag alignment (N5):** the reseed writes the smoothed *mean at `t − L`*; it must be
+//!   propagated to now (or the live window RTS-replaced). Growing the covariance is not enough.
+//! - **Unit-aware covariance floor / process-integrated growth:** the scalar `covariance_floor`
+//!   and isotropic `lag_growth_per_s · L · I` are not dimensioned per state (m², (m/s)², rad²,
+//!   clock, current). Replace with per-state process-noise-integrated growth and floor.
+//! - **Integrity coupling:** an accepted reseed must force a fresh integrity evaluation and the
+//!   supervisor must not report `steering_authorised` on a smoother-shrunk covariance; a reject
+//!   should be able to arm a revoke. Today reject only journals.
+//! - **Symmetry / live-covariance validation:** reject a non-symmetric candidate before the PSD
+//!   probe; validate the live covariance for finiteness/PSD too.
 
 use nalgebra::{DMatrix, DVector};
 
@@ -65,7 +82,10 @@ pub enum ReseedRejection {
     StepTooLarge,
     /// The reseed covariance was not positive semidefinite.
     NonPsdCovariance,
-    /// The reseed claimed more confidence than the lag-grown EKF covariance (Löwner order).
+    /// The lag-aligned reseed covariance collapsed below the configured floor (degenerate
+    /// over-confidence). NOTE: this is a scalar floor, not yet a per-state / process-noise-
+    /// integrated bound, and it is only a sufficient double-count guard once exclusive
+    /// measurement ownership is enforced — see the crate-root open-blockers note.
     OptimisticCovariance,
     /// The candidate was structurally invalid (dimension mismatch, non-finite, negative lag).
     Malformed,
@@ -111,6 +131,12 @@ impl ReseedGate {
             || candidate.lag_seconds < 0.0
             || candidate.state.iter().any(|v| !v.is_finite())
             || candidate.covariance.iter().any(|v| !v.is_finite())
+            // The live estimate must itself be finite to compare against.
+            || live.state.iter().any(|v| !v.is_finite())
+            || live.covariance.iter().any(|v| !v.is_finite())
+            // Reject a non-symmetric candidate covariance rather than silently symmetrising it.
+            || (&candidate.covariance - candidate.covariance.transpose()).amax()
+                > self.eigenvalue_tolerance
         {
             return ReseedDecision::Reject(ReseedRejection::Malformed);
         }
@@ -264,6 +290,23 @@ mod tests {
         assert_eq!(
             gate.evaluate(&candidate, &live),
             ReseedDecision::Reject(ReseedRejection::NonPsdCovariance)
+        );
+    }
+
+    #[test]
+    fn rejects_an_asymmetric_candidate_covariance() {
+        let gate = ReseedGate::default();
+        let live = live(&[0.0, 0.0], &[100.0, 100.0]);
+        let mut cov = diag(&[50.0, 50.0]);
+        cov[(0, 1)] = 5.0; // asymmetric: (0,1) != (1,0)
+        let candidate = ReseedCandidate {
+            state: DVector::from_column_slice(&[1.0, 1.0]),
+            covariance: cov,
+            lag_seconds: 0.0,
+        };
+        assert_eq!(
+            gate.evaluate(&candidate, &live),
+            ReseedDecision::Reject(ReseedRejection::Malformed)
         );
     }
 

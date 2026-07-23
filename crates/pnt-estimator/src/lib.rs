@@ -733,6 +733,17 @@ impl Estimator for FilterStub {
                 self.covariance[(i, j)] = core_covariance[(i, j)];
             }
         }
+        // The core marginal now comes from a different joint distribution than the augmented
+        // states, so the old core<->augmented cross-covariances are statistically invalid.
+        // Zero them (conservative: drops correlation rather than asserting a stale one), which
+        // keeps the joint covariance consistent and PSD. Augmented marginals are preserved.
+        let total = self.x.len();
+        for i in 0..CORE_DIM {
+            for j in CORE_DIM..total {
+                self.covariance[(i, j)] = 0.0;
+                self.covariance[(j, i)] = 0.0;
+            }
+        }
     }
 }
 
@@ -938,6 +949,23 @@ mod tests {
         // The augmented satellite state and its variance are untouched.
         assert!((filter.x[nuisance] - 7.0).abs() < f64::EPSILON);
         assert!((filter.covariance[(nuisance, nuisance)] - 42.0).abs() < f64::EPSILON);
+        // Core<->augmented cross-covariances are zeroed (stale after a core overwrite), keeping
+        // the joint covariance consistent.
+        for i in 0..CORE_DIM {
+            assert!(filter.covariance[(i, nuisance)].abs() < f64::EPSILON);
+            assert!(filter.covariance[(nuisance, i)].abs() < f64::EPSILON);
+        }
+        // The result stays symmetric and PSD.
+        assert!((&filter.covariance - filter.covariance.transpose()).amax() < 1.0e-12);
+        assert!(
+            filter
+                .covariance
+                .clone()
+                .symmetric_eigen()
+                .eigenvalues
+                .min()
+                >= -1.0e-9
+        );
     }
 
     #[test]

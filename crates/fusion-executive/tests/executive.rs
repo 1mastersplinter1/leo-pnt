@@ -651,11 +651,43 @@ fn non_finite_epoch_is_not_emitted_and_is_journalled() {
 }
 
 #[test]
+fn a_reseed_is_refused_while_the_ekf_owns_measurements() {
+    use nalgebra::{DMatrix, DVector};
+    use pnt_smoother::{ReseedCandidate, ReseedGate};
+
+    // Default ownership is EkfOwnsMeasurements: the seam must refuse (fail-closed) to avoid
+    // double-counting, without touching the filter.
+    let mut executive = Executive::test_stub(GnssAuthority::Off);
+    let (before, _) = executive.filter().core_estimate();
+    let n = before.len();
+    let mut reseed = DVector::zeros(n);
+    reseed[0] = 5.0;
+    let candidate = ReseedCandidate {
+        state: reseed,
+        covariance: DMatrix::identity(n, n) * 10.0,
+        lag_seconds: 1.0,
+    };
+    assert!(!executive.submit_smoother_reseed(&ReseedGate::default(), &candidate));
+    let (after, _) = executive.filter().core_estimate();
+    assert!(
+        (after[0] - before[0]).abs() < f64::EPSILON,
+        "filter must be untouched"
+    );
+    assert!(executive
+        .journals()
+        .integrity_events()
+        .iter()
+        .any(|event| event.reason.contains("refused")));
+}
+
+#[test]
 fn an_accepted_smoother_reseed_updates_the_core_state_fail_closed() {
+    use fusion_executive::SmootherOwnership;
     use nalgebra::{DMatrix, DVector};
     use pnt_smoother::{ReseedCandidate, ReseedGate};
 
     let mut executive = Executive::test_stub(GnssAuthority::Off);
+    executive.set_smoother_ownership(SmootherOwnership::SmootherOwnsMeasurements);
     // A well-conditioned reseed the gate will accept: modest step, honest covariance.
     let (state, _cov) = executive.filter().core_estimate();
     let n = state.len();
@@ -674,10 +706,12 @@ fn an_accepted_smoother_reseed_updates_the_core_state_fail_closed() {
 
 #[test]
 fn a_rejected_smoother_reseed_holds_the_filter_and_journals_the_reason() {
+    use fusion_executive::SmootherOwnership;
     use nalgebra::{DMatrix, DVector};
     use pnt_smoother::{ReseedCandidate, ReseedGate};
 
     let mut executive = Executive::test_stub(GnssAuthority::Off);
+    executive.set_smoother_ownership(SmootherOwnership::SmootherOwnsMeasurements);
     let (before, _) = executive.filter().core_estimate();
     let n = before.len();
     // An implausible jump beyond max_step -> rejected, fail-closed.

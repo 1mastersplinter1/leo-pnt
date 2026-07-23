@@ -44,8 +44,28 @@ pub struct Executive<C, E, I, J> {
     solution_lines: Vec<String>,
     doppler: Option<DopplerPipeline>,
     band_trust: BandTrust,
+    smoother_ownership: SmootherOwnership,
     solution_sequence: u64,
     last_absolute_observation_ns: Option<u64>,
+}
+
+/// Which estimator owns the measurement stream (the exclusive-information-ownership rule).
+///
+/// A smoother reseed may only be applied while the smoother owns the measurements — otherwise
+/// the EKF has already absorbed them and reseeding double-counts information into the
+/// autopilot-facing covariance (review B2/N4). The executive starts in [`EkfOwnsMeasurements`]
+/// and — until the smoother measurement routing and kill-switch are built — never leaves it, so
+/// `submit_smoother_reseed` is inert in production. The variant exists so the reseed gate is
+/// exercised end-to-end in tests without exposing an unguarded overwrite of the live filter.
+///
+/// [`EkfOwnsMeasurements`]: SmootherOwnership::EkfOwnsMeasurements
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SmootherOwnership {
+    /// Measurements update the EKF directly (today's data flow). Reseeds are refused.
+    EkfOwnsMeasurements,
+    /// Measurements feed the smoother only; the EKF predicts and accepts guarded reseeds.
+    /// Not yet reachable in production — set only by tests until routing exists.
+    SmootherOwnsMeasurements,
 }
 
 pub struct DopplerPipeline {
@@ -103,9 +123,19 @@ where
             solution_lines: Vec::new(),
             doppler: None,
             band_trust: BandTrust::new(),
+            smoother_ownership: SmootherOwnership::EkfOwnsMeasurements,
             solution_sequence: 0,
             last_absolute_observation_ns: None,
         }
+    }
+
+    /// Sets which estimator owns the measurement stream. The reseed seam is refused unless the
+    /// smoother owns measurements (the exclusive-ownership guard). Currently only reachable from
+    /// tests: production measurement routing to the smoother is not yet built, so the executive
+    /// never enters `SmootherOwnsMeasurements` on its own.
+    #[doc(hidden)]
+    pub fn set_smoother_ownership(&mut self, ownership: SmootherOwnership) {
+        self.smoother_ownership = ownership;
     }
 
     #[must_use]
@@ -369,16 +399,30 @@ where
     /// on reject the filter is held unchanged and the reason is journalled. Returns whether the
     /// reseed was applied.
     ///
-    /// Note on information ownership: while a smoother is active it must own the measurements
-    /// (they must not also update the EKF, or reseeding double-counts). Wiring the executive's
-    /// measurement routing to the smoother — and the kill-switch that returns ownership to the
-    /// EKF — is the remaining follow-up; this method is the reseed seam that makes the gate
-    /// usable and testable end to end.
+    /// **Ownership guard (B2/N4):** the reseed is refused outright unless the smoother owns the
+    /// measurement stream ([`SmootherOwnership::SmootherOwnsMeasurements`]). While the EKF owns
+    /// measurements (the only production data flow today) a reseed would reinject information the
+    /// EKF already absorbed, over-tightening the autopilot-facing covariance — so it is rejected
+    /// and journalled, never applied. This keeps the seam safe until the smoother measurement
+    /// routing and kill-switch exist.
+    ///
+    /// **Not yet production-complete:** even under smoother ownership this path still lacks
+    /// state lag-propagation-to-now (N5) and integrity-authority coupling on accept, and
+    /// `apply_reseed` does not yet reconcile core↔augmented cross-covariances. It is exercised
+    /// end-to-end only in tests; it must not be enabled on a live vessel until those land.
     pub fn submit_smoother_reseed(
         &mut self,
         gate: &ReseedGate,
         candidate: &ReseedCandidate,
     ) -> bool {
+        if self.smoother_ownership != SmootherOwnership::SmootherOwnsMeasurements {
+            self.journals.write_integrity(IntegrityEvent {
+                monotonic_ns: self.clock.ingress_monotonic_ns(),
+                source_id: "smoother-reseed".to_owned(),
+                reason: "reseed refused: EKF owns measurements (would double-count)".to_owned(),
+            });
+            return false;
+        }
         let (state, covariance) = self.filter.core_estimate();
         let live = FilterEstimate { state, covariance };
         match gate.evaluate(candidate, &live) {

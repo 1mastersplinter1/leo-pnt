@@ -223,6 +223,94 @@ fn revocation_is_latched_until_ack_dwell_and_fresh_arm() {
 }
 
 #[test]
+fn arm_edges_during_warning_and_escalated_are_ignored() {
+    let good = state_with_accuracy(0.5);
+    let bad = state_with_accuracy(9.0);
+    for escalate in [false, true] {
+        let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+        arm(&mut s, 0);
+        solution(&mut s, 1, 0, &good);
+        solution(&mut s, 2, 1, &bad);
+        if escalate {
+            assert!(!s.steering_authorised(&bad, 1_000_000_001));
+            assert_eq!(s.state(), S::Escalated);
+        } else {
+            assert_eq!(s.state(), S::Warning);
+        }
+        arm(&mut s, 1_000_000_002);
+        s.acknowledge(1_000_000_002);
+        solution(&mut s, 3, 2_000_000_002, &good);
+        solution(&mut s, 4, 2_000_000_003, &good);
+        assert_eq!(s.state(), S::LatchedSafe);
+        assert!(!s.steering_authorised(&good, 2_000_000_003));
+
+        arm(&mut s, 2_000_000_004);
+        solution(&mut s, 5, 2_000_000_004, &good);
+        assert_eq!(s.state(), S::Nominal);
+        assert!(s.steering_authorised(&good, 2_000_000_004));
+    }
+}
+
+fn nominal_supervisor(good: &FilterState) -> AuthoritySupervisor {
+    let mut supervisor = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+    arm(&mut supervisor, 0);
+    solution(&mut supervisor, 1, 0, good);
+    supervisor
+}
+
+#[test]
+fn live_supervisor_fault_beats_disarm_in_both_same_tick_orders() {
+    let good = state_with_accuracy(0.5);
+    let bad = state_with_accuracy(9.0);
+    let mut disarm_then_fault = nominal_supervisor(&good);
+    disarm_then_fault.arm_command(&ArmCommand {
+        action: ArmAction::Disarm,
+        host_monotonic_ns: 10,
+        source_id: SourceId("helm".into()),
+    });
+    solution(&mut disarm_then_fault, 2, 10, &bad);
+
+    let mut fault_then_disarm = nominal_supervisor(&good);
+    solution(&mut fault_then_disarm, 2, 10, &bad);
+    fault_then_disarm.arm_command(&ArmCommand {
+        action: ArmAction::Disarm,
+        host_monotonic_ns: 10,
+        source_id: SourceId("helm".into()),
+    });
+
+    assert_eq!(disarm_then_fault.output(), fault_then_disarm.output());
+    assert_eq!(disarm_then_fault.state(), S::Warning);
+    assert_eq!(disarm_then_fault.output().alarm, AlarmLevel::LoudDemandAck);
+}
+
+#[test]
+fn backward_time_revokes_but_repeated_time_is_accepted() {
+    let good = state_with_accuracy(0.5);
+    let mut repeated = nominal_supervisor(&good);
+    solution(&mut repeated, 2, 0, &good);
+    assert_eq!(repeated.state(), S::Nominal);
+    assert!(repeated.steering_authorised(&good, 0));
+
+    let mut backward = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+    arm(&mut backward, 10);
+    solution(&mut backward, 1, 10, &good);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        solution(&mut backward, 2, 9, &good);
+    }));
+    if cfg!(debug_assertions) {
+        assert!(result.is_err(), "debug builds diagnose the clock regression");
+    }
+    assert_eq!(backward.state(), S::Warning);
+    assert!(!backward.output().steering_authorised);
+}
+
+#[test]
+fn complete_params_require_an_explicit_calibration_validator() {
+    assert!(std::panic::catch_unwind(|| AuthoritySupervisor::fail_closed(params())).is_err());
+    let _grant_capable = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+}
+
+#[test]
 fn random_sequences_never_authorise_with_a_false_g_condition() {
     let good = state_with_accuracy(0.5);
     let bad = state_with_accuracy(9.0);
@@ -230,10 +318,20 @@ fn random_sequences_never_authorise_with_a_false_g_condition() {
     for _case in 0..32 {
         let mut s = AuthoritySupervisor::with_calibration_validator(params(), |id| id == "cal");
         let mut now = 0_u64;
+        let mut accepted_arm_since_revocation = false;
         for sequence in 1..200 {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             now += seed % 20_000_000;
             if seed.trailing_zeros() >= 3 {
+                if matches!(s.state(), S::Disarmed | S::LatchedSafe) {
+                    accepted_arm_since_revocation = true;
+                }
+                arm(&mut s, now);
+            }
+            if seed & 63 == 3 {
+                s.acknowledge(now);
+            }
+            if seed & 127 == 7 && matches!(s.state(), S::Warning | S::Escalated) {
                 arm(&mut s, now);
             }
             if seed & 31 == 1 {
@@ -242,6 +340,7 @@ fn random_sequences_never_authorise_with_a_false_g_condition() {
                     host_monotonic_ns: now,
                     source_id: SourceId("helm".into()),
                 });
+                accepted_arm_since_revocation = false;
             }
             let g2 = seed & 2 == 0;
             let g3 = seed & 4 == 0;
@@ -258,9 +357,16 @@ fn random_sequences_never_authorise_with_a_false_g_condition() {
                 now,
             );
             let authorised = s.steering_authorised(state, now);
+            if matches!(s.state(), S::Warning | S::Escalated) {
+                accepted_arm_since_revocation = false;
+            }
             assert!(
                 !authorised || (g2 && g3),
                 "authorised with false G at sequence {sequence}"
+            );
+            assert!(
+                !authorised || accepted_arm_since_revocation,
+                "authorised without an accepted post-revocation arm at sequence {sequence}"
             );
         }
     }

@@ -1,13 +1,13 @@
 use fusion_executive::{DopplerPipeline, Executive, RoutingDestination};
 use pnt_config::{Config, GnssAuthority};
 use pnt_estimator::{Estimator, FilterStub};
-use pnt_integrity::IntegrityStub;
+use pnt_integrity::{AuthorityParams, AuthoritySupervisor, IntegrityStub, ProtectionLimits};
 use pnt_journal::MemoryJournals;
 use pnt_time::ManualClock;
 use pnt_types::{
-    ArmAction, ArmCommand, Constellation, FilterState, Frame, GnssFix, Heading, ImuSample,
-    MeasurementEnvelope, MeasurementPayload, Provenance, QualityFlags, SourceId, SpeedThroughWater,
-    TimeTag, TrackerDoppler, UtcTime,
+    AckCommand, ArmAction, ArmCommand, Constellation, FilterState, Frame, GnssFix, Heading,
+    ImuSample, MeasurementEnvelope, MeasurementPayload, Provenance, QualityFlags, SourceId,
+    SpeedThroughWater, TimeTag, TrackerDoppler, UtcTime,
 };
 
 fn envelope(sequence: u64, payload: MeasurementPayload) -> MeasurementEnvelope {
@@ -225,6 +225,7 @@ fn oneweb_is_gated_by_config() {
 #[derive(Default)]
 struct ArmGate {
     commands: Vec<ArmCommand>,
+    acknowledgements: Vec<AckCommand>,
 }
 impl pnt_integrity::IntegrityAuthorityGate for ArmGate {
     fn steering_authorised(&mut self, _: &FilterState, _: u64) -> bool {
@@ -232,6 +233,9 @@ impl pnt_integrity::IntegrityAuthorityGate for ArmGate {
     }
     fn arm_command(&mut self, command: &ArmCommand) {
         self.commands.push(command.clone());
+    }
+    fn acknowledge(&mut self, command: &AckCommand) {
+        self.acknowledgements.push(command.clone());
     }
 }
 
@@ -258,6 +262,104 @@ fn arm_command_reaches_authority_and_never_filter_update() {
     assert_eq!(executive.filter().measurement_updates(), 0);
     assert_eq!(executive.integrity().commands.len(), 1);
     assert_eq!(executive.journals().measurement_records().len(), 1);
+}
+
+#[test]
+fn acknowledge_reaches_authority_and_never_filter_update() {
+    let mut executive = Executive::new(
+        Config {
+            gnss_authority: GnssAuthority::Off,
+            oneweb_enabled: false,
+        },
+        ManualClock::default(),
+        FilterStub::default(),
+        ArmGate::default(),
+        MemoryJournals::default(),
+    );
+    executive.process(envelope(
+        1,
+        MeasurementPayload::AckCommand(AckCommand {
+            host_monotonic_ns: 1,
+            source_id: SourceId("helm".into()),
+        }),
+    ));
+    assert_eq!(executive.filter().measurement_updates(), 0);
+    assert_eq!(executive.integrity().acknowledgements.len(), 1);
+    assert_eq!(executive.journals().measurement_records().len(), 1);
+}
+
+#[derive(Debug)]
+struct ScriptedClock(std::collections::VecDeque<u64>);
+
+impl pnt_time::ClockService for ScriptedClock {
+    fn ingress_monotonic_ns(&mut self) -> u64 {
+        self.0.pop_front().expect("clock script exhausted")
+    }
+}
+
+fn dr_params() -> AuthorityParams {
+    AuthorityParams {
+        aided: ProtectionLimits {
+            horizontal_position_m: Some(1.0e9),
+            horizontal_velocity_mps: Some(1.0e9),
+            heading_rad: Some(1.0e9),
+        },
+        denied: ProtectionLimits {
+            horizontal_position_m: Some(1.0e9),
+            horizontal_velocity_mps: Some(1.0e9),
+            heading_rad: Some(1.0e9),
+        },
+        t_lease_s: Some(2.0e-9),
+        t_dr_s: Some(5.0e-9),
+        t_eph_s: Some(1.0),
+        dwell_clear_s: Some(0.0),
+        dwell_rearm_s: Some(0.0),
+        caution_enter: Some(1.0e9),
+        caution_clear: Some(1.0e9),
+        revoke_threshold: Some(1.0e10),
+        t_ack_s: Some(1.0),
+    }
+}
+
+#[test]
+fn imu_dr_fill_renews_lease_until_absolute_observation_exceeds_t_dr() {
+    let clock = ScriptedClock([0, 1, 2, 3, 4, 5, 6, 7].into());
+    let supervisor = AuthoritySupervisor::with_calibration_validator(dr_params(), |id| {
+        id == "cal-1"
+    });
+    let mut executive = Executive::new(
+        Config {
+            gnss_authority: GnssAuthority::Production,
+            oneweb_enabled: false,
+        },
+        clock,
+        FilterStub::default(),
+        supervisor,
+        MemoryJournals::default(),
+    );
+    executive.process(envelope(
+        0,
+        MeasurementPayload::ArmCommand(ArmCommand {
+            action: ArmAction::Arm,
+            host_monotonic_ns: 0,
+            source_id: SourceId("helm".into()),
+        }),
+    ));
+    executive.process(envelope(1, MeasurementPayload::Gnss(GnssFix::default())));
+    for sequence in 2..=7 {
+        executive.process(envelope(
+            sequence,
+            MeasurementPayload::Imu(ImuSample::default()),
+        ));
+    }
+    let epochs = executive.take_solution_epochs();
+    assert_eq!(epochs.len(), 7, "GNSS plus every IMU propagate tick emits");
+    assert!(epochs.iter().take(6).all(|epoch| epoch.steering_authorised));
+    assert!(
+        !epochs[6].steering_authorised,
+        "t_dr, not the continuously renewed t_lease, revokes authority"
+    );
+    assert_eq!(executive.integrity().state(), pnt_integrity::AuthorityState::Warning);
 }
 
 #[test]

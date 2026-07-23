@@ -1,0 +1,23 @@
+[package]
+name = "pnt-mission"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = "0.4.43"
+pnt-ephemeris = { path = "../pnt-ephemeris" }
+pnt-journal = { path = "../pnt-journal" }
+pnt-predictor = { path = "../pnt-predictor" }
+pnt-replay = { path = "../pnt-replay" }
+pnt-types = { path = "../pnt-types" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+pnt-config = { path = "../pnt-config" }
+tempfile = "3.20"
+
+[lints]
+workspace = true

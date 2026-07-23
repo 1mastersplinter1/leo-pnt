@@ -1,0 +1,13 @@
+[package]
+name = "pnt-tracker"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+num-complex = "0.4.6"
+pnt-types = { path = "../pnt-types" }
+rustfft = "=6.4.1"
+
+[lints]
+workspace = true

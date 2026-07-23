@@ -30,6 +30,7 @@ const SPEED_OF_LIGHT_MPS: f64 = 299_792_458.0;
 const SPEED_MPS: f64 = 7.0 * 0.514_444;
 const AIDED_S: u64 = 300;
 const MASK_DEG: f64 = 5.0;
+const EARTH_RADIUS_M: f64 = 6_371_000.0;
 const EPOCH: &str = "2020-07-12T21:16:01Z";
 const RECEIVER_CLOCK_DRIFT_MPS: f64 = 0.03;
 const SEED_COUNT: usize = 8;
@@ -132,7 +133,7 @@ struct TruthSample {
     utc: DateTime<Utc>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 struct SeedResult {
     position_error_m: f64,
     velocity_error_mps: f64,
@@ -657,7 +658,9 @@ fn percentile(values: &[f64], fraction: f64) -> f64 {
 }
 
 fn error_class(error_m: f64) -> &'static str {
-    if error_m < 100.0 {
+    if !error_m.is_finite() || error_m >= EARTH_RADIUS_M {
+        "DIVERGED (>=Earth radius or non-finite)"
+    } else if error_m < 100.0 {
         "<100 m"
     } else if error_m <= 200.0 {
         "100-200 m"
@@ -668,7 +671,7 @@ fn error_class(error_m: f64) -> &'static str {
     } else if error_m < 100_000.0 {
         "10-100 km"
     } else {
-        ">=100 km"
+        "100 km-Earth radius"
     }
 }
 
@@ -714,4 +717,162 @@ fn markdown(report: &Report) -> String {
         report.controls.per_sv_transmit_bias_hz
     );
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_mission() -> (
+        TempDir,
+        BTreeMap<u64, TruthSample>,
+        String,
+        Vec<u64>,
+        MultisatConfig,
+    ) {
+        let config = MultisatConfig::default();
+        let mission_dir = TempDir::new().unwrap();
+        generate_mission(
+            mission_dir.path(),
+            &MissionConfig {
+                seed: config.seeds[0],
+                duration_s: AIDED_S + config.manoeuvring_denied_s,
+                imu_rate_hz: 1,
+                speed_through_water_mps: SPEED_MPS,
+                imu_bias_mps2: [2.0e-4, -1.0e-4, 1.0e-4],
+                imu_noise_std_mps2: 5.0e-4,
+                gnss_noise_std_m: 0.5,
+                coordinated_turn: Some(CoordinatedTurnConfig {
+                    rate_rad_s: 3.0_f64.to_radians(),
+                }),
+                wave_slam: Some(WaveSlamConfig {
+                    burst_rate_hz: 0.08,
+                    duration_s: 0.25,
+                    vertical_peak_mps2: 6.10,
+                    pitch_coupling: 0.18,
+                }),
+                speed_scaled_imu: Some(SpeedScaledImuConfig {
+                    reference_speed_mps: SPEED_MPS,
+                    noise_per_speed_ratio: 0.12,
+                    bias_per_speed_ratio: 0.08,
+                }),
+                doppler_interval_s: config.doppler_interval_s,
+                elevation_mask_rad: -std::f64::consts::FRAC_PI_2,
+                ..MissionConfig::default()
+            },
+        )
+        .unwrap();
+        let truth = load_truth(mission_dir.path()).unwrap();
+        let fixture = synthetic_fixture();
+        let store = EphemerisStore::from_tle_str(&fixture)
+            .unwrap()
+            .with_max_age(Duration::hours(12));
+        let cohort = persistent_cohort(
+            &store,
+            &truth,
+            8,
+            config.doppler_interval_s,
+            config.manoeuvring_denied_s,
+        )
+        .unwrap();
+        (mission_dir, truth, fixture, cohort, config)
+    }
+
+    #[test]
+    fn core_simulation_is_deterministic() {
+        let (mission_dir, truth, fixture, cohort, config) = fixture_mission();
+        let first = simulate(
+            mission_dir.path(),
+            &truth,
+            &fixture,
+            &cohort[..4],
+            &config,
+            config.seeds[0],
+        )
+        .unwrap();
+        let second = simulate(
+            mission_dir.path(),
+            &truth,
+            &fixture,
+            &cohort[..4],
+            &config,
+            config.seeds[0],
+        )
+        .unwrap();
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn fixed_cohort_is_visible_and_each_tier_has_exactly_n_nuisance_states() {
+        let (mission_dir, truth, fixture, cohort, config) = fixture_mission();
+        let store = EphemerisStore::from_tle_str(&fixture)
+            .unwrap()
+            .with_max_age(Duration::hours(12));
+
+        for elapsed in (AIDED_S..=AIDED_S + config.manoeuvring_denied_s)
+            .step_by(config.doppler_interval_s as usize)
+        {
+            let sample = &truth[&(elapsed * 1_000_000_000)];
+            for &id in &cohort {
+                let satellite = store.propagate_ecef(id, sample.utc).unwrap();
+                let elevation = elevation_rad(sample.fix.position_ecef_m, satellite.position_m);
+                assert!(
+                    elevation >= MASK_DEG.to_radians(),
+                    "SV {id} is below the mask at {elapsed}s: {} deg",
+                    elevation.to_degrees()
+                );
+            }
+        }
+
+        let initial = &truth[&(AIDED_S * 1_000_000_000)];
+        let visible = (70_000..70_960)
+            .filter(|&id| {
+                let satellite = store.propagate_ecef(id, initial.utc).unwrap();
+                elevation_rad(initial.fix.position_ecef_m, satellite.position_m)
+                    >= MASK_DEG.to_radians()
+            })
+            .count();
+        let visible_fraction = visible as f64 / 960.0;
+        assert!(
+            (0.01..0.5).contains(&visible_fraction),
+            "implausible visible fraction: {visible}/960"
+        );
+
+        for &count in &config.counts {
+            let result = simulate(
+                mission_dir.path(),
+                &truth,
+                &fixture,
+                &cohort[..count],
+                &config,
+                config.seeds[0],
+            )
+            .unwrap();
+            assert_eq!(result.nuisance_states, count, "N={count}");
+        }
+
+        assert_eq!(cohort[..1], [cohort[0]]);
+        let n1 = aggregate(
+            1,
+            &cohort[..1],
+            &[SeedResult {
+                position_error_m: 0.0,
+                velocity_error_mps: 0.0,
+                accepted: 0,
+                rejected: 0,
+                nuisance_states: 1,
+                gdops: Vec::new(),
+            }],
+            &config,
+        );
+        assert_eq!(n1.satellite_ids, vec![cohort[0]]);
+        assert_eq!(n1.geometry, "fixed single LOS; no handover");
+    }
+
+    #[test]
+    fn divergence_class_is_never_hidden() {
+        assert!(error_class(EARTH_RADIUS_M).starts_with("DIVERGED"));
+        assert!(error_class(f64::NAN).starts_with("DIVERGED"));
+    }
 }

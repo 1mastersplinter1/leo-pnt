@@ -4,11 +4,11 @@
 
 ## Consistency
 
-NEES(6) mean 0.870 (ideal 6), 95% coverage 100.0% (nominal 95%). Doppler NIS mean 0.738, coverage 97.8%. Verdict: pessimistic: covariance is materially wider than observed errors.
+NEES(6) mean 0.870 (ideal 6), 95% coverage 100.0% (nominal 95%). Doppler NIS mean 0.738, coverage 97.8%. Verdict: pessimistic: covariance is materially wider than observed errors; NEES epochs are autocorrelated, so the effective sample count is far below the nominal 57600 epochs.
 
 ## D39 velocity degradation
 
-Prior-only velocity RMS: 0.2506 m/s; baseline Doppler: 0.3753 m/s (along LOS 0.3075, across LOS 0.2153). Two mechanisms are evidenced. The current replay prior path is structurally confounded: variance 1 against initial variance 1 gives gain 0.5 and retains 3189068 m radial ECEF error. After removing that confound, Doppler still raises velocity RMS from 0.2506 to 0.3753 m/s entirely in the LOS component (across-LOS changes from 0.2243 to 0.2153 m/s): the default Q is 100 times the injected acceleration-error variance, so the filter repeatedly trusts noisy scalar range rate over the cleaner DR velocity. Matching Q yields 0.2365 m/s.
+Prior-only velocity RMS: 0.2506 m/s; baseline Doppler: 0.3753 m/s (along LOS 0.3075, across LOS 0.2153). Two mechanisms are evidenced. The current replay prior path is structurally confounded: variance 1 against initial variance 1 gives gain 0.5 and retains an analytically computed 3189068 m radial ECEF error. After removing that confound, Doppler raises velocity RMS from 0.2506 to 0.3753 m/s entirely in the LOS component (across-LOS changes from 0.2243 to 0.2153 m/s). Q=4e-4 empirically minimizes velocity RMS at 0.2365 m/s as an interior optimum; the reviewer's independent extended sweep confirms 0.2659/0.2616/0.2398/0.2365/0.3084/0.3753/0.6643 m/s across Q=4e-7..0.4. This Doppler-degrades-velocity result is contingent on the near-truth IMU (propagation error about 5e-4 m/s^2): at sea with realistic IMU error the sign could flip and the low-Q fix could be wrong.
 
 | Treatment | velocity RMS (m/s) | along-LOS RMS | across-LOS RMS | horizontal position RMS (m) |
 |---|---:|---:|---:|---:|
@@ -30,7 +30,7 @@ Routed action: Route to the next pnt-replay/estimator integration unit: add an a
 
 ## Position observability
 
-The stub reproduces only the relative 20-minute emergence: Doppler is worse at 2 min (5.74 vs 0.81 m RMS) but better at 30 min (149.59 vs 199.81 m). Absolute RMS does not converge; it grows throughout. Turn reset observed: false. The stub has no heading-to-velocity coupling or manoeuvre covariance reset, so it cannot reproduce the predicted reset mechanism.
+The stub reproduces only the relative 20-minute emergence: Doppler is worse at 2 min (5.74 vs 0.81 m RMS) but better at 30 min (149.59 vs 199.81 m). Absolute RMS does not converge; it grows throughout. The 20-minute crossover is fragile: it rests on means from only 6 seeds. Turn reset observed: false, but the maneuver-reset question is unfalsifiable by construction here because the turn enters through the near-truth IMU; this is a harness limitation, not evidence about the real filter. The stub also has no heading-to-velocity coupling or manoeuvre covariance reset.
 
 | duration (min) | prior-only RMS (m) | prior+Doppler RMS (m) |
 |---:|---:|---:|
@@ -46,7 +46,7 @@ Turn windows: pre 28.52 m, first two minutes after 43.87 m, final two minutes 12
 
 ## Stale ephemeris
 
-Threshold 9 first rejects at least 95% at 1 h; the 6 h case rejects 100%. This supports the gate being no looser than 6 h for this deliberately phase-shifted TLE fixture, but does not validate a real SupGP age-error curve.
+Threshold 9 first rejects at least 95% at 1 h; all tested nonzero staleness (>=1 h) is rejected. Epoch shifting aliases orbital phase, producing non-monotonic innovation RMS, and innovations are roughly 3000-5000 times the threshold-9 gate. The missing HPH' term makes this rejection result an upper bound. This deliberately phase-shifted fixture does not support the 6 h choice or validate a real SupGP age-error curve.
 
 | epoch offset | innovation mean (m/s) | innovation RMS (m/s) | threshold-9 rejection |
 |---:|---:|---:|---:|

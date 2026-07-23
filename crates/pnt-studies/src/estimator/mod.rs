@@ -85,7 +85,7 @@ pub struct D39Cell {
     pub observation_period_s: u64,
     pub nuisance_bias_variance_mps2: f64,
     pub prior_variance_m2: f64,
-    pub initial_radial_position_error_m: f64,
+    pub analytic_initial_radial_position_error_m: f64,
     pub doppler_enabled: bool,
     pub velocity_rms_mps: f64,
     pub along_los_velocity_rms_mps: f64,
@@ -239,13 +239,17 @@ fn consistency_campaign(quick: bool) -> Result<ConsistencyReport, StudyError> {
     let nees_coverage = fraction_below(&nees, CHI2_6_95);
     let nis_mean = mean(&doppler_nis);
     let nis_coverage = fraction_below(&doppler_nis, CHI2_1_95);
-    let verdict = if nees_coverage < 0.90 || nis_coverage < 0.90 {
+    let consistency = if nees_coverage < 0.90 || nis_coverage < 0.90 {
         "optimistic: truth errors exceed the filter's stated uncertainty too often"
     } else if nees_mean < 3.0 || (nees_coverage > 0.985 && nis_coverage > 0.985) {
         "pessimistic: covariance is materially wider than observed errors"
     } else {
         "approximately consistent at the tested synthetic operating points"
     };
+    let verdict = format!(
+        "{consistency}; NEES epochs are autocorrelated, so the effective sample count is far below the nominal {} epochs",
+        nees.len()
+    );
     Ok(ConsistencyReport {
         runs: seeds * offsets.len() as u64,
         epochs: nees.len() as u64,
@@ -259,7 +263,7 @@ fn consistency_campaign(quick: bool) -> Result<ConsistencyReport, StudyError> {
             mean: nis_mean,
             coverage_95: nis_coverage,
         }],
-        verdict: verdict.into(),
+        verdict,
     })
 }
 
@@ -380,7 +384,7 @@ fn d39_campaign(quick: bool) -> Result<D39Report, StudyError> {
         ),
         mechanism(
             &tuned,
-            "matches Q to the injected acceleration-error scale and reduces velocity gain",
+            "empirical interior-optimum Q reduces velocity gain",
         ),
         mechanism(
             &replay_prior_path,
@@ -398,8 +402,8 @@ fn d39_campaign(quick: bool) -> Result<D39Report, StudyError> {
         tuned,
     ];
     let answer = format!(
-        "Two mechanisms are evidenced. The current replay prior path is structurally confounded: variance 1 against initial variance 1 gives gain 0.5 and retains {:.0} m radial ECEF error. After removing that confound, Doppler still raises velocity RMS from {:.4} to {:.4} m/s entirely in the LOS component (across-LOS changes from {:.4} to {:.4} m/s): the default Q is 100 times the injected acceleration-error variance, so the filter repeatedly trusts noisy scalar range rate over the cleaner DR velocity. Matching Q yields {:.4} m/s.",
-        replay_prior_path.initial_radial_position_error_m,
+        "Two mechanisms are evidenced. The current replay prior path is structurally confounded: variance 1 against initial variance 1 gives gain 0.5 and retains an analytically computed {:.0} m radial ECEF error. After removing that confound, Doppler raises velocity RMS from {:.4} to {:.4} m/s entirely in the LOS component (across-LOS changes from {:.4} to {:.4} m/s). Q=4e-4 empirically minimizes velocity RMS at {:.4} m/s as an interior optimum; the reviewer's independent extended sweep confirms 0.2659/0.2616/0.2398/0.2365/0.3084/0.3753/0.6643 m/s across Q=4e-7..0.4. This Doppler-degrades-velocity result is contingent on the near-truth IMU (propagation error about 5e-4 m/s^2): at sea with realistic IMU error the sign could flip and the low-Q fix could be wrong.",
+        replay_prior_path.analytic_initial_radial_position_error_m,
         prior_only_velocity,
         baseline.velocity_rms_mps,
         four_way[0].across_los_velocity_rms_mps,
@@ -479,13 +483,14 @@ fn observability_campaign(quick: bool) -> Result<ObservabilityReport, StudyError
     let first = curve.first().expect("duration sweep is nonempty");
     let last = curve.last().expect("duration sweep is nonempty");
     let verdict = format!(
-        "The stub reproduces only the relative 20-minute emergence: Doppler is worse at {} min ({:.2} vs {:.2} m RMS) but better at {} min ({:.2} vs {:.2} m). Absolute RMS does not converge; it grows throughout. Turn reset observed: {}. The stub has no heading-to-velocity coupling or manoeuvre covariance reset, so it cannot reproduce the predicted reset mechanism.",
+        "The stub reproduces only the relative 20-minute emergence: Doppler is worse at {} min ({:.2} vs {:.2} m RMS) but better at {} min ({:.2} vs {:.2} m). Absolute RMS does not converge; it grows throughout. The 20-minute crossover is fragile: it rests on means from only {} seeds. Turn reset observed: {}, but the maneuver-reset question is unfalsifiable by construction here because the turn enters through the near-truth IMU; this is a harness limitation, not evidence about the real filter. The stub also has no heading-to-velocity coupling or manoeuvre covariance reset.",
         first.duration_minutes,
         first.prior_doppler_position_rms_m,
         first.prior_only_position_rms_m,
         last.duration_minutes,
         last.prior_doppler_position_rms_m,
         last.prior_only_position_rms_m,
+        seeds,
         turn_reset.reset_observed
     );
     Ok(ObservabilityReport {
@@ -537,7 +542,7 @@ fn stale_campaign(quick: bool) -> Result<StaleEphemerisReport, StudyError> {
     Ok(StaleEphemerisReport {
         cells,
         verdict: format!(
-            "Threshold 9 first rejects at least 95% at {first_rejecting}; the 6 h case rejects 100%. This supports the gate being no looser than 6 h for this deliberately phase-shifted TLE fixture, but does not validate a real SupGP age-error curve."
+            "Threshold 9 first rejects at least 95% at {first_rejecting}; all tested nonzero staleness (>=1 h) is rejected. Epoch shifting aliases orbital phase, producing non-monotonic innovation RMS, and innovations are roughly 3000-5000 times the threshold-9 gate. The missing HPH' term makes this rejection result an upper bound. This deliberately phase-shifted fixture does not support the 6 h choice or validate a real SupGP age-error curve."
         ),
     })
 }
@@ -668,7 +673,7 @@ fn cell(label: &str, scenario: Scenario) -> Result<D39Cell, StudyError> {
         observation_period_s: scenario.observation_period_s,
         nuisance_bias_variance_mps2: scenario.nuisance_variance,
         prior_variance_m2: scenario.prior_variance,
-        initial_radial_position_error_m: EARTH_RADIUS_M * scenario.prior_variance
+        analytic_initial_radial_position_error_m: EARTH_RADIUS_M * scenario.prior_variance
             / (1.0 + scenario.prior_variance),
         doppler_enabled: scenario.doppler,
         velocity_rms_mps: rms_sq(&samples.velocity_sq),

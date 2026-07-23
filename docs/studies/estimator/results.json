@@ -17,7 +17,7 @@
         "coverage_95": 0.9783159722222222
       }
     ],
-    "verdict": "pessimistic: covariance is materially wider than observed errors"
+    "verdict": "pessimistic: covariance is materially wider than observed errors; NEES epochs are autocorrelated, so the effective sample count is far below the nominal 57600 epochs"
   },
   "d39": {
     "baseline": {
@@ -28,7 +28,7 @@
       "observation_period_s": 1,
       "nuisance_bias_variance_mps2": 100.0,
       "prior_variance_m2": 1e-12,
-      "initial_radial_position_error_m": 6.3781369999936205e-6,
+      "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
       "doppler_enabled": true,
       "velocity_rms_mps": 0.3753479877101402,
       "along_los_velocity_rms_mps": 0.3074865389554455,
@@ -46,7 +46,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.8482508483592877,
         "along_los_velocity_rms_mps": 0.4038573462276099,
@@ -63,7 +63,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3753479877101402,
         "along_los_velocity_rms_mps": 0.3074865389554455,
@@ -80,7 +80,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.32716520942146493,
         "along_los_velocity_rms_mps": 0.24714453368356287,
@@ -97,7 +97,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.24873815739242022,
         "along_los_velocity_rms_mps": 0.14049366108457395,
@@ -116,7 +116,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.23650067178978157,
         "along_los_velocity_rms_mps": 0.11423461678110364,
@@ -133,7 +133,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3083783408948277,
         "along_los_velocity_rms_mps": 0.22434837271018807,
@@ -150,7 +150,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3753479877101402,
         "along_los_velocity_rms_mps": 0.3074865389554455,
@@ -167,7 +167,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.6642566850326606,
         "along_los_velocity_rms_mps": 0.3208397432782382,
@@ -186,7 +186,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3753479877101402,
         "along_los_velocity_rms_mps": 0.3074865389554455,
@@ -203,7 +203,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.39082020846236293,
         "along_los_velocity_rms_mps": 0.29459270697604334,
@@ -220,7 +220,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3947482113709358,
         "along_los_velocity_rms_mps": 0.2944520254109978,
@@ -237,7 +237,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.37975577308504666,
         "along_los_velocity_rms_mps": 0.2914365333961344,
@@ -256,7 +256,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3753479877101402,
         "along_los_velocity_rms_mps": 0.3074865389554455,
@@ -273,7 +273,7 @@
         "observation_period_s": 2,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3692603044205333,
         "along_los_velocity_rms_mps": 0.20261832903303417,
@@ -290,7 +290,7 @@
         "observation_period_s": 5,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.4168027945199705,
         "along_los_velocity_rms_mps": 0.28251815991532536,
@@ -307,7 +307,7 @@
         "observation_period_s": 10,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.6813783075732183,
         "along_los_velocity_rms_mps": 0.5846899084294999,
@@ -326,7 +326,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": false,
         "velocity_rms_mps": 0.25055178264219313,
         "along_los_velocity_rms_mps": 0.11163824381366158,
@@ -343,7 +343,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.3753479877101402,
         "along_los_velocity_rms_mps": 0.3074865389554455,
@@ -360,7 +360,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1.0,
-        "initial_radial_position_error_m": 3189068.5,
+        "analytic_initial_radial_position_error_m": 3189068.5,
         "doppler_enabled": true,
         "velocity_rms_mps": 3835.25877038078,
         "along_los_velocity_rms_mps": 2749.4896571557447,
@@ -377,7 +377,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 1e-12,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.35943196423668045,
         "along_los_velocity_rms_mps": 0.28830793467608223,
@@ -394,7 +394,7 @@
         "observation_period_s": 1,
         "nuisance_bias_variance_mps2": 100.0,
         "prior_variance_m2": 1e-12,
-        "initial_radial_position_error_m": 6.3781369999936205e-6,
+        "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
         "doppler_enabled": true,
         "velocity_rms_mps": 0.23650067178978157,
         "along_los_velocity_rms_mps": 0.11423461678110364,
@@ -438,7 +438,7 @@
         "velocity_rms_mps": 0.23650067178978157,
         "along_los_velocity_rms_mps": 0.11423461678110364,
         "across_los_velocity_rms_mps": 0.20708215781639028,
-        "interpretation": "matches Q to the injected acceleration-error scale and reduces velocity gain"
+        "interpretation": "empirical interior-optimum Q reduces velocity gain"
       },
       {
         "treatment": "current replay prior path",
@@ -456,7 +456,7 @@
       "observation_period_s": 1,
       "nuisance_bias_variance_mps2": 100.0,
       "prior_variance_m2": 1e-12,
-      "initial_radial_position_error_m": 6.3781369999936205e-6,
+      "analytic_initial_radial_position_error_m": 6.3781369999936205e-6,
       "doppler_enabled": true,
       "velocity_rms_mps": 0.23650067178978157,
       "along_los_velocity_rms_mps": 0.11423461678110364,
@@ -465,7 +465,7 @@
       "accepted_updates": 1200,
       "rejected_updates": 0
     },
-    "answer": "Two mechanisms are evidenced. The current replay prior path is structurally confounded: variance 1 against initial variance 1 gives gain 0.5 and retains 3189068 m radial ECEF error. After removing that confound, Doppler still raises velocity RMS from 0.2506 to 0.3753 m/s entirely in the LOS component (across-LOS changes from 0.2243 to 0.2153 m/s): the default Q is 100 times the injected acceleration-error variance, so the filter repeatedly trusts noisy scalar range rate over the cleaner DR velocity. Matching Q yields 0.2365 m/s.",
+    "answer": "Two mechanisms are evidenced. The current replay prior path is structurally confounded: variance 1 against initial variance 1 gives gain 0.5 and retains an analytically computed 3189068 m radial ECEF error. After removing that confound, Doppler raises velocity RMS from 0.2506 to 0.3753 m/s entirely in the LOS component (across-LOS changes from 0.2243 to 0.2153 m/s). Q=4e-4 empirically minimizes velocity RMS at 0.2365 m/s as an interior optimum; the reviewer's independent extended sweep confirms 0.2659/0.2616/0.2398/0.2365/0.3084/0.3753/0.6643 m/s across Q=4e-7..0.4. This Doppler-degrades-velocity result is contingent on the near-truth IMU (propagation error about 5e-4 m/s^2): at sea with realistic IMU error the sign could flip and the low-Q fix could be wrong.",
     "routed_fix": "Route to the next pnt-replay/estimator integration unit: add an atomic FilterStub state/covariance initialization API, use it for ReceiverPrior, and regression-test radial ECEF error as well as horizontal replay scores. Do not tune Doppler around the half-radius state."
   },
   "observability": {
@@ -519,7 +519,7 @@
       "final_two_minutes_rms_m": 125.23769780093626,
       "reset_observed": false
     },
-    "verdict": "The stub reproduces only the relative 20-minute emergence: Doppler is worse at 2 min (5.74 vs 0.81 m RMS) but better at 30 min (149.59 vs 199.81 m). Absolute RMS does not converge; it grows throughout. Turn reset observed: false. The stub has no heading-to-velocity coupling or manoeuvre covariance reset, so it cannot reproduce the predicted reset mechanism."
+    "verdict": "The stub reproduces only the relative 20-minute emergence: Doppler is worse at 2 min (5.74 vs 0.81 m RMS) but better at 30 min (149.59 vs 199.81 m). Absolute RMS does not converge; it grows throughout. The 20-minute crossover is fragile: it rests on means from only 6 seeds. Turn reset observed: false, but the maneuver-reset question is unfalsifiable by construction here because the turn enters through the near-truth IMU; this is a harness limitation, not evidence about the real filter. The stub also has no heading-to-velocity coupling or manoeuvre covariance reset."
   },
   "stale_ephemeris": {
     "cells": [
@@ -552,7 +552,7 @@
         "samples": 600
       }
     ],
-    "verdict": "Threshold 9 first rejects at least 95% at 1 h; the 6 h case rejects 100%. This supports the gate being no looser than 6 h for this deliberately phase-shifted TLE fixture, but does not validate a real SupGP age-error curve."
+    "verdict": "Threshold 9 first rejects at least 95% at 1 h; all tested nonzero staleness (>=1 h) is rejected. Epoch shifting aliases orbital phase, producing non-monotonic innovation RMS, and innovations are roughly 3000-5000 times the threshold-9 gate. The missing HPH' term makes this rejection result an upper bound. This deliberately phase-shifted fixture does not support the 6 h choice or validate a real SupGP age-error curve."
   },
   "unverified": [
     "Real-signal measurement distributions and oscillator errors remain unverified.",

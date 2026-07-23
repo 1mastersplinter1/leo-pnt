@@ -317,6 +317,8 @@ name = "pnt-journal"
 version = "0.1.0"
 dependencies = [
  "pnt-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

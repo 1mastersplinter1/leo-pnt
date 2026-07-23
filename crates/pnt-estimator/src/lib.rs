@@ -8,12 +8,19 @@ use pnt_types::{
     MeasurementPayload, ReceiverClockId, ReceiverClockSlot, SpeedThroughWater,
 };
 
-const CORE_DIM: usize = 9;
+// Fixed-core state layout. Current (E,N) is permanent physics and lives in the fixed core
+// (U2) — it never enters the dynamic augment/retire index-shift path. POS/VEL/HEADING/CLOCK
+// keep indices 0..8 so accuracy helpers keyed on POS=0/VEL=3 stay valid.
+const CORE_DIM: usize = 11;
 const POS: usize = 0;
 const VEL: usize = 3;
 const HEADING: usize = 6;
 const CLOCK_BIAS: usize = 7;
 const CLOCK_DRIFT: usize = 8;
+const CURRENT_E: usize = 9;
+const CURRENT_N: usize = 10;
+/// Width of the predictor's Doppler Jacobian (`POS..=CLOCK_DRIFT`); it does not observe current.
+const DOPPLER_JACOBIAN_DIM: usize = 9;
 const CLOCK_BIAS_VARIANCE_CAP_M2: f64 = 1.0e8;
 
 pub trait Estimator {
@@ -29,6 +36,10 @@ pub struct ProcessNoise {
     pub turn_rate_variance: f64,
     pub clock_drift_variance: f64,
     pub nuisance_random_walk_variance: f64,
+    /// Random-walk spectral density of the ENU current-velocity state (U2). Deliberately
+    /// **much smaller than the velocity process noise** so that, with no speed-through-water
+    /// observation to make current observable, it cannot random-walk into the velocity state.
+    pub current_random_walk_variance: f64,
 }
 
 impl Default for ProcessNoise {
@@ -38,6 +49,7 @@ impl Default for ProcessNoise {
             turn_rate_variance: 1.0e-4,
             clock_drift_variance: 1.0e-4,
             nuisance_random_walk_variance: 1.0e-6,
+            current_random_walk_variance: 1.0e-8,
         }
     }
 }
@@ -56,8 +68,10 @@ pub struct DopplerRangeRateUpdate {
     pub measured_range_rate_mps: f64,
     /// Pure satellite/receiver geometric range rate. Clock terms are represented by H*x.
     pub predicted_range_rate_mps: f64,
-    /// Predictor linearisation with respect to the nine core states.
-    pub core_jacobian: [f64; CORE_DIM],
+    /// Predictor linearisation with respect to the nine `POS..=CLOCK_DRIFT` core states.
+    /// Doppler does not observe current, so this stays 9-wide and is zero-padded onto the
+    /// two current states inside the estimator.
+    pub core_jacobian: [f64; DOPPLER_JACOBIAN_DIM],
     pub variance_mps2: f64,
     pub chi_square_threshold: Option<f64>,
     /// Initial variance for a newly observed satellite's range-rate bias.
@@ -211,7 +225,7 @@ impl FilterStub {
         let nuisance =
             self.augment_satellite_bias(&update.satellite_id, update.satellite_bias_variance_mps2);
         let mut h = DVector::zeros(self.x.len());
-        h.rows_mut(0, CORE_DIM)
+        h.rows_mut(0, DOPPLER_JACOBIAN_DIM)
             .copy_from(&DVector::from_column_slice(&update.core_jacobian));
         h[nuisance] = 1.0;
         let predicted = update.predicted_range_rate_mps
@@ -236,7 +250,7 @@ impl FilterStub {
         let nuisance =
             self.augment_satellite_bias(&update.satellite_id, update.satellite_bias_variance_mps2);
         let mut h = DVector::zeros(self.x.len());
-        h.rows_mut(0, CORE_DIM)
+        h.rows_mut(0, DOPPLER_JACOBIAN_DIM)
             .copy_from(&DVector::from_column_slice(&update.core_jacobian));
         h[slot.drift_index] += h[CLOCK_DRIFT];
         h[CLOCK_DRIFT] = 0.0;
@@ -474,6 +488,11 @@ impl Estimator for FilterStub {
         for index in self.nuisance_slots.values().copied() {
             q[(index, index)] = self.process_noise.nuisance_random_walk_variance * dt;
         }
+        // Current (E,N) random walk (U2). F stays identity for these states (a random walk,
+        // not an integrator), so only Q grows. Kept small so an unobserved current does not
+        // leak into velocity.
+        q[(CURRENT_E, CURRENT_E)] = self.process_noise.current_random_walk_variance * dt;
+        q[(CURRENT_N, CURRENT_N)] = self.process_noise.current_random_walk_variance * dt;
         self.covariance = &f * &self.covariance * f.transpose() + q;
         self.cap_clock_bias_variance(CLOCK_BIAS);
         let receiver_biases: Vec<_> = self
@@ -588,6 +607,45 @@ mod tests {
     const JACOBIAN_TOLERANCE: f64 = 2.0e-6;
 
     #[test]
+    fn current_lives_in_the_fixed_core_at_stable_indices() {
+        // Current (E,N) is permanent physics in the fixed core, never shifted by dynamic
+        // augmentation/retirement of satellite biases or receiver clocks.
+        assert_eq!(CORE_DIM, 11);
+        assert_eq!(CURRENT_E, 9);
+        assert_eq!(CURRENT_N, 10);
+        let mut filter = FilterStub::default();
+        assert_eq!(filter.x.len(), CORE_DIM);
+        // Augment then retire a satellite bias; current indices must be untouched.
+        filter.x[CURRENT_E] = 0.7;
+        filter.x[CURRENT_N] = -0.3;
+        filter.augment_satellite_bias("sat-a", 100.0);
+        filter.reserve_receiver_clock(pnt_types::ReceiverClockId("rx".into()));
+        filter.retire_satellite_bias("sat-a");
+        assert!((filter.x[CURRENT_E] - 0.7).abs() < f64::EPSILON);
+        assert!((filter.x[CURRENT_N] - (-0.3)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_doppler_jacobian_does_not_observe_current() {
+        // The predictor Jacobian is 9-wide and gets zero-padded onto the 2 current states,
+        // so a pure-clock Doppler update leaves current unchanged.
+        let mut filter = FilterStub::default();
+        filter.x[CURRENT_E] = 0.5;
+        filter.x[CURRENT_N] = 0.5;
+        let _ = filter.update_doppler(&DopplerRangeRateUpdate {
+            satellite_id: "sat".into(),
+            measured_range_rate_mps: 3.0,
+            predicted_range_rate_mps: 0.0,
+            core_jacobian: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            variance_mps2: 1.0,
+            chi_square_threshold: None,
+            satellite_bias_variance_mps2: 1.0,
+        });
+        assert!((filter.x[CURRENT_E] - 0.5).abs() < 1.0e-9);
+        assert!((filter.x[CURRENT_N] - 0.5).abs() < 1.0e-9);
+    }
+
+    #[test]
     fn robust_cost_downweights_a_moderate_outlier_instead_of_rejecting_it() {
         // Same moderate outlier through the hard gate vs. the robust (Huber) cost.
         let update = || DopplerRangeRateUpdate {
@@ -689,7 +747,9 @@ mod tests {
 
     #[test]
     fn all_measurement_jacobians_match_central_difference() {
-        let x = DVector::from_vec(vec![10.0, 20.0, 30.0, 3.0, 4.0, 0.0, 0.4, 2.0, 0.1]);
+        let x = DVector::from_vec(vec![
+            10.0, 20.0, 30.0, 3.0, 4.0, 0.0, 0.4, 2.0, 0.1, 0.0, 0.0,
+        ]);
         let (_, speed_h) = speed_model(&x);
         let numeric_speed =
             central_difference(|value| DVector::from_element(1, speed_model(value).0), &x);
@@ -724,6 +784,7 @@ mod tests {
                 turn_rate_variance: 0.0,
                 clock_drift_variance: 0.0,
                 nuisance_random_walk_variance: 0.0,
+                current_random_walk_variance: 0.0,
             },
         );
         with_q.covariance.fill(0.0);
@@ -743,7 +804,7 @@ mod tests {
             satellite_id: "SV-1".into(),
             measured_range_rate_mps: 2.0,
             predicted_range_rate_mps: 1.0,
-            core_jacobian: [0.0; CORE_DIM],
+            core_jacobian: [0.0; DOPPLER_JACOBIAN_DIM],
             variance_mps2: 1.0,
             chi_square_threshold: Some(10.0),
             satellite_bias_variance_mps2: 1.0e4,
@@ -967,7 +1028,7 @@ mod tests {
             satellite_id: "SV-D".into(),
             measured_range_rate_mps: 1.0,
             predicted_range_rate_mps: 1.0,
-            core_jacobian: [0.0; CORE_DIM],
+            core_jacobian: [0.0; DOPPLER_JACOBIAN_DIM],
             variance_mps2: 3.0,
             chi_square_threshold: None,
             satellite_bias_variance_mps2: 47.0,

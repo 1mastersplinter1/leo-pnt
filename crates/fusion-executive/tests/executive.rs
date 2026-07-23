@@ -63,7 +63,7 @@ fn recorded_only_sends_gnss_to_truth_but_not_fusion() {
 
 #[test]
 fn production_gnss_is_dual_routed_and_off_is_journalled_as_a_reject() {
-    let mut production = Executive::test_default(GnssAuthority::Production);
+    let mut production = Executive::test_stub(GnssAuthority::Production);
     assert_eq!(
         production.process(envelope(1, MeasurementPayload::Gnss(GnssFix::default()))),
         vec![RoutingDestination::Fusion, RoutingDestination::TruthJournal]
@@ -71,7 +71,7 @@ fn production_gnss_is_dual_routed_and_off_is_journalled_as_a_reject() {
     assert_eq!(production.journals().truth_records().len(), 1);
     assert!(production.filter().measurement_updates() > 0);
 
-    let mut off = Executive::test_default(GnssAuthority::Off);
+    let mut off = Executive::test_stub(GnssAuthority::Off);
     assert!(off
         .process(envelope(1, MeasurementPayload::Gnss(GnssFix::default())))
         .is_empty());
@@ -82,7 +82,7 @@ fn production_gnss_is_dual_routed_and_off_is_journalled_as_a_reject() {
 
 #[test]
 fn heading_and_speed_route_to_real_updates() {
-    let mut executive = Executive::test_default(GnssAuthority::Off);
+    let mut executive = Executive::test_stub(GnssAuthority::Off);
     executive.process(envelope(
         1,
         MeasurementPayload::Heading(Heading { radians: 0.2 }),
@@ -118,7 +118,7 @@ fn authority_modes_change_routing_table_not_processing_graph() {
 
 #[test]
 fn covariance_grows_on_every_imu_tick_without_measurements() {
-    let mut executive = Executive::test_default(GnssAuthority::Off);
+    let mut executive = Executive::test_stub(GnssAuthority::Off);
     for sequence in 1..=3 {
         executive.process(envelope(
             sequence,
@@ -135,7 +135,7 @@ fn covariance_grows_on_every_imu_tick_without_measurements() {
 
 #[test]
 fn synthetic_imu_and_measurement_emit_a_solution_epoch() {
-    let mut executive = Executive::test_default(GnssAuthority::Production);
+    let mut executive = Executive::test_stub(GnssAuthority::Production);
     executive.process(envelope(
         1,
         MeasurementPayload::Imu(ImuSample {
@@ -150,8 +150,23 @@ fn synthetic_imu_and_measurement_emit_a_solution_epoch() {
 }
 
 #[test]
+fn default_real_supervisor_is_fail_closed() {
+    let mut executive = Executive::default_fail_closed(GnssAuthority::Production);
+    executive.process(envelope(
+        1,
+        MeasurementPayload::ArmCommand(ArmCommand {
+            action: ArmAction::Arm,
+            host_monotonic_ns: 0,
+            source_id: SourceId("helm".into()),
+        }),
+    ));
+    executive.process(envelope(2, MeasurementPayload::Gnss(GnssFix::default())));
+    assert!(!executive.take_solution_epochs()[0].steering_authorised);
+}
+
+#[test]
 fn orbcomm_is_rejected_before_fusion_by_default() {
-    let mut executive = Executive::test_default(GnssAuthority::Production);
+    let mut executive = Executive::test_stub(GnssAuthority::Production);
     let routes = executive.process(envelope(
         1,
         MeasurementPayload::TrackerDoppler(TrackerDoppler {
@@ -173,7 +188,7 @@ fn oneweb_is_gated_by_config() {
         correlation_peak_hz: 0.0,
         nominal_carrier_hz: 1.0e9,
     });
-    let mut disabled = Executive::test_default(GnssAuthority::Off);
+    let mut disabled = Executive::test_stub(GnssAuthority::Off);
     assert!(disabled
         .process(envelope(1, observation.clone()))
         .is_empty());
@@ -404,7 +419,7 @@ fn divergent_doppler_is_gate_rejected_without_filter_update() {
         pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
             .unwrap();
     let observation = tracker_envelope(&store, 1.0e9);
-    let mut executive = Executive::test_default(GnssAuthority::Production)
+    let mut executive = Executive::test_stub(GnssAuthority::Production)
         .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
     executive.process(envelope(
         1,
@@ -440,7 +455,7 @@ fn default_elevation_mask_rejects_below_mask_and_journals_it() {
         .sqrt();
     let receiver = satellite.position_m.map(|v| -6_371_000.0 * v / radius);
     let observation = tracker_envelope(&store, 0.0);
-    let mut executive = Executive::test_default(GnssAuthority::Production)
+    let mut executive = Executive::test_stub(GnssAuthority::Production)
         .with_doppler_pipeline(DopplerPipeline::new(store));
     executive.process(envelope(
         1,

@@ -4,7 +4,10 @@ use chrono::{DateTime, Utc};
 use pnt_config::{Config, GnssAuthority};
 use pnt_ephemeris::EphemerisStore;
 use pnt_estimator::{DopplerRangeRateUpdate, Estimator, FilterStub, UpdateResult};
-use pnt_integrity::{IntegrityAuthorityGate, IntegrityStub};
+use pnt_integrity::{
+    AuthorityParams, AuthorityProfile, AuthoritySolution, AuthoritySupervisor,
+    IntegrityAuthorityGate, IntegrityStub,
+};
 use pnt_journal::{IntegrityEvent, JournalSinks, MemoryJournals};
 use pnt_predictor::{geometric_range_rate_linearisation, predict, ReceiverState, SatelliteState};
 use pnt_time::{ClockService, ManualClock};
@@ -31,6 +34,8 @@ pub struct Executive<C, E, I, J> {
     solution_epochs: Vec<SolutionEpoch>,
     solution_lines: Vec<String>,
     doppler: Option<DopplerPipeline>,
+    solution_sequence: u64,
+    last_absolute_observation_ns: Option<u64>,
 }
 
 pub struct DopplerPipeline {
@@ -87,6 +92,8 @@ where
             solution_epochs: Vec::new(),
             solution_lines: Vec::new(),
             doppler: None,
+            solution_sequence: 0,
+            last_absolute_observation_ns: None,
         }
     }
 
@@ -161,7 +168,10 @@ where
             return;
         }
         self.filter.update(envelope);
-        self.emit_epoch(envelope.host_receive_monotonic_ns, &envelope.source_id.0);
+        if matches!(envelope.payload, MeasurementPayload::Gnss(_)) {
+            self.last_absolute_observation_ns = Some(envelope.host_receive_monotonic_ns);
+        }
+        self.emit_epoch(envelope, true);
     }
 
     fn process_doppler(&mut self, envelope: &MeasurementEnvelope) {
@@ -248,21 +258,38 @@ where
                     source_id: envelope.source_id.0.clone(),
                     reason: "Doppler innovation accepted".to_owned(),
                 });
-                self.emit_epoch(envelope.host_receive_monotonic_ns, &envelope.source_id.0);
+                self.last_absolute_observation_ns = Some(envelope.host_receive_monotonic_ns);
+                self.emit_epoch(envelope, true);
             }
             Ok(_) => self.reject(envelope, "innovation chi-square gate rejected"),
             Err(reason) => self.reject(envelope, &reason),
         }
     }
 
-    fn emit_epoch(&mut self, monotonic_ns: u64, source_id: &str) {
+    fn emit_epoch(&mut self, envelope: &MeasurementEnvelope, observation_integrity: bool) {
+        let monotonic_ns = envelope.host_receive_monotonic_ns;
         let state = self.filter.state();
+        self.solution_sequence = self.solution_sequence.saturating_add(1);
+        self.integrity.solution(
+            AuthoritySolution {
+                sequence: self.solution_sequence,
+                state: &state,
+                profile: match self.config.gnss_authority {
+                    GnssAuthority::Production => AuthorityProfile::Aided,
+                    GnssAuthority::RecordedOnly | GnssAuthority::Off => AuthorityProfile::Denied,
+                },
+                last_absolute_observation_ns: self.last_absolute_observation_ns,
+                ephemeris_age_s: observation_integrity.then_some(0.0),
+                calibration_id: Some(&envelope.calibration_id),
+            },
+            monotonic_ns,
+        );
         let steering_authorised = self.integrity.steering_authorised(&state, monotonic_ns);
         let epoch = SolutionEpoch::new(monotonic_ns, state, steering_authorised);
         let Some(line) = epoch_json(&epoch) else {
             self.journals.write_integrity(IntegrityEvent {
                 monotonic_ns,
-                source_id: source_id.to_owned(),
+                source_id: envelope.source_id.0.clone(),
                 reason: "solution epoch contains a non-finite value".to_owned(),
             });
             return;
@@ -321,7 +348,7 @@ where
 
 impl Executive<ManualClock, FilterStub, IntegrityStub, MemoryJournals> {
     #[must_use]
-    pub fn test_default(gnss_authority: GnssAuthority) -> Self {
+    pub fn test_stub(gnss_authority: GnssAuthority) -> Self {
         Self::new(
             Config {
                 gnss_authority,
@@ -330,6 +357,24 @@ impl Executive<ManualClock, FilterStub, IntegrityStub, MemoryJournals> {
             ManualClock::default(),
             FilterStub::default(),
             IntegrityStub,
+            MemoryJournals::default(),
+        )
+    }
+}
+
+impl Executive<ManualClock, FilterStub, AuthoritySupervisor, MemoryJournals> {
+    /// Default executable skeleton construction: real supervisor with an intentionally
+    /// incomplete parameter register, hence fail-closed until deployment freezes it.
+    #[must_use]
+    pub fn default_fail_closed(gnss_authority: GnssAuthority) -> Self {
+        Self::new(
+            Config {
+                gnss_authority,
+                oneweb_enabled: false,
+            },
+            ManualClock::default(),
+            FilterStub::default(),
+            AuthoritySupervisor::new(AuthorityParams::default()),
             MemoryJournals::default(),
         )
     }

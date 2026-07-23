@@ -237,3 +237,37 @@ Correction to v4 wording: horizontal, speed, and vertical accuracy values are de
 the `SolutionEpoch` accessors at emission, not materialised when the epoch is constructed.
 An epoch containing any non-finite state, covariance, or derived accuracy value is not
 written to NDJSON and produces a journalled integrity event instead.
+
+## v5 (2026-07-23)
+
+v5 retains v1--v4.1 and replaces the fail-open integrity placeholder with the authority
+supervisor contract from `SAFETY_CASE.md` §1--§3.
+
+`AuthorityParams` carries separate aided and denied `ProtectionLimits` for horizontal
+position (m), horizontal velocity (m/s), and heading (rad), plus `Option<f64>` fields for
+`t_lease`, `t_dr`, `t_eph`, `dwell_clear`, `dwell_rearm`, `caution_enter`,
+`caution_clear`, `revoke_threshold`, and `T_ack` (seconds for all time values). Every
+numeric must be present, finite, and non-negative. If any field is `None` or invalid, the
+supervisor can never grant steering authority. This is the literal D17 fail-closed gate;
+there are no numeric defaults.
+
+The supervisor consumes clock-service monotonic nanoseconds only, `ArmCommand`, solution
+sequence and covariance-derived horizontal-position/horizontal-velocity/heading accuracies,
+active profile, last-absolute-observation time, ephemeris age/integrity, and calibration ID.
+Calibration identity is checked by an injected validator; absence is always rejection and
+the default validator accepts any present, non-empty ID. A renewing frame is exactly
+`sequence advanced && G2 && G3`, independent of current lease state. Deadline equality is
+expiry. Arm defaults false, disarm withdraws G1, and every fault revocation clears the arm
+latch so a fresh arm command is required.
+
+Outputs are `AuthorityOutput { steering_authorised, state, alarm, transition }`. `transition`
+identifies only supervisor state transitions. The output type deliberately has no vehicle
+mode, manoeuvre, RTL, Loiter, or disarm command. The six states, eleven events, guarded arm
+cells, destination-state authority/annunciation, simultaneous priority, dwells, ACK timeout,
+and latched recovery are exactly the total matrix in `SAFETY_CASE.md` §2.2.
+
+The executive routes `ArmCommand` only to integrity and supplies every emitted solution to
+the supervisor before deriving `SolutionEpoch.steering_authorised`. Its production-default
+skeleton constructor installs the real supervisor with an incomplete parameter register and
+is therefore fail-closed. `test_stub` remains explicitly stub-backed for focused legacy
+executive tests.

@@ -255,7 +255,7 @@ The supervisor consumes clock-service monotonic nanoseconds only, `ArmCommand`, 
 sequence and covariance-derived horizontal-position/horizontal-velocity/heading accuracies,
 active profile, last-absolute-observation time, ephemeris age/integrity, and calibration ID.
 Calibration identity is checked by an injected validator; absence is always rejection and
-the default validator accepts any present, non-empty ID. A renewing frame is exactly
+the default validator accepts any present, non-empty ID. **Amended by v5.1; see below.** A renewing frame is exactly
 `sequence advanced && G2 && G3`, independent of current lease state. Deadline equality is
 expiry. Arm defaults false, disarm withdraws G1, and every fault revocation clears the arm
 latch so a fresh arm command is required.

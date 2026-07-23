@@ -1,4 +1,4 @@
-# U-A1 report — authority supervisor fix round U-A1.1
+# U-A1 report — authority supervisor fix rounds U-A1.1 and U-A1.2
 
 Contracts authored: v5 and v5.1. Branch: `unit/U-A1`.
 
@@ -8,6 +8,11 @@ The production executive uses the fail-closed `AuthoritySupervisor`; the explici
 `test_stub` remains test-only. U-A1.1 closes both reviewers' findings around stale arm
 edges, live simultaneous-event priority, DR-fill delivery, monotonic time, ACK routing, and
 calibration-validator construction. The red-first checkpoint is commit `9c5de70`.
+
+U-A1.2 fixes the shared round-2 same-tick root cause. `apply` now reprojects the arm latch,
+pending edge, and lease from every newly resolved tick outcome; faults retain their higher
+priority and Disarm is unconditional even when its tick-start matrix cell is a self-loop.
+An Arm plus an already-caution-band solution resolves directly to `Caution`/`PreAlert`.
 
 The live supervisor now merges events sharing a monotonic tick and calls
 `simultaneous_successor` over the tick's origin state and accumulated events. This wires the
@@ -45,6 +50,20 @@ only when absolute-observation age exceeds `t_dr`.
    `with_calibration_validator`. The constructor test proves the hard error.
 7. **Report accuracy — fixed below.** Formerly overstated rows now cite live, new regression
    tests rather than the free helper or broad indirect coverage.
+8. **Sonnet Finding B — fixed in U-A1.2.** The exact `LatchedSafe` → fresh Arm + good
+   solution → same-nanosecond Disarm sequence now resolves to quiet `Disarmed`, clears the
+   lease, and remains quiet past the former lease deadline. The regression is
+   `same_tick_rearm_solution_then_disarm_is_quiet_and_has_no_stale_lease`.
+9. **Opus N1 — fixed in U-A1.2.** A simultaneous successful Arm and caution-band
+   assessment composes to `Caution` on that tick. The regression
+   `arming_with_an_existing_caution_solution_prealerts_on_the_arm_tick` asserts `PreAlert`
+   without a one-tick Nominal interval.
+10. **Opus N2 — fixed in U-A1.2.** The superseded default-validator sentence in v5 is
+    marked “Amended by v5.1; see below” without rewriting v5.
+11. **Consistency invariant — added in U-A1.2.** `consistency_invariant` explicitly requires
+    `Nominal`/`Caution` to own both the arm latch and lease, and all non-authority states to
+    own neither. The deterministic randomized test asserts it after every tick; this also
+    caught and fixed lease renewal while already in Warning.
 
 Opus F5 remains an integration note for U-M1, not a U-A1 defect: U-A1's default-deny
 supervisor is retained and its executable wiring test remains green.
@@ -64,7 +83,7 @@ supervisor is retained and its executable wiring test remains green.
 | §2.2 quiet disarm and latched warning/escalation | destination `AuthorityState::output`; state-gated arm handling | both-order live priority test; warning/escalated stale-arm regression; fresh-arm latch test |
 | §3.1 live watchdog/monotonic clock | `observe_time`; `tick`; no wall-clock access | `backward_time_revokes_but_repeated_time_is_accepted`; lease boundary test |
 | §3.2 caution/clear/re-arm dwell and ACK escalation | supervisor timers; `AckCommand` executive route | `dwell_and_ack_boundaries_are_exact`; stale-arm/fresh-arm regressions; `acknowledge_reaches_authority_and_never_filter_update` |
-| G invariant | final conjunction plus accepted-arm tracking | deterministic randomized test: 6,368 solution/tick iterations including ACK and arm-during-alarm |
+| G invariant | final conjunction, accepted-arm tracking, and explicit state/arm/lease consistency predicate | deterministic randomized test: 6,368 solution/tick iterations including ACK, arm-during-alarm, and a consistency assertion after every tick |
 | Executive wiring | command-only routes; every update/propagation calls `emit_epoch` | default fail-closed, Arm, ACK, DR-fill, and NDJSON tests |
 
 ## Deviations / limits

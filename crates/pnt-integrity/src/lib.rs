@@ -171,11 +171,7 @@ pub fn simultaneous_successor(
         AckTimeout, Acknowledge, Arm, CautionClear, CautionEnter, Disarm, G2Fall, G2Rise, G3Fall,
         G3Rise, LeaseExpiry,
     };
-    const PRIORITY: [AuthorityEvent; 11] = [
-        G3Fall,
-        G2Fall,
-        LeaseExpiry,
-        Disarm,
+    const PRIORITY: [AuthorityEvent; 7] = [
         AckTimeout,
         Acknowledge,
         Arm,
@@ -184,10 +180,35 @@ pub fn simultaneous_successor(
         CautionEnter,
         CautionClear,
     ];
+    let arm_enters_authority = arm_guard
+        && events.contains(&Arm)
+        && matches!(
+            state,
+            AuthorityState::Disarmed | AuthorityState::LatchedSafe
+        );
+    if events.contains(&G3Fall) || events.contains(&G2Fall) || events.contains(&LeaseExpiry) {
+        return if matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
+            || arm_enters_authority
+        {
+            AuthorityState::Warning
+        } else {
+            state
+        };
+    }
+    // Disarm is an unconditional tick outcome. In particular, it must not disappear merely
+    // because its matrix cell was a self-loop in the tick-start state before an Arm event.
+    if events.contains(&Disarm) {
+        return AuthorityState::Disarmed;
+    }
     for event in PRIORITY {
         if events.contains(&event) {
-            let successor = matrix_successor(state, event, arm_guard);
+            let mut successor = matrix_successor(state, event, arm_guard);
             if successor != state {
+                // Caution is an annunciation of the accepted solution, so an Arm transition
+                // cannot suppress a simultaneous pre-alert assessment.
+                if event == Arm && events.contains(&CautionEnter) {
+                    successor = matrix_successor(successor, CautionEnter, arm_guard);
+                }
                 return successor;
             }
         }
@@ -288,6 +309,20 @@ impl AuthoritySupervisor {
         }
     }
 
+    /// Checks that authority state, the internal arm latch, and lease ownership agree.
+    #[must_use]
+    pub const fn consistency_invariant(&self) -> bool {
+        match self.state {
+            AuthorityState::Nominal | AuthorityState::Caution => {
+                self.armed && self.lease_deadline_ns.is_some()
+            }
+            AuthorityState::Disarmed
+            | AuthorityState::Warning
+            | AuthorityState::Escalated
+            | AuthorityState::LatchedSafe => !self.armed && self.lease_deadline_ns.is_none(),
+        }
+    }
+
     pub fn acknowledge(&mut self, now_ns: u64) {
         if !self.observe_time(now_ns) {
             return;
@@ -313,15 +348,42 @@ impl AuthoritySupervisor {
                     .unwrap_or(event);
             self.transition = Some((old, new, decisive_event));
             if new == AuthorityState::Warning {
-                self.armed = false;
-                self.pending_arm_edge = false;
                 self.warning_since_ns = Some(now_ns);
             }
             if new == AuthorityState::LatchedSafe {
                 self.latched_since_ns = Some(now_ns);
             }
-            if new == AuthorityState::Disarmed {
+        }
+
+        // Project every mutable authority side effect from the fully merged tick outcome.
+        // Re-running this projection after each newly arrived same-time event prevents an
+        // earlier raw handler from leaving flags belonging to a superseded transition.
+        match new {
+            AuthorityState::Nominal | AuthorityState::Caution => {
+                self.armed = true;
+                self.pending_arm_edge = false;
+            }
+            AuthorityState::Disarmed
+            | AuthorityState::Warning
+            | AuthorityState::Escalated
+            | AuthorityState::LatchedSafe => {
+                self.armed = false;
                 self.lease_deadline_ns = None;
+                let fault_or_disarm = self.event_tick_events.iter().any(|event| {
+                    matches!(
+                        event,
+                        AuthorityEvent::G2Fall
+                            | AuthorityEvent::G3Fall
+                            | AuthorityEvent::LeaseExpiry
+                            | AuthorityEvent::Disarm
+                    )
+                });
+                self.pending_arm_edge = !fault_or_disarm
+                    && self.event_tick_events.contains(&AuthorityEvent::Arm)
+                    && matches!(
+                        self.event_tick_start_state,
+                        AuthorityState::Disarmed | AuthorityState::LatchedSafe
+                    );
             }
         }
     }
@@ -345,6 +407,22 @@ impl AuthoritySupervisor {
             E::CautionEnter,
             E::CautionClear,
         ];
+        for fault in [E::G3Fall, E::G2Fall, E::LeaseExpiry] {
+            if events.contains(&fault)
+                && (matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
+                    || (arm_guard
+                        && events.contains(&E::Arm)
+                        && matches!(
+                            state,
+                            AuthorityState::Disarmed | AuthorityState::LatchedSafe
+                        )))
+            {
+                return Some(fault);
+            }
+        }
+        if events.contains(&E::Disarm) {
+            return Some(E::Disarm);
+        }
         PRIORITY.into_iter().find(|event| {
             events.contains(event) && matrix_successor(state, *event, arm_guard) != state
         })
@@ -424,7 +502,14 @@ impl AuthoritySupervisor {
             .last_sequence
             .is_none_or(|last| solution.sequence > last);
         self.last_sequence = Some(solution.sequence);
-        if advanced && new_g2 && new_g3 {
+        if advanced
+            && new_g2
+            && new_g3
+            && (matches!(
+                self.state,
+                AuthorityState::Nominal | AuthorityState::Caution
+            ) || self.pending_arm_edge)
+        {
             if let Some(seconds) = self.params.t_lease_s {
                 self.lease_deadline_ns = Some(now_ns.saturating_add(Self::seconds_ns(seconds)));
             }
@@ -438,15 +523,16 @@ impl AuthoritySupervisor {
         };
         self.g2 = new_g2;
         self.g3 = new_g3;
-        let fault_can_revoke = matches!(
+        let fault_can_revoke_or_cancel_arm = matches!(
             self.state,
             AuthorityState::Nominal | AuthorityState::Caution
-        ) || (self.event_tick_ns == Some(now_ns)
-            && matches!(
-                self.event_tick_start_state,
-                AuthorityState::Nominal | AuthorityState::Caution
-            ));
-        if fault_can_revoke && (!new_g3 || !new_g2) {
+        ) || self.pending_arm_edge
+            || (self.event_tick_ns == Some(now_ns)
+                && matches!(
+                    self.event_tick_start_state,
+                    AuthorityState::Nominal | AuthorityState::Caution
+                ));
+        if fault_can_revoke_or_cancel_arm && (!new_g3 || !new_g2) {
             self.apply(
                 fault.unwrap_or(if new_g3 {
                     AuthorityEvent::G2Fall
@@ -548,19 +634,16 @@ impl IntegrityAuthorityGate for AuthoritySupervisor {
         }
         match command.action {
             ArmAction::Disarm => {
-                self.armed = false;
-                self.pending_arm_edge = false;
                 self.apply(AuthorityEvent::Disarm, command.host_monotonic_ns, false);
             }
             ArmAction::Arm
-                if !self.armed
+                if !self.pending_arm_edge
                     && matches!(
                         self.state,
                         AuthorityState::Disarmed | AuthorityState::LatchedSafe
                     ) =>
             {
-                self.armed = true;
-                self.pending_arm_edge = true;
+                self.apply(AuthorityEvent::Arm, command.host_monotonic_ns, false);
             }
             ArmAction::Arm => {}
         }

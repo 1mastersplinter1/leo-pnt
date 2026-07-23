@@ -123,6 +123,11 @@ fn exhaustive_safety_case_section_2_2_matrix() {
         simultaneous_successor(S::Warning, &[E::Acknowledge, E::AckTimeout], true),
         S::Escalated
     );
+    assert_eq!(
+        simultaneous_successor(S::Disarmed, &[E::Arm, E::G2Fall], true),
+        S::Warning,
+        "fault must dominate an Arm even though its origin-state cell is a self-loop"
+    );
     for state in states {
         let (authorised, alarm) = state.output();
         assert_eq!(authorised, matches!(state, S::Nominal | S::Caution));
@@ -251,6 +256,74 @@ fn arm_edges_during_warning_and_escalated_are_ignored() {
     }
 }
 
+#[test]
+fn same_tick_rearm_solution_then_disarm_is_quiet_and_has_no_stale_lease() {
+    let good = state_with_accuracy(0.5);
+    let bad = state_with_accuracy(9.0);
+    let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+    arm(&mut s, 0);
+    solution(&mut s, 1, 0, &good);
+    solution(&mut s, 2, 1, &bad);
+    s.acknowledge(2);
+    assert_eq!(s.state(), S::LatchedSafe);
+
+    let rearm_time = 1_000_000_002;
+    arm(&mut s, rearm_time);
+    solution(&mut s, 3, rearm_time, &good);
+    assert_eq!(s.state(), S::Nominal);
+    s.arm_command(&ArmCommand {
+        action: ArmAction::Disarm,
+        host_monotonic_ns: rearm_time,
+        source_id: SourceId("helm".into()),
+    });
+
+    assert_eq!(s.state(), S::Disarmed);
+    assert_eq!(s.output().alarm, AlarmLevel::QuietDisarmed);
+    assert!(!s.output().steering_authorised);
+    assert!(s.consistency_invariant());
+    assert!(!s.steering_authorised(&good, rearm_time + 1_000_000_000));
+    assert_eq!(s.state(), S::Disarmed, "stale lease must not warn later");
+    assert_eq!(s.output().alarm, AlarmLevel::QuietDisarmed);
+}
+
+#[test]
+fn arming_with_an_existing_caution_solution_prealerts_on_the_arm_tick() {
+    let caution = state_with_accuracy(2.5);
+    let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+    arm(&mut s, 0);
+    solution(&mut s, 1, 0, &caution);
+
+    assert_eq!(s.state(), S::Caution);
+    assert_eq!(s.output().alarm, AlarmLevel::PreAlert);
+    assert!(s.output().steering_authorised);
+    assert!(s.consistency_invariant());
+}
+
+#[test]
+fn same_tick_fault_cancels_arm_from_a_self_loop_origin() {
+    let good = state_with_accuracy(0.5);
+    let bad = state_with_accuracy(9.0);
+    let mut s = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
+
+    arm(&mut s, 0);
+    solution(&mut s, 1, 0, &bad);
+    assert_eq!(s.state(), S::Disarmed);
+    assert!(s.consistency_invariant());
+
+    solution(&mut s, 2, 1, &good);
+    assert_eq!(
+        s.state(),
+        S::Disarmed,
+        "fault must consume the stale Arm edge"
+    );
+    assert!(!s.output().steering_authorised);
+
+    arm(&mut s, 2);
+    solution(&mut s, 3, 2, &good);
+    assert_eq!(s.state(), S::Nominal, "a fresh Arm may grant normally");
+    assert!(s.consistency_invariant());
+}
+
 fn nominal_supervisor(good: &FilterState) -> AuthoritySupervisor {
     let mut supervisor = AuthoritySupervisor::with_calibration_validator(params(), |_| true);
     arm(&mut supervisor, 0);
@@ -370,6 +443,11 @@ fn random_sequences_never_authorise_with_a_false_g_condition() {
             assert!(
                 !authorised || accepted_arm_since_revocation,
                 "authorised without an accepted post-revocation arm at sequence {sequence}"
+            );
+            assert!(
+                s.consistency_invariant(),
+                "state/armed/lease inconsistency at sequence {sequence}: {:?}",
+                s.output()
             );
         }
     }

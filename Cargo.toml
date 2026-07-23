@@ -9,6 +9,7 @@ members = [
     "crates/fusion-executive",
     "crates/pnt-ephemeris",
     "crates/pnt-predictor",
+    "crates/pnt-tracker",
 ]
 resolver = "2"
 

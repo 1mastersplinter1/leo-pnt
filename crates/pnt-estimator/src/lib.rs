@@ -450,6 +450,29 @@ impl FilterStub {
         }
     }
 
+    /// Maritime zero-velocity update (U4c): when the vessel is moored/anchored, its ground
+    /// velocity is ~0. Constrains the three ECEF ground-velocity components to zero with the
+    /// given (tight) `variance`. The measurement touches only the velocity states, so the
+    /// current state is left entirely free — an anchored boat sits still over ground while
+    /// water still flows past it (review H5: a maritime ZUPT is not `v_water = 0`, and it must
+    /// not fight the current estimate).
+    ///
+    /// Callers must only invoke this when a motion classifier confirms the moored condition
+    /// (e.g. near-zero speed-through-water AND near-zero ground track); it asserts ground
+    /// velocity is zero, which is false while making way.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `variance` is non-finite or not strictly positive.
+    pub fn apply_moored_zupt(&mut self, variance: f64) {
+        assert!(variance.is_finite() && variance > 0.0);
+        for axis in 0..3 {
+            let mut h = DVector::zeros(self.x.len());
+            h[VEL + axis] = 1.0;
+            self.scalar_update(0.0, self.x[VEL + axis], &h, variance, None);
+        }
+    }
+
     fn scalar_update(
         &mut self,
         measured: f64,
@@ -854,6 +877,36 @@ mod tests {
                 "velocity leaked without STW"
             );
         }
+    }
+
+    #[test]
+    fn moored_zupt_pins_ground_velocity_without_touching_current() {
+        // Maritime ZUPT (U4c): when moored/anchored, ground velocity is ~0, but the current
+        // state must stay free (an anchored boat sits still while water flows past it). A
+        // zero-ground-velocity update must NOT fight or corrupt the current estimate.
+        let (mut filter, _pos) = current_fixture();
+        // The filter wrongly believes it is moving; current has a settled non-zero estimate.
+        filter.x[VEL] = 2.0;
+        filter.x[VEL + 1] = -1.0;
+        filter.x[CURRENT_E] = 0.8;
+        filter.x[CURRENT_N] = -0.4;
+        filter.covariance[(CURRENT_E, CURRENT_E)] = 0.1;
+        filter.covariance[(CURRENT_N, CURRENT_N)] = 0.1;
+        let current_before = [filter.x[CURRENT_E], filter.x[CURRENT_N]];
+
+        filter.apply_moored_zupt(1.0e-4);
+
+        // Ground velocity is driven toward zero.
+        for axis in 0..3 {
+            assert!(
+                filter.x[VEL + axis].abs() < 0.2,
+                "ground velocity axis {axis} not pinned: {}",
+                filter.x[VEL + axis]
+            );
+        }
+        // Current is untouched (the ZUPT H has no current column).
+        assert!((filter.x[CURRENT_E] - current_before[0]).abs() < 1.0e-9);
+        assert!((filter.x[CURRENT_N] - current_before[1]).abs() < 1.0e-9);
     }
 
     #[test]

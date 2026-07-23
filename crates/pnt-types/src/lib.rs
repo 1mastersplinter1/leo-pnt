@@ -196,6 +196,9 @@ impl FilterState {
 
 /// Returns the geocentric ECEF-to-ENU rotation at an ECEF position.
 ///
+/// Latitude is geocentric (`atan2(z, hypot(x,y))`), not WGS-84 geodetic latitude. This
+/// approximation is unsuitable where an ellipsoidal local frame is required.
+///
 /// The identity is used at the undefined Earth centre, which also keeps an
 /// uninitialised state deterministic until its first position observation.
 #[must_use]
@@ -261,6 +264,14 @@ pub struct SolutionEpoch {
 }
 
 impl SolutionEpoch {
+    #[must_use]
+    pub const fn new(monotonic_ns: u64, state: FilterState, steering_authorised: bool) -> Self {
+        Self {
+            monotonic_ns,
+            state,
+            steering_authorised,
+        }
+    }
     #[must_use]
     pub fn horizontal_accuracy_m(&self) -> f64 {
         self.state.horizontal_accuracy_m()

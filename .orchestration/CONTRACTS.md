@@ -177,3 +177,63 @@ drift, and receiver-specific Doppler updates linearise against that slot instead
 primary clock. Retirement/reindexing must preserve registry validity. Orbcomm remains
 rejected at ingress until U-I2 explicitly provisions its receiver clock and routes accepted
 predictor output through this receiver-specific update path.
+
+## v4 (2026-07-22)
+
+v4 retains v1--v3 and resolves D15 and D22 integration seams.
+
+### Doppler observable and clock convention
+
+`DopplerRangeRateUpdate::predicted_range_rate_mps` is exclusively the pure geometric
+satellite-to-receiver `d(range)/dt` produced by `pnt-predictor`; it contains no receiver
+clock term and no satellite nuisance term. The predictor may compute correlation frequency
+using a clock argument for tracker-facing uses, but its `Prediction::range_rate_mps` remains
+geometric. The estimator observation model supplies all receiver-clock terms through H·x:
+the primary path uses core clock-drift slot 8, while `update_doppler_for_receiver` remaps
+that coefficient to the registered independent receiver's drift slot. Both add the
+pass-scoped satellite nuisance in H·x. Measured correlation offset is converted to range
+rate as `-correlation_peak_hz * c / nominal_carrier_hz`.
+
+Orbcomm remains rejected and journalled at executive ingress. Having a receiver-specific
+estimator API alone does not lift D10: allocation and a verified source-to-clock mapping
+must be explicitly configured before fusion is enabled.
+
+### Routing and constellation gate
+
+`ArmCommand` is journalled and routed only to the authority/integrity port. It never enters
+the estimator update surface and receipt alone never grants authority. Configuration has
+`oneweb_enabled: bool`, defaulting to `false`; false causes every OneWeb tracker observation
+to become a journalled integrity rejection. GNSS disabled by `off`, stale/missing
+ephemeris, prediction/elevation failures, chi-square failures, Orbcomm, and all other
+policy rejects are likewise journalled and never silently dropped.
+
+### Solution-epoch NDJSON output
+
+The executive owns a line-oriented output seam. Each line is one finite-number JSON object
+with exactly the bridge input shape below (field names and nesting are wire normative):
+
+```json
+{"monotonic_ns":123456789000,"state":{"position_ecef_m":[-4479000.0,2670000.0,-3660000.0],"horizontal_velocity_ned_mps":[1.0,0.0],"heading_rad":0.0,"receiver_clock_bias_m":0.0,"receiver_clock_drift_mps":0.0},"steering_authorised":true,"horiz_accuracy_m":0.8,"speed_accuracy_mps":0.1,"vert_accuracy_m":1.5,"msl_alt_m":584.0}
+```
+
+The three accuracy values use the v3 definitions and are materialised when the epoch is
+constructed. `heading_rad` may be JSON null only when unavailable. `msl_alt_m` is the
+separate MSL-constrained altitude, not ECEF ellipsoid height. Until that estimator surface
+is connected, the executive's zero MSL value is `[UNVERIFIED]` and must not be treated as a
+validated publication value.
+
+## v4.1 (2026-07-22)
+
+v4.1 amends, but does not replace, v4. For every `TrackerDoppler` envelope, `source_id`
+is the satellite's decimal NORAD catalogue ID string and `utc` is required with a valid
+RFC3339 timestamp used for ephemeris propagation. Missing or malformed values are
+journalled rejects.
+
+The production Doppler pipeline applies a 5-degree elevation mask, converted to radians
+at its degrees-safe API boundary. The value is `[UNVERIFIED]` pending link-budget and
+replay tuning; callers may explicitly disable the mask for geometry-independent tests.
+
+Correction to v4 wording: horizontal, speed, and vertical accuracy values are derived by
+the `SolutionEpoch` accessors at emission, not materialised when the epoch is constructed.
+An epoch containing any non-finite state, covariance, or derived accuracy value is not
+written to NDJSON and produces a journalled integrity event instead.

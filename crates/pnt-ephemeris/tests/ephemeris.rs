@@ -43,6 +43,15 @@ fn vallado_reference_vector_case_00005() {
     )
     .unwrap();
     let constants = sgp4::Constants::from_elements_afspc_compatibility_mode(&elements).unwrap();
+    let initial = constants
+        .propagate_afspc_compatibility_mode(sgp4::MinutesSinceEpoch(0.0))
+        .unwrap();
+    let expected_initial_p = [7_022.465_292_66, -1_400.082_967_55, 0.039_951_55];
+    let expected_initial_v = [1.893_841_015, 6.405_893_759, 4.534_807_250];
+    for i in 0..3 {
+        assert!((initial.position[i] - expected_initial_p[i]).abs() < 1e-6);
+        assert!((initial.velocity[i] - expected_initial_v[i]).abs() < 1e-9);
+    }
     let state = constants
         .propagate_afspc_compatibility_mode(sgp4::MinutesSinceEpoch(360.0))
         .unwrap();

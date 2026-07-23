@@ -84,12 +84,16 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 name = "fusion-executive"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "pnt-config",
+ "pnt-ephemeris",
  "pnt-estimator",
  "pnt-integrity",
  "pnt-journal",
+ "pnt-predictor",
  "pnt-time",
  "pnt-types",
+ "serde_json",
 ]
 
 [[package]]

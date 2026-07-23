@@ -20,6 +20,7 @@ pub trait Estimator {
     fn propagate(&mut self, imu: ImuSample);
     fn update(&mut self, measurement: &MeasurementEnvelope);
     fn state(&self) -> FilterState;
+    fn update_predicted_doppler(&mut self, update: &DopplerRangeRateUpdate) -> UpdateResult;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +54,7 @@ pub struct UpdateResult {
 pub struct DopplerRangeRateUpdate {
     pub satellite_id: String,
     pub measured_range_rate_mps: f64,
-    /// Predictor module output at the current receiver state.
+    /// Pure satellite/receiver geometric range rate. Clock terms are represented by H*x.
     pub predicted_range_rate_mps: f64,
     /// Predictor linearisation with respect to the nine core states.
     pub core_jacobian: [f64; CORE_DIM],
@@ -201,7 +202,9 @@ impl FilterStub {
         h.rows_mut(0, CORE_DIM)
             .copy_from(&DVector::from_column_slice(&update.core_jacobian));
         h[nuisance] = 1.0;
-        let predicted = update.predicted_range_rate_mps + self.x[nuisance];
+        let predicted = update.predicted_range_rate_mps
+            + update.core_jacobian[CLOCK_DRIFT] * self.x[CLOCK_DRIFT]
+            + self.x[nuisance];
         self.scalar_update(
             update.measured_range_rate_mps,
             predicted,
@@ -516,6 +519,10 @@ impl Estimator for FilterStub {
             covariance_dimension: self.x.len(),
         }
     }
+
+    fn update_predicted_doppler(&mut self, update: &DopplerRangeRateUpdate) -> UpdateResult {
+        self.update_doppler(update)
+    }
 }
 
 fn speed_model(x: &DVector<f64>) -> (f64, DVector<f64>) {
@@ -555,6 +562,23 @@ mod tests {
 
     const FD_STEP: f64 = 1.0e-6;
     const JACOBIAN_TOLERANCE: f64 = 2.0e-6;
+
+    #[test]
+    fn primary_doppler_prediction_includes_nonzero_clock_drift_via_h_x() {
+        let mut filter = FilterStub::default();
+        filter.x[CLOCK_DRIFT] = 12.0;
+        let result = filter.update_doppler(&DopplerRangeRateUpdate {
+            satellite_id: "clock-regression".into(),
+            measured_range_rate_mps: 17.0,
+            predicted_range_rate_mps: 5.0,
+            core_jacobian: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            variance_mps2: 1.0,
+            chi_square_threshold: Some(1.0),
+            satellite_bias_variance_mps2: 1.0,
+        });
+        assert!(result.accepted);
+        assert!(result.innovation.abs() < f64::EPSILON);
+    }
 
     fn central_difference(
         function: impl Fn(&DVector<f64>) -> DVector<f64>,

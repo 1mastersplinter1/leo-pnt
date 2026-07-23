@@ -1,5 +1,8 @@
 //! The sole runtime orchestrator.
 
+mod band_trust;
+
+use band_trust::BandTrust;
 use chrono::{DateTime, Utc};
 use pnt_config::{Config, GnssAuthority};
 use pnt_ephemeris::EphemerisStore;
@@ -12,6 +15,11 @@ use pnt_journal::{IntegrityEvent, JournalSinks, MemoryJournals};
 use pnt_predictor::{geometric_range_rate_linearisation, predict, ReceiverState, SatelliteState};
 use pnt_time::{ClockService, ManualClock};
 use pnt_types::{Constellation, MeasurementEnvelope, MeasurementPayload, SolutionEpoch};
+
+/// Per-band interference increment folded into [`BandTrust`] when a Doppler observation is
+/// rejected by the chi-square gate (U1b). A single rejection barely moves trust (hysteresis);
+/// sustained rejections on one band progressively down-weight it.
+const DOPPLER_REJECTION_INTERFERENCE: f64 = 0.5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RoutingDestination {
@@ -34,6 +42,7 @@ pub struct Executive<C, E, I, J> {
     solution_epochs: Vec<SolutionEpoch>,
     solution_lines: Vec<String>,
     doppler: Option<DopplerPipeline>,
+    band_trust: BandTrust,
     solution_sequence: u64,
     last_absolute_observation_ns: Option<u64>,
 }
@@ -92,6 +101,7 @@ where
             solution_epochs: Vec::new(),
             solution_lines: Vec::new(),
             doppler: None,
+            band_trust: BandTrust::new(),
             solution_sequence: 0,
             last_absolute_observation_ns: None,
         }
@@ -185,6 +195,7 @@ where
         let MeasurementPayload::TrackerDoppler(observation) = envelope.payload else {
             return;
         };
+        let band = observation.constellation.band();
         let result = (|| {
             let pipeline = self
                 .doppler
@@ -247,19 +258,31 @@ where
                 .unwrap_or(1.0)
                 .max(f64::EPSILON);
             let scale = 299_792_458.0 / observation.nominal_carrier_hz;
+            // Band-aware fusion (U1): down-weight (inflate variance of) a band whose
+            // interference estimate has risen. Chi-square gate is deliberately NOT tightened
+            // here — inflating R already shrinks the innovation. Trust defaults to 1.0, so
+            // this is a no-op until `band_trust.observe(..)` is fed an interference estimate.
+            let base_variance = variance_hz2 * scale * scale;
             let update = DopplerRangeRateUpdate {
                 satellite_id: envelope.source_id.0.clone(),
                 measured_range_rate_mps: measured,
                 predicted_range_rate_mps: prediction.range_rate_mps,
                 core_jacobian: jacobian,
-                variance_mps2: variance_hz2 * scale * scale,
+                variance_mps2: self
+                    .band_trust
+                    .scale_variance(observation.constellation.band(), base_variance),
                 chi_square_threshold: pipeline.chi_square_threshold,
                 satellite_bias_variance_mps2: 100.0,
             };
             Ok::<UpdateResult, String>(self.filter.update_predicted_doppler(&update))
         })();
+        // U1b interference proxy: an accepted innovation is a clean per-band observation
+        // (interference 0.0); a gate rejection is anomalous, folded in as a small positive
+        // interference so a band under sustained interference is progressively down-weighted.
+        // Predictor/pipeline errors (Err) are not a band-jamming signal and are left untouched.
         match result {
             Ok(update) if update.accepted => {
+                self.band_trust.observe(band, 0.0);
                 self.journals.write_integrity(IntegrityEvent {
                     monotonic_ns: envelope.host_receive_monotonic_ns,
                     source_id: envelope.source_id.0.clone(),
@@ -268,7 +291,11 @@ where
                 self.last_absolute_observation_ns = Some(envelope.host_receive_monotonic_ns);
                 self.emit_epoch(envelope, true);
             }
-            Ok(_) => self.reject(envelope, "innovation chi-square gate rejected"),
+            Ok(_) => {
+                self.band_trust
+                    .observe(band, DOPPLER_REJECTION_INTERFERENCE);
+                self.reject(envelope, "innovation chi-square gate rejected");
+            }
             Err(reason) => self.reject(envelope, &reason),
         }
     }

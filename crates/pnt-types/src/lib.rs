@@ -71,6 +71,32 @@ pub enum Constellation {
     Orbcomm,
 }
 
+/// RF band of a downlink, used for band-specific fusion trust weighting.
+///
+/// Jamming susceptibility differs sharply by band (contested theatres jam Ku alongside
+/// GNSS while VHF/Orbcomm survives), so the executive weights Doppler observations per band.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Band {
+    /// Orbcomm, ~137 MHz.
+    Vhf,
+    /// Iridium, ~1.6 GHz.
+    L,
+    /// Starlink / `OneWeb`, ~11 GHz downlink.
+    Ku,
+}
+
+impl Constellation {
+    /// The RF band this constellation's downlink occupies.
+    #[must_use]
+    pub const fn band(self) -> Band {
+        match self {
+            Constellation::Starlink | Constellation::OneWeb => Band::Ku,
+            Constellation::Iridium => Band::L,
+            Constellation::Orbcomm => Band::Vhf,
+        }
+    }
+}
+
 /// Identifies a physically independent receiver clock domain.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ReceiverClockId(pub String);
@@ -299,6 +325,14 @@ impl SolutionEpoch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constellation_maps_to_its_rf_band() {
+        assert_eq!(Constellation::Starlink.band(), Band::Ku);
+        assert_eq!(Constellation::OneWeb.band(), Band::Ku);
+        assert_eq!(Constellation::Iridium.band(), Band::L);
+        assert_eq!(Constellation::Orbcomm.band(), Band::Vhf);
+    }
 
     #[test]
     fn epoch_accuracies_are_derived_from_its_full_covariance() {

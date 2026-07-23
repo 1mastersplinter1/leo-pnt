@@ -94,6 +94,7 @@ pub struct FilterStub {
     measurement_updates: u64,
     nuisance_slots: HashMap<String, usize>,
     receiver_clocks: HashMap<ReceiverClockId, ReceiverClockSlot>,
+    robust_gate: bool,
 }
 
 impl Default for FilterStub {
@@ -121,7 +122,18 @@ impl FilterStub {
             measurement_updates: 0,
             nuisance_slots: HashMap::new(),
             receiver_clocks: HashMap::new(),
+            robust_gate: false,
         }
+    }
+
+    /// Enables the robust (Huber) measurement cost (U4a): an innovation beyond the chi-square
+    /// gate is down-weighted (its effective variance inflated) rather than hard-rejected, so a
+    /// moderate outlier stays partially informative instead of being discarded. Default off, so
+    /// the hard-gate behaviour is unchanged unless this is set.
+    #[must_use]
+    pub const fn with_robust_gate(mut self) -> Self {
+        self.robust_gate = true;
+        self
     }
 
     #[must_use]
@@ -338,14 +350,26 @@ impl FilterStub {
         let ph = &self.covariance * h;
         let innovation_variance = h.dot(&ph) + variance;
         let nis = innovation * innovation / innovation_variance;
-        let accepted = gate.is_none_or(|threshold| nis <= threshold);
+
+        // Robust (Huber) cost (U4a): beyond the gate, down-weight rather than hard-reject by
+        // inflating the measurement noise R by nis/threshold (Huber weight w=sqrt(threshold/nis),
+        // 1/w^2 = nis/threshold). The reported `nis`/`innovation_variance` stay raw for honest
+        // integrity reporting; only the *update* uses the inflated R.
+        let (accepted, effective_variance) = match gate {
+            Some(threshold) if nis <= threshold => (true, variance),
+            Some(threshold) if self.robust_gate => (true, variance * (nis / threshold)),
+            Some(_) => (false, variance),
+            None => (true, variance),
+        };
+
         if accepted {
-            let gain = ph / innovation_variance;
+            let effective_innovation_variance = h.dot(&ph) + effective_variance;
+            let gain = &ph / effective_innovation_variance;
             self.x += &gain * innovation;
             let identity = DMatrix::identity(self.x.len(), self.x.len());
             let a = identity - &gain * h.transpose();
-            self.covariance =
-                &a * &self.covariance * a.transpose() + (&gain * gain.transpose()) * variance;
+            self.covariance = &a * &self.covariance * a.transpose()
+                + (&gain * gain.transpose()) * effective_variance;
             self.measurement_updates += 1;
             self.debug_assert_covariance();
         }
@@ -562,6 +586,48 @@ mod tests {
 
     const FD_STEP: f64 = 1.0e-6;
     const JACOBIAN_TOLERANCE: f64 = 2.0e-6;
+
+    #[test]
+    fn robust_cost_downweights_a_moderate_outlier_instead_of_rejecting_it() {
+        // Same moderate outlier through the hard gate vs. the robust (Huber) cost.
+        let update = || DopplerRangeRateUpdate {
+            satellite_id: "outlier".into(),
+            measured_range_rate_mps: 5.0, // large innovation vs predicted 0
+            predicted_range_rate_mps: 0.0,
+            core_jacobian: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            variance_mps2: 1.0,
+            chi_square_threshold: Some(4.0), // sqrt-gate ~2 sigma; this outlier exceeds it
+            satellite_bias_variance_mps2: 1.0,
+        };
+
+        let mut hard = FilterStub::default();
+        let hard_result = hard.update_doppler(&update());
+        assert!(
+            !hard_result.accepted,
+            "hard gate should reject this outlier"
+        );
+
+        let mut robust = FilterStub::default().with_robust_gate();
+        let robust_result = robust.update_doppler(&update());
+        assert!(
+            robust_result.accepted,
+            "robust cost should accept-but-downweight, not reject"
+        );
+        // The robust update moves the velocity state, but by LESS than an ungated full update
+        // would (the outlier is down-weighted). Compare against a no-gate full update.
+        let mut full = FilterStub::default();
+        let mut ungated = update();
+        ungated.chi_square_threshold = None;
+        let _ = full.update_doppler(&ungated);
+
+        let robust_shift = robust.x[VEL].abs();
+        let full_shift = full.x[VEL].abs();
+        assert!(robust_shift > 0.0, "robust update must move the state");
+        assert!(
+            robust_shift < full_shift,
+            "robust shift {robust_shift} should be smaller than full shift {full_shift}"
+        );
+    }
 
     #[test]
     fn primary_doppler_prediction_includes_nonzero_clock_drift_via_h_x() {

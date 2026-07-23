@@ -53,3 +53,33 @@ documents these fields and configured replay semantics.
 - Surveyed antenna lever arm (the Executive still uses its documented zero lever-arm hook).
 - Whether the synthetic position improvement generalizes to other geometries, missions,
   noise models, gate settings, or receiver priors.
+
+## U-I3.1 fix round (dispositions; completed by coordinator after worker interruption — code was worker-authored, this section + one doc lint by Fable)
+
+Corrected four-way table (seed 1, 180 s; horizontal position RMS m / speed RMS m/s / n / measurement_updates):
+
+| run | pos RMS | speed RMS | n | updates |
+|---|---:|---:|---:|---:|
+| denied DR-only (no prior, no Doppler) | 153.126 | 1.312 | 543 | 362 |
+| denied prior-only (Doppler suppressed) | 116.085 | 0.277 | 543 | 362 |
+| denied prior + Doppler | 91.795 | 2.186 | 724 | 543 |
+| denied no-prior + Doppler | 13216.216 | 6.948 | 724 | 543 |
+| aided (reference) | 0.826 | — | — | 1448 |
+
+Attribution (in the JSON `attribution` block): the disclosed receiver prior — which is
+truth-equivalent for this synthetic fixture — contributes 37.0 m of the position improvement
+by itself; Doppler given the prior contributes a further 24.3 m. **Doppler assimilation
+degrades the speed RMS by 1.91 m/s against the same-initialization baseline (0.277 → 2.186).**
+The plausible mechanism — strong LEO position observability with weak/adverse constraint on
+the small receiver horizontal velocity under the stub filter's [UNVERIFIED] noise tuning —
+requires a dedicated tuning study before any velocity claim; recorded as open. The n
+difference (724 vs 543) is disclosed: accepted Doppler emits additional epochs, so the
+prior+Doppler row mixes fix frequency with fix quality (F4).
+
+Dispositions: F1 fixed (four-way + disclosed prior + separate attribution, above and in JSON);
+F2 fixed (degradation stated plainly, mechanism [UNVERIFIED]); F3 fixed (tests now assert
+prior+Doppler position < prior-only, and record the speed direction honestly); F4 disclosed;
+F5 routes column footnoted in README (routing ≠ assimilation; updates delta is the evidence);
+F6 no code change (no sign bug; unchanged update path); F7 Orbcomm-reject-with-pipeline test
+added. Numbers above generated from the committed code via `mission-study --seed 1
+--duration 180`.

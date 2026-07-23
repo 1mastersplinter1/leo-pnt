@@ -97,16 +97,34 @@ pub struct StudyReport {
     pub caveat: String,
     pub mission: MissionSummary,
     pub replay: ReplayReport,
-    pub three_way: ThreeWayTable,
+    pub four_way: FourWayTable,
+    pub attribution: StudyAttribution,
     pub qualitative_demonstration: QualitativeDemonstration,
     pub integration_gaps: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ThreeWayTable {
-    pub aided: RunSummary,
+pub struct FourWayTable {
     pub denied_dr_only: RunSummary,
-    pub denied_with_doppler: RunSummary,
+    pub denied_prior_only: RunSummary,
+    pub denied_prior_with_doppler: RunSummary,
+    pub denied_no_prior_with_doppler: RunSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StudyAttribution {
+    /// Caller-provided initialization; this is truth-equivalent for the synthetic fixture.
+    pub disclosed_receiver_prior: ReceiverPrior,
+    /// DR-only RMS minus prior-only RMS. Positive values mean the prior reduced error.
+    pub prior: RmsContribution,
+    /// Prior-only RMS minus prior+Doppler RMS. Positive values mean Doppler reduced error.
+    pub doppler_given_prior: RmsContribution,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RmsContribution {
+    pub position_rms_reduction_m: f64,
+    pub speed_rms_reduction_mps: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -349,6 +367,12 @@ pub fn generate_mission(
 /// # Errors
 ///
 /// Returns a typed generation, replay, journal I/O, or JSON serialization error.
+///
+/// # Panics
+///
+/// Panics if a generated mission yields zero scored position or speed epochs — an internal
+/// invariant of the generator (every mission emits truth-matched epochs), not a caller
+/// condition.
 pub fn run_study(
     output: impl AsRef<Path>,
     config: &MissionConfig,
@@ -356,31 +380,68 @@ pub fn run_study(
     let output = output.as_ref();
     let mission = generate_mission(output, config)?;
     let replay = replay_paired(output, 1)?;
+    let receiver_prior = ReceiverPrior {
+        position_ecef_m: local_to_ecef(0.0, 0.0),
+        velocity_ecef_mps: local_vector_to_ecef(
+            config.speed_through_water_mps + config.current_north_mps,
+            config.current_east_mps,
+        ),
+        position_variance_m2: [1.0; 3],
+        velocity_variance_mps2: [1.0; 3],
+    };
     let doppler_config = ReplayDopplerConfig {
         ephemeris_tle: TLE.to_owned(),
         // The denied filter intentionally has no GNSS-derived geodetic initialization.
         // Disable elevation screening while retaining the same ephemeris and measurements.
         elevation_mask_degrees: None,
         chi_square_threshold: None,
-        receiver_prior: Some(ReceiverPrior {
-            position_ecef_m: local_to_ecef(0.0, 0.0),
-            velocity_ecef_mps: local_vector_to_ecef(
-                config.speed_through_water_mps + config.current_north_mps,
-                config.current_east_mps,
-            ),
-            position_variance_m2: [1.0; 3],
-            velocity_variance_mps2: [1.0; 3],
-        }),
+        receiver_prior: Some(receiver_prior),
     };
     let doppler_replay = replay_paired_configured(output, 1, Some(&doppler_config))?;
+    let mut prior_only_config = doppler_config.clone();
+    prior_only_config.chi_square_threshold = Some(0.0);
+    let prior_only_replay = replay_paired_configured(output, 1, Some(&prior_only_config))?;
+    let mut no_prior_doppler_config = doppler_config.clone();
+    no_prior_doppler_config.receiver_prior = None;
+    let no_prior_doppler_replay =
+        replay_paired_configured(output, 1, Some(&no_prior_doppler_config))?;
     let aided = replay.aided.horizontal_position_error_m.rms;
     let withheld = replay.withheld.horizontal_position_error_m.rms;
+    let dr = &replay.withheld;
+    let prior_only = &prior_only_replay.withheld;
+    let prior_with_doppler = &doppler_replay.withheld;
+    let contribution = |baseline: &RunSummary, treatment: &RunSummary| RmsContribution {
+        position_rms_reduction_m: baseline
+            .horizontal_position_error_m
+            .rms
+            .expect("generated mission has scored position epochs")
+            - treatment
+                .horizontal_position_error_m
+                .rms
+                .expect("generated mission has scored position epochs"),
+        speed_rms_reduction_mps: baseline
+            .horizontal_speed_error_mps
+            .rms
+            .expect("generated mission has scored speed epochs")
+            - treatment
+                .horizontal_speed_error_mps
+                .rms
+                .expect("generated mission has scored speed epochs"),
+    };
+    let prior_contribution = contribution(dr, prior_only);
+    let doppler_given_prior_contribution = contribution(prior_only, prior_with_doppler);
     let report = StudyReport {
         caveat: "SYNTHETIC DEMONSTRATION ONLY — not a performance claim; real-signal behavior is [UNVERIFIED].".into(),
-        three_way: ThreeWayTable {
-            aided: replay.aided.clone(),
+        four_way: FourWayTable {
             denied_dr_only: replay.withheld.clone(),
-            denied_with_doppler: doppler_replay.withheld,
+            denied_prior_only: prior_only_replay.withheld,
+            denied_prior_with_doppler: doppler_replay.withheld,
+            denied_no_prior_with_doppler: no_prior_doppler_replay.withheld,
+        },
+        attribution: StudyAttribution {
+            disclosed_receiver_prior: receiver_prior,
+            prior: prior_contribution,
+            doppler_given_prior: doppler_given_prior_contribution,
         },
         qualitative_demonstration: QualitativeDemonstration {
             aided_smaller_than_withheld: aided.zip(withheld).is_some_and(|(a, w)| a < w),

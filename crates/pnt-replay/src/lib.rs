@@ -66,7 +66,7 @@ pub struct ReplayDopplerConfig {
     pub receiver_prior: Option<ReceiverPrior>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReceiverPrior {
     pub position_ecef_m: [f64; 3],
     pub velocity_ecef_mps: [f64; 3],

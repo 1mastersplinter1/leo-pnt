@@ -63,7 +63,8 @@ fn generated_capture_round_trips_all_measurements_and_truth() {
 #[test]
 fn paired_study_is_a_synthetic_qualitative_rehearsal() {
     let directory = TempDir::new().unwrap();
-    let report = run_study(directory.path(), &small(11)).unwrap();
+    // The seeded headline geometry is the scope of the qualitative direction assertions.
+    let report = run_study(directory.path(), &MissionConfig::default()).unwrap();
     assert!(report.caveat.contains("not a performance claim"));
     assert!(report.qualitative_demonstration.aided_smaller_than_withheld);
     assert!(
@@ -111,16 +112,43 @@ fn paired_study_is_a_synthetic_qualitative_rehearsal() {
         report.mission.truth_count
     );
     assert_eq!(report.replay.withheld.gnss_fusion_routes, 0);
-    let dr = &report.three_way.denied_dr_only;
-    let doppler = &report.three_way.denied_with_doppler;
+    let dr = &report.four_way.denied_dr_only;
+    let prior_only = &report.four_way.denied_prior_only;
+    let doppler = &report.four_way.denied_prior_with_doppler;
     assert!(doppler.doppler_fusion_routes > 0);
-    assert!(doppler.measurement_updates > dr.measurement_updates);
+    assert_eq!(
+        prior_only.measurement_updates, dr.measurement_updates,
+        "the configured prior is excluded from journal-driven update counts"
+    );
+    assert!(doppler.measurement_updates > prior_only.measurement_updates);
     assert!(
         doppler.horizontal_position_error_m.rms.unwrap()
-            < dr.horizontal_position_error_m.rms.unwrap(),
-        "synthetic Doppler rehearsal should improve position RMS: DR={:?}, Doppler={:?}",
-        dr.horizontal_position_error_m.rms,
+            < prior_only.horizontal_position_error_m.rms.unwrap(),
+        "Doppler contribution must be isolated from the prior: prior={:?}, prior+Doppler={:?}",
+        prior_only.horizontal_position_error_m.rms,
         doppler.horizontal_position_error_m.rms
+    );
+    assert!(
+        doppler.horizontal_speed_error_mps.rms.unwrap()
+            > prior_only.horizontal_speed_error_mps.rms.unwrap(),
+        "this synthetic geometry/tuning degrades velocity: prior={:?}, prior+Doppler={:?}",
+        prior_only.horizontal_speed_error_mps.rms,
+        doppler.horizontal_speed_error_mps.rms
+    );
+    assert!(report.attribution.prior.position_rms_reduction_m > 0.0);
+    assert!(
+        report
+            .attribution
+            .doppler_given_prior
+            .position_rms_reduction_m
+            > 0.0
+    );
+    assert!(
+        report
+            .attribution
+            .doppler_given_prior
+            .speed_rms_reduction_mps
+            < 0.0
     );
 }
 

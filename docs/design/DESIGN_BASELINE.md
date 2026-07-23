@@ -216,16 +216,16 @@ epoch shifting aliases orbital phase and cannot validate real ephemeris error gr
 
 The executive now emits the propagated ephemeris age into each Doppler-derived authority
 solution instead of the former constant zero. This is a deliberate fail-closed semantic
-change, not an authority-neutral weighting change: G2e compares that true age with
-`t_eph_s`. Under the still-provisional `t_eph_s = 6 h` in `PARAMS_PROPOSAL.md`, steering
-authority is therefore revoked after six hours even while graduated Doppler observations
-remain eligible through 30 h. That conflict defeats D45 unless the authority parameter is
-reconciled.
+change, not an authority-neutral weighting change. ~~Under the former provisional
+`t_eph_s = 6 h`, steering authority was revoked after six hours even while graduated Doppler
+observations remained eligible through 30 h.~~ **Superseded by D59 (2026-07-23):** G2p is the
+continuous accuracy governor because age-derived measurement-noise inflation widens the
+protection limit; G2e is the freshness backstop at the proposed `t_eph_s = 30 h` ceiling.
+The separate `t_fresh = 6 h` boundary still ends nominal weighting and starts inflation.
 
-**Open ruling U-P1-O1 (PARAMS/SAFETY_CASE owners):** decide whether `t_eph_s` moves to the
-graduated hard ceiling (recommended, with measurement inflation carrying accuracy honesty)
-or G2e gains a separately justified authority-age bound. Update the parameter register and
-G2e claim together after ruling; this amendment does not alter `SAFETY_CASE.md`.
+**U-P1-O1 resolved by D59:** `t_eph_s` moves to the graduated 30 h hard ceiling. The value and
+real-SupGP aging model remain `[UNVERIFIED]` and PROPOSED-NOT-FROZEN; this reconciliation
+grants no authority.
 
 ## Amendment 2026-07-23 — denied passage acceptance (D56)
 

@@ -18,14 +18,20 @@ ArduPilot*; this revision states each boundary explicitly. Where the honest conc
 that a hazard is **not controlled by present design**, this document says so and registers it
 (§5) rather than asserting a mitigation.
 
+**Amendment 2026-07-23 (D59).** The former 6 h G2e authority cliff and 100 m
+`revoke_threshold` are superseded by the D59 reconciliation detailed in §5: proposed
+`t_eph = 30 h` and `revoke_threshold = 250 m`. These remain **[UNVERIFIED]** and grant no
+authority.
+
 ---
 
 ## 0. Terms, and the four things this case keeps separate
 
 - **Acceptance profile** (baseline §Acceptance profiles): system-level trial statistics
-  (e.g. ≤ 25 m aided, ≤ 200 m denied horizontal position) computed offline over declared test
-  segments against the truth journal. They grade the *campaign*. The baseline states they
-  **do not replace per-epoch integrity and authority checks**.
+  (e.g. ≤ 25 m aided; ≤ 500 m p50 **and** ≤ 750 m p95 denied horizontal position over a
+  ≥100 km constant-heading-dominated passage) computed offline over declared test segments
+  against the truth journal. They grade the *campaign*. The baseline states they **do not
+  replace per-epoch integrity and authority checks**.
 - **Protection limit**: the per-epoch bound the authority supervisor tests each solution
   against, derived by the solution integrity monitor (architecture module 10) from the filter
   covariance and integrity state, *independently of ArduPilot*. The baseline supplies no
@@ -61,6 +67,14 @@ to be re-derived if the hull planes or slams.
 Steering authority is granted **only while the full conjunction G1–G4 holds** (logical AND;
 any false term drops authority — §2). The companion never self-grants; grant is opt-in by the
 helm (G1) and continuously re-earned by the solution (G2–G4).
+
+**D59 gate-role amendment (2026-07-23).** G2p is the continuous accuracy governor: ephemeris
+age-derived measurement-noise inflation widens the protection limit as ephemerides age, and
+G2p self-revokes when that age-inflated limit exceeds the active profile. G2e is separately
+the freshness backstop at the proposed 30 h graduated-aging ceiling. The baseline's
+`t_fresh = 6 h` is neither authority expiry nor G2e: it is only the boundary below which
+ephemeris weighting remains nominal. The former interpretation of G2e as a 6 h authority
+cliff is **superseded**.
 
 **Fail-closed gate on unverified parameters (per D17).** Steering authority shall **never** be
 granted while **any** parameter of the authority contract — the protection limits, timers
@@ -133,10 +147,10 @@ behaviour is fail-safe (absence ⇒ condition false) throughout.
 | ID | Sub-predicate | Metric / unit | Test | Eval rate | Missing-data | Trace / authority |
 |---|---|---|---|---|---|---|
 | G1 | armed | arm latch (bool) | `armed == true` | on-change + per cycle | ⇒ disarmed | brief; **arm message = proposed contracts v3 (D13)** |
-| G2p | horiz position PL | HPL (m) | `HPL ≤ PL_pos[profile]` **[UNVERIFIED]** | per epoch (5 Hz) | ⇒ false | baseline acceptance profiles; per-epoch number **proposed** |
+| G2p | horiz position PL | HPL (m), including ephemeris-age inflation | `HPL ≤ PL_pos[profile]`; aided 12 m / denied 250 m **[UNVERIFIED]** | per epoch (5 Hz) | ⇒ false | D56/D58 acceptance; per-epoch numbers **proposed** |
 | G2v | horiz velocity PL | VPL (m/s) | `VPL ≤ PL_vel[profile]` **[UNVERIFIED]** | per epoch | ⇒ false | as above |
 | G2h | heading PL | (deg) | `HdgPL ≤ PL_hdg[profile]` **[UNVERIFIED]** | per epoch | ⇒ false | baseline 2°/5° (both **[UNVERIFIED]**) |
-| G2e | ephemeris age | max SV age (s) | `≤ t_eph` (provisional 6 h) | per observation | over-age ⇒ SV excluded | baseline SupGP 6 h gate **[UNVERIFIED]** |
+| G2e | ephemeris age | max SV age (s) | `≤ t_eph` (proposed 30 h ceiling) | per observation | over-age ⇒ SV excluded | D45/D49/D59 freshness backstop **[UNVERIFIED]** |
 | G2d | DR-authority age | age of last absolute fix (s) | `≤ t_dr` **[UNVERIFIED]** | per epoch | ⇒ false | baseline "DR timeout governs authority only"; failure mode 3 |
 | G3 | calibration match | ID resolves & matches (bool) | all contributing meas. match | per epoch | ⇒ false (integrity fault) | baseline extrinsics rule |
 | G4 | lease live | `now − last_R` (s) | `< t_lease` **[UNVERIFIED]** | continuous | ⇒ expiry | this doc (**proposed**); baseline motivates continuous output via `GPS_TIMEOUT_MS` |
@@ -489,12 +503,22 @@ Safety-relevant items not yet frozen, and honest control status. **Every authori
 parameter marked [UNVERIFIED] below is fail-closed per §1: while it remains unverified, steering
 authority cannot be granted.**
 
+- **D59 denied-authority reconciliation (2026-07-23):** proposed G2p denied horizontal PL
+  and the independent `revoke_threshold` are both 250 m; this replaces the superseded 100 m
+  scalar tied to the former 200 m denied acceptance. Proposed G2e `t_eph` is 30 h, replacing
+  the superseded 6 h authority-cliff interpretation. These changes make D56 and D45
+  self-consistent, but all three values/mappings remain **[UNVERIFIED]** pending real-signal
+  freeze evidence. G2p remains the continuous age-inflated accuracy governor; G2e is the
+  ancient-ephemeris freshness backstop; the separate 6 h inflation fresh-window only controls
+  when nominal weighting ends.
 - **Per-epoch protection-limit numbers** (position/velocity/heading, aided and denied) — the
   baseline gives only campaign-grading acceptance statistics; per-epoch gates are a proposed
   addition.
 - **Timers:** `t_lease` (`< 4000 ms`), `t_dr` (DR-authority), per-source freshness deadlines,
-  `t_eph` (provisional 6 h), `T_ack`, `caution_enter`/`caution_clear`/`dwell_clear`,
+  `t_eph` (proposed 30 h ceiling), `T_ack`, `caution_enter`/`caution_clear`/`dwell_clear`,
   `dwell_rearm`.
+- **Thresholds:** proposed `revoke_threshold = 250 m`; the caution band remains proposed and
+  must be re-derived against that threshold before freeze.
 - **G1 arm input:** no arm/disarm message exists in `ARCHITECTURE.md`; an arm-command bus
   message + helm arm input is a contracts requirement per **D13** (U-C1, contracts v3). G1 is
   specified-but-unwired until then.

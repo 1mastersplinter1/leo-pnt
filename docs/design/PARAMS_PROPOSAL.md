@@ -206,7 +206,7 @@ first (`SAFETY_CASE.md` §1.1/§2.3). Proposed **120 s**: long enough to ride th
 multi-satellite handover gaps (tens of seconds of no valid correlation), short enough that an
 optimistic covariance cannot let a badly-drifted DR solution retain authority. At a
 conservative post-loss residual velocity-error scale of ~0.05 m/s, 120 s of pure DR is ~6 m of
-velocity-driven drift — well inside both the retained 100 m scalar revoke ceiling and the
+velocity-driven drift — well inside both the proposed 250 m scalar revoke ceiling and the
 proposed 250 m denied PL — so under a *correct* covariance the
 PL check remains the primary bound and `t_dr` is the backstop against an *incorrect* one.
 **This is the weakest-evidence timer in the set**: no replayed LEO-gap statistics exist yet, so
@@ -222,22 +222,29 @@ authority on a stale solution — the exact hazard `t_dr` exists to bound.
 mix, and the DR position-error growth vs truth across a gap, then set `t_dr` to the largest gap
 the drift budget tolerates inside the denied PL. Re-derive for any non-displacement hull.
 
-### 2.3 `t_eph` — `21600 s` (6 h ephemeris-age gate, G2e)
+### 2.3 `t_eph` — `108000 s` (30 h ephemeris-age backstop, G2e)
 
-**Derivation.** Directly from the baseline: SupGP maximum age provisional **6 hours**, anchored
-to the first supplied error-growth datum (~0.94 km orbit error at 6 h). The baseline states the
-orbit-error → navigation-integrity mapping is `[UNVERIFIED]` and the limit "shall be validated
-or tightened before steering trials." Proposed **21600 s**, matching the baseline unchanged.
+**D59 reconciliation.** Proposed **108000 s (30 h)**, equal to the graduated-aging hard
+ceiling. G2e is a freshness backstop for truly ancient ephemeris, not the accuracy governor.
+G2p is the continuous accuracy governor: after the separate
+`t_fresh = 21600 s (6 h)` inflation boundary, age-derived measurement-noise inflation widens
+the protection limit and self-revokes on accuracy grounds when appropriate. Thus the 6 h
+fresh-window still controls nominal versus inflated weighting, but the former 6 h authority
+cliff is **superseded**. A hard G2e cliff at 6 h would defeat D45's passage requirement while
+duplicating the continuously conservative G2p control.
 
-**Sensitivity.** 2× loose (12 h): SupGP orbit error grows to several km → range-rate prediction
-bias that the pass-nuisance state may not fully absorb → biased Doppler entering fusion. 2×
-tight (3 h): forces more frequent ephemeris refresh; if the at-sea fetch path is intermittent,
-over-age exclusion of otherwise-healthy satellites thins geometry and hurts availability.
+**Sensitivity.** A tighter G2e ceiling reduces exposure to an invalid aging model but can
+prematurely end a 100 km/long-passage mission even while G2p remains honest. A looser ceiling
+admits ephemerides beyond the evidence envelope and increases reliance on extrapolated
+inflation. The selected 30 h aligns the two finite backstops: observations are hard-rejected
+and authority freshness fails beyond the same ceiling.
 
-**Validation plan.** Propagate SupGP vs precise/near-real-time ephemerides to quantify the
-orbit-error → predicted-range-rate-error → navigation-integrity chain; tighten 6 h to the age
-at which predicted-range-rate error reaches the tracker/EKF residual budget. Confirm the at-sea
-ephemeris-refresh cadence supports the chosen age.
+**Validation plan.** On real SupGP/real-signal captures, propagate ephemerides against
+precise/near-real-time references across 0–30 h and replay the resulting range-rate errors
+through the production inflation, EKF, and G2p gate. Demonstrate that the age-inflated PL
+self-revokes before unsafe error, verify G2e stays open through exactly 30 h and closes above
+it, and confirm pre-departure caching supports the intended passage. Synthetic epoch shifting
+is availability evidence only and cannot freeze this value.
 
 ### 2.4 Per-source freshness deadlines — and a fail-closed enforcement gap
 
@@ -261,7 +268,7 @@ staleness represents:
 | IMU | 100 Hz (10 ms) | **0.10 s** | ~10 nominal periods. IMU drives *every* propagation; staleness makes time-propagation untrustworthy → the baseline's "IMU stream stale ⇒ revoke" row. Tightest deadline; must be ≪ `t_lease` (1.0 s) since IMU staleness is a more immediate fault than mere output silence. |
 | Magnetometer (each) | 10 Hz (100 ms) | **0.50 s** | ~5 nominal periods, per magnetometer. Loss of one → continue on the other (baseline); loss of both → heading PL (G2h) revokes. Looser than IMU because heading degradation is caught by G2h. |
 | Speed log | 5 Hz (200 ms) | **1.00 s** | ~5 nominal periods. Speed-log loss removes only current/ground-speed separation (baseline); G2 catches downstream effects. Least safety-critical of the three marine feeds. |
-| Ephemeris | event / cache | **= `t_eph` (21600 s)** | The ephemeris "sample" is the SupGP record whose age gate **is** `t_eph` (§2.3). A separate short freshness deadline would be redundant; the age gate governs. Stated to avoid a duplicate parameter. |
+| Ephemeris | event / cache | **= `t_eph` (108000 s)** | The ephemeris "sample" is the SupGP record. G2e uses `t_eph` as the 30 h ancient-ephemeris backstop (§2.3); the separate 6 h inflation fresh-window only ends nominal weighting. |
 
 **Sensitivity.** IMU 2× tight (0.05 s): nuisance revoke on scheduler jitter/USB hiccup. IMU 2×
 loose (0.20 s): up to 0.2 s of propagation on a stale IMU before revoke — the exact
@@ -285,47 +292,48 @@ be enforced upstream (executive/integrity ingress) and their freeze tracked sepa
 
 The metric for the caution/revoke scalars is the horizontal-accuracy metre value (§0.1);
 `dwell_clear`, `dwell_rearm`, `T_ack` are seconds. Ordering constraint (`SAFETY_CASE.md`
-§3.2): `caution_clear (60) < caution_enter (75) < revoke_threshold (100)`.
-These scalars are retained pending an authority-policy ruling, but the 100 m revoke threshold
-now disagrees with and overrides the proposed 250 m denied PL (§3.1).
+§3.2): `caution_clear (60) < caution_enter (75) < revoke_threshold (250)`.
+Per D59, the revoke scalar now matches the proposed 250 m denied PL. The 60/75 m caution
+values remain conservative proposals pending re-derivation for useful helm lead time.
 
-### 3.1 `revoke_threshold` — `100 m`
+### 3.1 `revoke_threshold` — `250 m`
 
-**Reconciliation after D56.** A single, profile-independent hard horizontal-accuracy ceiling
+**D59 reconciliation after D56/D58.** A single, profile-independent hard horizontal-accuracy ceiling
 at which the metric forces WARNING (`metric < revoke_threshold` is a G2 conjunct in `lib.rs`).
-It was set equal to the former 100 m denied PL. It now **disagrees with the proposed 250 m
-denied PL and remains the effective denied horizontal ceiling**: strict `< 100 m` revokes
-before the profile `≤ 250 m` check. It is retained rather than silently raised because the
-caution/revoke ladder is a coupled authority-policy choice and §5.1 requires owner resolution.
+The proposed value moves from the former 100 m denied PL to **250 m**, matching the D56/D58
+denied PL (`500 m p50 / k=2`). This resolves the retained/overrides note: the scalar no longer
+makes the D56 relaxation inert by revoking at 100 m before the profile check.
 In aided operation the tighter 12 m profile PL still trips first. It is a backstop against
 a **finite-but-dangerously-loose profile limit**, not against an *absent* one: an absent
 (`None`) profile limit already fails closed independently, because `AuthorityParams::is_complete()`
 is itself a G2 conjunct (`lib.rs`) and rejects any missing limit regardless of `revoke_threshold`.
 The scalar's value is a second, profile-independent ceiling under a mis-set-but-present limit.
 
-**Sensitivity.** Raising the scalar toward 250 m would make more of the amended denied
-envelope usable, but requires re-deriving the caution band and hazard evidence `[UNVERIFIED]`.
-Leaving it at 100 m conservatively preserves the former authority gate but prevents the
-relaxed PL from changing denied availability.
+**Sensitivity.** Tightening toward 100 m restores the superseded availability override and
+defeats the settled D56 target. Loosening above 250 m makes the independent backstop weaker
+than the intended denied PL and could mask a mis-set-but-present profile limit. The 250 m
+choice and its caution-band/hazard evidence remain `[UNVERIFIED]`.
 
 **Validation plan.** Use the §1.1 multi-satellite and real-signal withheld-replay coverage
-study; resolve whether the backstop should align with the denied PL, then re-derive
-`caution_enter`/`caution_clear` and verify useful helm lead time before changing any scalar.
+study to demonstrate the 250 m profile PL and scalar trip consistently, with boundary tests
+for strict scalar semantics. Re-derive `caution_enter`/`caution_clear` and verify useful helm
+lead time before freezing any scalar.
 
 ### 3.2 `caution_enter` — `75 m` · `caution_clear` — `60 m`
 
 **Derivation.** The caution band summons the helm *before* revocation. Referenced to the
-**denied** envelope (where the ladder is most safety-relevant — the all-LEO-loss DR growth
-toward 100 m): pre-alert on ≥ 75 m (75 % of the 100 m revoke), clear on ≤ 60 m sustained for
-`dwell_clear`. The 15 m entry/clear separation is real hysteresis against metric noise near the
-threshold (H3). **Consequence of single-scalar thresholds:** in *aided* operation the metric
+**denied** envelope (where the ladder is most safety-relevant). The 75/60 m values predate
+D59 and are retained as conservative proposals, not as percentages of the new 250 m revoke:
+pre-alert on ≥ 75 m, clear on ≤ 60 m sustained for `dwell_clear`. The 15 m entry/clear
+separation is real hysteresis against metric noise near the threshold (H3).
+**Consequence of single-scalar thresholds:** in *aided* operation the metric
 sits far inside 12 m, so this band never fires — aided mode has no caution pre-alert. This is
 the profile-independence limitation registered in §5.1; the values are chosen to make the
 ladder meaningful in the mode where it matters most.
 
-**Sensitivity.** Entry 2× (150 m): above the 100 m revoke — CAUTION could never precede
-WARNING, defeating the pre-alert. Entry too near clear (narrow band): alarm chatter. Clear too
-low: caution annunciation lingers after genuine recovery.
+**Sensitivity.** Entry too near the 250 m revoke provides too little helm lead time; entry too
+low causes nuisance pre-alerts. Entry too near clear (narrow band) causes alarm chatter; clear
+too low leaves caution annunciation after genuine recovery.
 
 **Validation plan.** Replay the degrading-geometry / LEO-loss trajectory and tune the band so
 the helm gets a stable, useful lead time before revoke without chatter; **strongly recommend
@@ -552,7 +560,7 @@ appendix; it is nonetheless a steering-relevant `[UNVERIFIED]` value with its ow
 `AuthorityParams` carries `ProtectionLimits` **per profile** (aided/denied, about 21× apart on
 position) but `caution_enter`/`caution_clear`/`revoke_threshold` are **single scalars** compared
 against the same metre metric. With the aided PL at 12 m and the caution band referenced to the
-retained 100 m denied scalar ceiling, **aided mode has no caution pre-alert** — the profile PL revokes before
+250 m denied scalar ceiling, **aided mode has no caution pre-alert** — the profile PL revokes before
 the caution metric is ever reached. This proposal makes the band meaningful in the mode where it
 matters most (denied/degrading) and accepts the aided-mode gap. **Recommended contracts change:
 make the caution band (and revoke backstop) per-profile**, matching `ProtectionLimits`. Routed
@@ -588,23 +596,19 @@ field or record that ephemeris freshness is governed by `t_eph`. Until then thes
 be enforced upstream (executive/integrity ingress) and their freeze tracked outside
 `is_complete()`. Routed to the contracts owner; not assumed resolved here.
 
-### 5.5 Coupled denied-authority rulings after D56
+### 5.5 Coupled denied-authority rulings after D56 — resolved by D59
 
-D56's proposed 250 m denied horizontal-position PL and open ruling **U-P1-O1** are both
-denied-mode authority tuning but govern different G2 predicates. The params/safety-case owners
-must resolve two coupled parts before denied-authority freeze:
+D59 resolves the two design-intent choices without freezing either:
 
-1. G2p/profile policy: the retained 100 m scalar currently overrides the proposed 250 m denied
-   PL, so the profile-aware caution/revoke policy needs a ruling and validation.
-2. G2e/ephemeris policy: decide whether `t_eph_s` moves from 6 h to the graduated 30 h hard
-   ceiling or receives a separately justified authority-age bound, with measurement inflation
-   retaining accuracy honesty.
+1. **G2p accuracy governor:** denied horizontal PL and `revoke_threshold` are both proposed
+   at 250 m. The former 100 m scalar override is superseded.
+2. **G2e freshness backstop:** `t_eph_s` is proposed at the graduated 30 h ceiling. The
+   separate 6 h inflation fresh-window remains the point where nominal weighting ends; it is
+   not an authority cliff.
 
-Neither decision is made here. Both remain `[UNVERIFIED]` and fail closed until validated and
-frozen. **Open safety-case owner item:** update G2's protection-limit derivation/reference from
-the superseded denied acceptance to D56's p50/p95 passage profile, then reconcile G2p, the
-scalar revoke backstop, and G2e/U-P1-O1 in one denied-authority review. `SAFETY_CASE.md` is
-intentionally not edited by U-AC1.
+This makes D56 and D45 self-consistent, but real-signal validation of the PL mapping,
+age-inflation behavior, 30 h ceiling, and alert lead time remains required. Every value remains
+`[UNVERIFIED]`, PROPOSED-NOT-FROZEN, and fail closed until validated and frozen.
 
 ---
 
@@ -640,12 +644,12 @@ organisational nesting is removed).
 # --- Scalar fields (top-level; exact AuthorityParams field names) ----------
 t_lease_s        = 1.0       # §2.1  < GPS_TIMEOUT_MS (4 s)              [UNVERIFIED]
 t_dr_s           = 120.0     # §2.2  DR-authority backstop; weak evidence [UNVERIFIED]
-t_eph_s          = 21600.0   # §2.3  6 h SupGP age gate (baseline)       [UNVERIFIED]
+t_eph_s          = 108000.0  # §2.3  30 h G2e freshness backstop         [UNVERIFIED]
 dwell_clear_s    = 5.0       # §3.3  CAUTION->NOMINAL sustain dwell       [UNVERIFIED]
 dwell_rearm_s    = 10.0      # §3.4  L->N re-arm dwell                    [UNVERIFIED]
 caution_enter    = 75.0      # §3.2  metres (horizontal_accuracy_m)       [UNVERIFIED]
 caution_clear    = 60.0      # §3.2  metres; clear < enter < revoke       [UNVERIFIED]
-revoke_threshold = 100.0     # §3.1  retained; overrides denied PL        [UNVERIFIED]
+revoke_threshold = 250.0     # §3.1  D59; matches denied PL               [UNVERIFIED]
 t_ack_s          = 10.0      # §3.5  WARNING->ESCALATED ack timeout        [UNVERIFIED]
 
 # --- Protection limits: AIDED profile (gnss_authority = production) ---------
@@ -675,7 +679,7 @@ proposed structure pending the CONTRACTS v6 addition:
 imu          = 0.10       # §2.4  ~10x the 100 Hz nominal period   [UNVERIFIED]
 magnetometer = 0.50       # §2.4  ~5x the 10 Hz nominal, per unit  [UNVERIFIED]
 speed_log    = 1.00       # §2.4  ~5x the 5 Hz nominal period      [UNVERIFIED]
-# ephemeris freshness is governed by t_eph (21600 s); no separate field (§2.4)
+# ephemeris freshness is governed by t_eph (108000 s); 6 h is inflation-only (§2.4)
 ```
 
 ```toml

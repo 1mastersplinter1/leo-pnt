@@ -109,6 +109,7 @@ pub struct FilterStub {
     nuisance_slots: HashMap<String, usize>,
     receiver_clocks: HashMap<ReceiverClockId, ReceiverClockSlot>,
     robust_gate: bool,
+    vector_stw: bool,
 }
 
 impl Default for FilterStub {
@@ -137,7 +138,20 @@ impl FilterStub {
             nuisance_slots: HashMap::new(),
             receiver_clocks: HashMap::new(),
             robust_gate: false,
+            vector_stw: false,
         }
+    }
+
+    /// Enables the vector water-velocity STW model (U2): speed-through-water is assimilated as
+    /// a 2-component ENU constraint `v_ground − current ≈ STW · û_heading`, making the ENU
+    /// current observable. Default off, which keeps the legacy scalar ground-speed STW model,
+    /// so existing behaviour and synthetic headline numbers are unchanged unless enabled. The
+    /// vector model requires a trustworthy heading and a synthetic/real STW that is genuinely
+    /// water-relative; its maritime tuning is validated by U2's dedicated study.
+    #[must_use]
+    pub const fn with_vector_stw(mut self) -> Self {
+        self.vector_stw = true;
+        self
     }
 
     /// Enables the robust (Huber) measurement cost (U4a): an innovation beyond the chi-square
@@ -279,14 +293,44 @@ impl FilterStub {
         self.scalar_update_with_innovation(innovation, &h, variance, gate)
     }
 
+    /// Assimilates a speed-through-water reading against the **vector** water-velocity model
+    /// `v_water ≈ STW · û_heading`, i.e. `v_ground_enu − current_enu ≈ STW · (sinψ, cosψ)`
+    /// (U2). This is a 2-component (E,N) constraint — unlike the scalar speed magnitude, which
+    /// is rank-deficient for a 2-vector current — so it makes the ENU current observable from
+    /// the STW-vs-Doppler-ground-velocity discrepancy. Applied as two sequential scalar updates.
+    ///
+    /// The cross-component (sideslip) part is a *model* pseudo-measurement, not a sensor value,
+    /// so the two components share the caller's `variance` only under the zero-sideslip
+    /// assumption; a caller expecting sideslip should widen `variance` accordingly.
     pub fn update_speed_through_water(
         &mut self,
         speed: SpeedThroughWater,
         variance: f64,
         gate: Option<f64>,
     ) -> UpdateResult {
-        let (predicted, h) = speed_model(&self.x);
-        self.scalar_update(speed.metres_per_second, predicted, &h, variance, gate)
+        if !self.vector_stw {
+            // Legacy scalar ground-speed model (current unobserved).
+            let (predicted, h) = speed_model(&self.x);
+            return self.scalar_update(speed.metres_per_second, predicted, &h, variance, gate);
+        }
+        let heading = self.x[HEADING];
+        // Heading is measured from North, clockwise, so the unit heading vector in ENU is
+        // (E, N) = (sin ψ, cos ψ). Expected water velocity components under zero sideslip.
+        let expected = [
+            speed.metres_per_second * heading.sin(),
+            speed.metres_per_second * heading.cos(),
+        ];
+        let mut last = UpdateResult {
+            innovation: 0.0,
+            innovation_variance: variance,
+            normalized_innovation_squared: 0.0,
+            accepted: true,
+        };
+        for (component, &expected_component) in expected.iter().enumerate() {
+            let (predicted, h) = water_velocity_component_model(&self.x, component);
+            last = self.scalar_update(expected_component, predicted, &h, variance, gate);
+        }
+        last
     }
 
     pub fn update_msl_altitude(&mut self, update: MslAltitudeUpdate) -> UpdateResult {
@@ -568,6 +612,8 @@ impl Estimator for FilterStub {
     }
 }
 
+/// Legacy scalar STW model: horizontal ground-speed magnitude and its Jacobian (current
+/// unobserved). Used unless the vector water-velocity model (U2) is enabled.
 fn speed_model(x: &DVector<f64>) -> (f64, DVector<f64>) {
     let model = |state: &DVector<f64>| {
         let enu = ecef_vector_to_enu(
@@ -591,6 +637,40 @@ fn speed_model(x: &DVector<f64>) -> (f64, DVector<f64>) {
     (speed, h)
 }
 
+/// The ENU `component` (0 = East, 1 = North) of the horizontal water velocity
+/// `v_ground_enu − current_enu`, and its numeric Jacobian. Used by the vector STW update to
+/// make the ENU current observable. Sensitive to POS (via the ENU rotation), VEL, and the
+/// two current states; zero elsewhere.
+fn water_velocity_component_model(x: &DVector<f64>, component: usize) -> (f64, DVector<f64>) {
+    let model = |state: &DVector<f64>| {
+        let ground_enu = ecef_vector_to_enu(
+            [state[POS], state[POS + 1], state[POS + 2]],
+            [state[VEL], state[VEL + 1], state[VEL + 2]],
+        );
+        let state_current = [state[CURRENT_E], state[CURRENT_N]];
+        ground_enu[component] - state_current[component]
+    };
+    let predicted = model(x);
+    let mut h = DVector::zeros(x.len());
+    // Position (ENU rotation), velocity, and the relevant current component carry sensitivity.
+    let indices = [POS, POS + 1, POS + 2, VEL, VEL + 1, VEL + 2]
+        .into_iter()
+        .chain(std::iter::once(if component == 0 {
+            CURRENT_E
+        } else {
+            CURRENT_N
+        }));
+    for index in indices {
+        let step = 1.0e-6 * x[index].abs().max(1.0);
+        let mut plus = x.clone();
+        plus[index] += step;
+        let mut minus = x.clone();
+        minus[index] -= step;
+        h[index] = (model(&plus) - model(&minus)) / (2.0 * step);
+    }
+    (predicted, h)
+}
+
 fn wrap_angle(angle: f64) -> f64 {
     (angle + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI
 }
@@ -605,6 +685,112 @@ mod tests {
 
     const FD_STEP: f64 = 1.0e-6;
     const JACOBIAN_TOLERANCE: f64 = 2.0e-6;
+
+    // A ground-truth-ish fixture near 56N 12E with a known ground velocity, used by the
+    // current-observability tests.
+    fn current_fixture() -> (FilterStub, [f64; 3]) {
+        // ECEF position ~ (56N, 12E). Any consistent point works; the model is frame-correct.
+        let lat = 56.0_f64.to_radians();
+        let lon = 12.0_f64.to_radians();
+        let r = 6.371e6;
+        let pos = [
+            r * lat.cos() * lon.cos(),
+            r * lat.cos() * lon.sin(),
+            r * lat.sin(),
+        ];
+        let mut filter = FilterStub::default();
+        for (slot, &value) in filter.x.rows_mut(POS, 3).iter_mut().zip(pos.iter()) {
+            *slot = value;
+        }
+        (filter, pos)
+    }
+
+    // Sets the state's ECEF ground velocity from a desired ENU (E, N, U=0) velocity.
+    fn set_ground_velocity_enu(filter: &mut FilterStub, pos: [f64; 3], enu: [f64; 3]) {
+        let rotation = pnt_types::ecef_to_enu_rotation(pos);
+        // ECEF = R^T * ENU (rotation rows are the ENU basis in ECEF).
+        for (axis, slot) in filter.x.rows_mut(VEL, 3).iter_mut().enumerate() {
+            *slot = rotation[0][axis] * enu[0]
+                + rotation[1][axis] * enu[1]
+                + rotation[2][axis] * enu[2];
+        }
+    }
+
+    #[test]
+    fn vector_water_velocity_model_is_sensitive_to_current() {
+        // The vector model (unlike a scalar speed magnitude, which is rank-deficient for a
+        // 2-vector current) has non-zero Jacobian on the current states: the East component is
+        // sensitive to CURRENT_E, the North component to CURRENT_N. This is what makes current
+        // observable.
+        let (mut filter, pos) = current_fixture();
+        set_ground_velocity_enu(&mut filter, pos, [3.0, 0.0, 0.0]);
+        let (_, h_east) = water_velocity_component_model(&filter.x, 0);
+        let (_, h_north) = water_velocity_component_model(&filter.x, 1);
+        assert!(
+            (h_east[CURRENT_E] + 1.0).abs() < 1.0e-6,
+            "East water-velocity component must depend on CURRENT_E (d/dc_E = -1)"
+        );
+        assert!(
+            (h_north[CURRENT_N] + 1.0).abs() < 1.0e-6,
+            "North water-velocity component must depend on CURRENT_N (d/dc_N = -1)"
+        );
+    }
+
+    #[test]
+    fn vector_stw_makes_current_observable() {
+        // With a known heading and STW, the vector water-velocity model resolves a unique
+        // ENU current from the STW-vs-ground-velocity discrepancy.
+        let (filter, pos) = current_fixture();
+        let mut filter = filter.with_vector_stw();
+        // Truth: ground velocity 3 m/s East; current 1 m/s East; so water velocity = 2 m/s East,
+        // heading = 90 deg (due East), STW = 2 m/s.
+        set_ground_velocity_enu(&mut filter, pos, [3.0, 0.0, 0.0]);
+        filter.x[HEADING] = 90.0_f64.to_radians();
+        // Give the current state room to move.
+        filter.covariance[(CURRENT_E, CURRENT_E)] = 4.0;
+        filter.covariance[(CURRENT_N, CURRENT_N)] = 4.0;
+        // Feed several STW observations of 2 m/s (steady leg).
+        for _ in 0..40 {
+            let _ = filter.update_speed_through_water(
+                SpeedThroughWater {
+                    metres_per_second: 2.0,
+                },
+                0.01,
+                None,
+            );
+        }
+        // Current East should converge toward +1 m/s; North stays near 0.
+        assert!(
+            (filter.x[CURRENT_E] - 1.0).abs() < 0.3,
+            "current East {} should converge to ~1.0",
+            filter.x[CURRENT_E]
+        );
+        assert!(
+            filter.x[CURRENT_N].abs() < 0.3,
+            "current North {} should stay near 0",
+            filter.x[CURRENT_N]
+        );
+    }
+
+    #[test]
+    fn current_does_not_leak_into_velocity_without_stw() {
+        // With no STW observation, current must not random-walk into the velocity estimate.
+        let (mut filter, pos) = current_fixture();
+        set_ground_velocity_enu(&mut filter, pos, [3.0, 0.0, 0.0]);
+        let v_before = [filter.x[VEL], filter.x[VEL + 1], filter.x[VEL + 2]];
+        for _ in 0..100 {
+            filter.propagate(ImuSample {
+                acceleration_mps2: [0.0; 3],
+                angular_rate_rps: [0.0; 3],
+            });
+        }
+        for (axis, before) in v_before.iter().enumerate() {
+            assert!(
+                (filter.x[VEL + axis] - before).abs() < 1.0e-6,
+                "velocity leaked without STW"
+            );
+        }
+    }
 
     #[test]
     fn current_lives_in_the_fixed_core_at_stable_indices() {
@@ -750,10 +936,19 @@ mod tests {
         let x = DVector::from_vec(vec![
             10.0, 20.0, 30.0, 3.0, 4.0, 0.0, 0.4, 2.0, 0.1, 0.0, 0.0,
         ]);
-        let (_, speed_h) = speed_model(&x);
-        let numeric_speed =
-            central_difference(|value| DVector::from_element(1, speed_model(value).0), &x);
-        assert!((numeric_speed.row(0).transpose() - speed_h).amax() < JACOBIAN_TOLERANCE);
+        for component in 0..2 {
+            let (_, water_h) = water_velocity_component_model(&x, component);
+            let numeric_water = central_difference(
+                |value| {
+                    DVector::from_element(1, water_velocity_component_model(value, component).0)
+                },
+                &x,
+            );
+            assert!(
+                (numeric_water.row(0).transpose() - water_h).amax() < JACOBIAN_TOLERANCE,
+                "water-velocity component {component} Jacobian mismatch"
+            );
+        }
 
         for index in 0..CORE_DIM {
             let numeric = central_difference(|value| DVector::from_element(1, value[index]), &x);

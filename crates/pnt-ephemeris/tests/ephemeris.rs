@@ -46,6 +46,10 @@ fn aged_path_returns_age_and_uses_its_explicit_ceiling() {
         ),
         Err(EphemerisError::TooOld { .. })
     ));
+    let future = store
+        .propagate_ecef_with_age(25544, epoch - Duration::nanoseconds(1), Duration::hours(30))
+        .unwrap();
+    assert_eq!(future.future_lead_s, Some(1.0e-9));
 }
 
 #[test]

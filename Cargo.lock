@@ -435,11 +435,16 @@ name = "pnt-studies"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "fusion-executive",
  "nalgebra",
  "num-complex",
+ "pnt-config",
  "pnt-ephemeris",
  "pnt-estimator",
+ "pnt-integrity",
+ "pnt-journal",
  "pnt-predictor",
+ "pnt-time",
  "pnt-tracker",
  "pnt-types",
  "rayon",

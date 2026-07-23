@@ -49,6 +49,7 @@ fn recorded_only_sends_gnss_to_truth_but_not_fusion() {
         Config {
             gnss_authority: GnssAuthority::RecordedOnly,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         ManualClock::default(),
         FilterStub::default(),
@@ -224,6 +225,7 @@ fn oneweb_is_gated_by_config() {
         Config {
             gnss_authority: GnssAuthority::Off,
             oneweb_enabled: true,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         ManualClock::default(),
         FilterStub::default(),
@@ -269,6 +271,7 @@ fn arm_command_reaches_authority_and_never_filter_update() {
         Config {
             gnss_authority: GnssAuthority::Off,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         ManualClock::default(),
         FilterStub::default(),
@@ -294,6 +297,7 @@ fn acknowledge_reaches_authority_and_never_filter_update() {
         Config {
             gnss_authority: GnssAuthority::Off,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         ManualClock::default(),
         FilterStub::default(),
@@ -354,6 +358,7 @@ fn imu_dr_fill_renews_lease_until_absolute_observation_exceeds_t_dr() {
         Config {
             gnss_authority: GnssAuthority::Production,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         clock,
         FilterStub::default(),
@@ -398,6 +403,7 @@ fn fixture_doppler_updates_filter_and_emits_bridge_schema_ndjson() {
         Config {
             gnss_authority: GnssAuthority::Production,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         ManualClock::default(),
         FilterStub::default(),
@@ -501,13 +507,13 @@ fn inflated_ephemeris_is_accepted_and_journalled_as_a_note() {
         Config {
             gnss_authority: GnssAuthority::Production,
             oneweb_enabled: false,
+            ephemeris_aging: aging,
         },
         ManualClock::default(),
         FilterStub::default(),
         IntegrityStub,
         MemoryJournals::default(),
     )
-    .with_ephemeris_aging(aging)
     .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
     let receiver = [3_518_304.71, 784_390.70, 5_244_191.85];
     executive.process(envelope(
@@ -572,6 +578,7 @@ fn stale_ephemeris_rejection_is_journalled() {
         Config {
             gnss_authority: GnssAuthority::Off,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         ManualClock::default(),
         FilterStub::default(),
@@ -597,6 +604,35 @@ fn stale_ephemeris_rejection_is_journalled() {
         .reason
         .contains("too old"));
     assert_eq!(executive.filter().measurement_updates(), 0);
+}
+
+#[test]
+fn future_dated_ephemeris_is_journalled_as_a_note() {
+    let store =
+        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
+            .unwrap();
+    let future_lead_time = store.epoch(25544).unwrap() - chrono::Duration::seconds(1);
+    let mut executive = Executive::test_stub(GnssAuthority::Off)
+        .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
+    let mut observation = envelope(
+        1,
+        MeasurementPayload::TrackerDoppler(TrackerDoppler {
+            constellation: Constellation::Starlink,
+            correlation_peak_hz: 0.0,
+            nominal_carrier_hz: 1.6e9,
+        }),
+    );
+    observation.source_id = SourceId("25544".into());
+    observation.utc = Some(UtcTime {
+        rfc3339: future_lead_time.to_rfc3339(),
+        uncertainty_ns: 1,
+    });
+    executive.process(observation);
+    assert!(executive.journals().integrity_events().iter().any(|event| {
+        event
+            .reason
+            .contains("NOTE future-dated ephemeris leads observation")
+    }));
 }
 
 fn tracker_envelope(store: &pnt_ephemeris::EphemerisStore, peak_hz: f64) -> MeasurementEnvelope {
@@ -704,6 +740,7 @@ fn non_finite_epoch_is_not_emitted_and_is_journalled() {
         Config {
             gnss_authority: GnssAuthority::Off,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         ManualClock::default(),
         PoisonedEstimator,

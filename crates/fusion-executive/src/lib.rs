@@ -32,11 +32,11 @@ pub enum EphemerisAgeBand {
 /// already represented at the fresh boundary is removed in quadrature.
 #[must_use]
 pub fn ephemeris_age_band(age_s: f64, config: EphemerisAgingConfig) -> EphemerisAgeBand {
+    if !age_s.is_finite() || age_s < 0.0 || age_s > config.ceiling_age_s {
+        return EphemerisAgeBand::Rejected;
+    }
     if age_s <= config.fresh_age_s {
         return EphemerisAgeBand::Fresh;
-    }
-    if age_s > config.ceiling_age_s {
-        return EphemerisAgeBand::Rejected;
     }
     let orbit_sigma_m = |seconds: f64| {
         1000.0
@@ -127,7 +127,7 @@ where
             doppler: None,
             solution_sequence: 0,
             last_absolute_observation_ns: None,
-            ephemeris_aging: EphemerisAgingConfig::default(),
+            ephemeris_aging: config.ephemeris_aging,
         }
     }
 
@@ -249,6 +249,15 @@ where
                 .store
                 .propagate_ecef_with_age(norad_id, query, ceiling)
                 .map_err(|error| error.to_string())?;
+            if let Some(lead_s) = propagated.future_lead_s {
+                self.journals.write_integrity(IntegrityEvent {
+                    monotonic_ns: envelope.host_receive_monotonic_ns,
+                    source_id: envelope.source_id.0.clone(),
+                    reason: format!(
+                        "NOTE future-dated ephemeris leads observation by {lead_s:.9}s"
+                    ),
+                });
+            }
             let age_s = propagated.age.seconds();
             let sigma_add_mps = match ephemeris_age_band(age_s, self.ephemeris_aging) {
                 EphemerisAgeBand::Fresh => 0.0,
@@ -432,6 +441,7 @@ impl Executive<ManualClock, FilterStub, IntegrityStub, MemoryJournals> {
             Config {
                 gnss_authority,
                 oneweb_enabled: false,
+                ephemeris_aging: EphemerisAgingConfig::default(),
             },
             ManualClock::default(),
             FilterStub::default(),
@@ -450,6 +460,7 @@ impl Executive<ManualClock, FilterStub, AuthoritySupervisor, MemoryJournals> {
             Config {
                 gnss_authority,
                 oneweb_enabled: false,
+                ephemeris_aging: EphemerisAgingConfig::default(),
             },
             ManualClock::default(),
             FilterStub::default(),
@@ -508,6 +519,27 @@ mod aging_tests {
         ));
         assert_eq!(
             ephemeris_age_band(config.ceiling_age_s + 1e-9, config),
+            EphemerisAgeBand::Rejected
+        );
+    }
+
+    #[test]
+    fn invalid_ordering_and_invalid_ages_fail_closed() {
+        let invalid = EphemerisAgingConfig {
+            fresh_age_s: 31.0,
+            ceiling_age_s: 30.0,
+            ..EphemerisAgingConfig::default()
+        };
+        assert_eq!(
+            ephemeris_age_band(30.5, invalid),
+            EphemerisAgeBand::Rejected
+        );
+        assert_eq!(
+            ephemeris_age_band(f64::NAN, EphemerisAgingConfig::default()),
+            EphemerisAgeBand::Rejected
+        );
+        assert_eq!(
+            ephemeris_age_band(-1.0, EphemerisAgingConfig::default()),
             EphemerisAgeBand::Rejected
         );
     }

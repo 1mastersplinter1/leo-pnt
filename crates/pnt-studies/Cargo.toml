@@ -6,11 +6,16 @@ license.workspace = true
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+fusion-executive = { path = "../fusion-executive" }
 nalgebra = "0.33"
 num-complex = "0.4.6"
+pnt-config = { path = "../pnt-config" }
 pnt-ephemeris = { path = "../pnt-ephemeris" }
 pnt-estimator = { path = "../pnt-estimator" }
+pnt-integrity = { path = "../pnt-integrity" }
+pnt-journal = { path = "../pnt-journal" }
 pnt-predictor = { path = "../pnt-predictor" }
+pnt-time = { path = "../pnt-time" }
 pnt-tracker = { path = "../pnt-tracker" }
 pnt-types = { path = "../pnt-types" }
 rayon = "1.10"

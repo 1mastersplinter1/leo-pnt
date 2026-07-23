@@ -35,6 +35,7 @@ impl EphemerisAge {
 pub struct AgedEcefState {
     pub state: EcefState,
     pub age: EphemerisAge,
+    pub future_lead_s: Option<f64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -222,10 +223,15 @@ impl EphemerisStore {
             .entries
             .get(&norad_id)
             .ok_or(EphemerisError::Missing(norad_id))?;
-        let age = query
+        let signed_age = query
             .naive_utc()
-            .signed_duration_since(entry.elements.datetime)
-            .abs();
+            .signed_duration_since(entry.elements.datetime);
+        let future_lead_s = (signed_age < Duration::zero()).then(|| {
+            (-signed_age)
+                .to_std()
+                .map_or(f64::INFINITY, |value| value.as_secs_f64())
+        });
+        let age = signed_age.abs();
         check_age_limit(norad_id, age, ceiling)?;
         let minutes = entry
             .elements
@@ -238,6 +244,7 @@ impl EphemerisStore {
         Ok(AgedEcefState {
             state: teme_to_ecef_at_gmst(prediction.position, prediction.velocity, gmst_rad(query)),
             age: EphemerisAge(age),
+            future_lead_s,
         })
     }
 

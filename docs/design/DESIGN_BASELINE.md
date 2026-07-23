@@ -213,3 +213,16 @@ This graduated interval explicitly serves D45: a 6 kn vessel covers approximatel
 9 h, so ephemeris cached before departure remains usable for the entire denied passage with
 21 h of ceiling margin. Synthetic aging is availability evidence only; D43 applies because
 epoch shifting aliases orbital phase and cannot validate real ephemeris error growth.
+
+The executive now emits the propagated ephemeris age into each Doppler-derived authority
+solution instead of the former constant zero. This is a deliberate fail-closed semantic
+change, not an authority-neutral weighting change: G2e compares that true age with
+`t_eph_s`. Under the still-provisional `t_eph_s = 6 h` in `PARAMS_PROPOSAL.md`, steering
+authority is therefore revoked after six hours even while graduated Doppler observations
+remain eligible through 30 h. That conflict defeats D45 unless the authority parameter is
+reconciled.
+
+**Open ruling U-P1-O1 (PARAMS/SAFETY_CASE owners):** decide whether `t_eph_s` moves to the
+graduated hard ceiling (recommended, with measurement inflation carrying accuracy honesty)
+or G2e gains a separately justified authority-age bound. Update the parameter register and
+G2e claim together after ruling; this amendment does not alter `SAFETY_CASE.md`.

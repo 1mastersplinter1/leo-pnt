@@ -194,6 +194,7 @@ fn replay_loaded(
         Config {
             gnss_authority: mode,
             oneweb_enabled: false,
+            ephemeris_aging: pnt_config::EphemerisAgingConfig::default(),
         },
         clock,
         filter,

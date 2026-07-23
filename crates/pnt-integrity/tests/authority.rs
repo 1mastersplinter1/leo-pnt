@@ -128,6 +128,14 @@ fn exhaustive_safety_case_section_2_2_matrix() {
         S::Warning,
         "fault must dominate an Arm even though its origin-state cell is a self-loop"
     );
+    assert_eq!(
+        simultaneous_successor(S::Warning, &[E::Disarm], true),
+        S::Warning
+    );
+    assert_eq!(
+        simultaneous_successor(S::Escalated, &[E::Disarm], true),
+        S::Escalated
+    );
     for state in states {
         let (authorised, alarm) = state.output();
         assert_eq!(authorised, matches!(state, S::Nominal | S::Caution));
@@ -354,6 +362,71 @@ fn live_supervisor_fault_beats_disarm_in_both_same_tick_orders() {
     assert_eq!(disarm_then_fault.output(), fault_then_disarm.output());
     assert_eq!(disarm_then_fault.state(), S::Warning);
     assert_eq!(disarm_then_fault.output().alarm, AlarmLevel::LoudDemandAck);
+}
+
+#[test]
+fn disarm_clears_arm_latch_without_clearing_warning_or_escalated() {
+    let good = state_with_accuracy(0.5);
+    let bad = state_with_accuracy(9.0);
+    for escalate in [false, true] {
+        let mut s = nominal_supervisor(&good);
+        solution(&mut s, 2, 1, &bad);
+        if escalate {
+            assert!(!s.steering_authorised(&bad, 1_000_000_001));
+            assert_eq!(s.state(), S::Escalated);
+        } else {
+            assert_eq!(s.state(), S::Warning);
+        }
+
+        s.arm_command(&ArmCommand {
+            action: ArmAction::Disarm,
+            host_monotonic_ns: 1_000_000_002,
+            source_id: SourceId("helm".into()),
+        });
+
+        assert_eq!(s.state(), if escalate { S::Escalated } else { S::Warning });
+        assert_eq!(
+            s.output().alarm,
+            if escalate {
+                AlarmLevel::MaximumContinuous
+            } else {
+                AlarmLevel::LoudDemandAck
+            }
+        );
+        assert!(!s.output().steering_authorised);
+        assert!(s.consistency_invariant(), "Disarm must record G1 false");
+    }
+}
+
+#[test]
+fn warning_disarm_and_quick_rearm_cannot_bypass_ack_and_rearm_dwell() {
+    let good = state_with_accuracy(0.5);
+    let bad = state_with_accuracy(9.0);
+    let mut s = nominal_supervisor(&good);
+    solution(&mut s, 2, 1, &bad);
+    assert_eq!(s.state(), S::Warning);
+
+    s.arm_command(&ArmCommand {
+        action: ArmAction::Disarm,
+        host_monotonic_ns: 2,
+        source_id: SourceId("helm".into()),
+    });
+    arm(&mut s, 103);
+    solution(&mut s, 3, 103, &good);
+    assert_eq!(s.state(), S::Warning);
+    assert!(!s.output().steering_authorised);
+
+    s.acknowledge(104);
+    assert_eq!(s.state(), S::LatchedSafe);
+    arm(&mut s, 1_000_000_103);
+    solution(&mut s, 4, 1_000_000_103, &good);
+    assert_eq!(s.state(), S::LatchedSafe, "rearm dwell is not yet complete");
+    assert!(!s.output().steering_authorised);
+
+    arm(&mut s, 1_000_000_104);
+    solution(&mut s, 5, 1_000_000_104, &good);
+    assert_eq!(s.state(), S::Nominal);
+    assert!(s.output().steering_authorised);
 }
 
 #[test]

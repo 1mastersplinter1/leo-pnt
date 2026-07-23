@@ -1,4 +1,4 @@
-# U-A1 report — authority supervisor fix rounds U-A1.1 and U-A1.2
+# U-A1 report — authority supervisor fix rounds U-A1.1–U-A1.3
 
 Contracts authored: v5 and v5.1. Branch: `unit/U-A1`.
 
@@ -11,8 +11,13 @@ calibration-validator construction. The red-first checkpoint is commit `9c5de70`
 
 U-A1.2 fixes the shared round-2 same-tick root cause. `apply` now reprojects the arm latch,
 pending edge, and lease from every newly resolved tick outcome; faults retain their higher
-priority and Disarm is unconditional even when its tick-start matrix cell is a self-loop.
+priority, and Disarm still wins when a same-tick Arm enters authority from a self-loop cell.
 An Arm plus an already-caution-band solution resolves directly to `Caution`/`PreAlert`.
+
+U-A1.3 scopes Disarm dominance per D32: it resolves to `Disarmed` only from `Nominal` or
+`Caution`, or when a same-tick guarded Arm enters authority. In settled `Warning`,
+`Escalated`, and `LatchedSafe`, Disarm records the arm latch false while preserving the
+§2.2 self-loop and ACK/re-arm barrier.
 
 The live supervisor now merges events sharing a monotonic tick and calls
 `simultaneous_successor` over the tick's origin state and accumulated events. This wires the
@@ -64,6 +69,11 @@ only when absolute-observation age exceeds `t_dr`.
     `Nominal`/`Caution` to own both the arm latch and lease, and all non-authority states to
     own neither. The deterministic randomized test asserts it after every tick; this also
     caught and fixed lease renewal while already in Warning.
+12. **Opus round-3 N-A / D32 — fixed in U-A1.3.** Both the merge successor and decisive-event
+    selection now scope Disarm to `Nominal`/`Caution` or a same-tick authority-entering Arm.
+    Regressions pin the direct Warning/Escalated merge cells, preserve their live alarm state
+    while clearing G1, and prove Disarm plus a rearm 101 ns later cannot bypass ACK and the
+    full `dwell_rearm`. The existing same-tick rearm+solution+Disarm regression remains green.
 
 Opus F5 remains an integration note for U-M1, not a U-A1 defect: U-A1's default-deny
 supervisor is retained and its executable wiring test remains green.
@@ -104,7 +114,7 @@ Run in `/home/od/work/leo-pnt-wt-UA1` on 2026-07-23 with the mandated command:
 
 ```text
 PATH="$HOME/.cargo/bin:$PATH" cargo test
-PASS: 60 tests (18 executive, 6 ephemeris, 13 estimator, 10 authority,
+PASS: 65 tests (18 executive, 6 ephemeris, 13 estimator, 15 authority,
 5 journal, 4 predictor, 4 types) plus all doc tests
 
 cargo clippy --all-targets -- -D warnings

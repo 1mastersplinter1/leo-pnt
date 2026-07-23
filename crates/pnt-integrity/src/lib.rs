@@ -195,9 +195,12 @@ pub fn simultaneous_successor(
             state
         };
     }
-    // Disarm is an unconditional tick outcome. In particular, it must not disappear merely
-    // because its matrix cell was a self-loop in the tick-start state before an Arm event.
-    if events.contains(&Disarm) {
+    // Disarm dominates from authority states and a same-tick Arm that enters authority.
+    // Its Warning/Escalated/LatchedSafe matrix cells remain self-loops.
+    if events.contains(&Disarm)
+        && (matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
+            || arm_enters_authority)
+    {
         return AuthorityState::Disarmed;
     }
     for event in PRIORITY {
@@ -420,7 +423,16 @@ impl AuthoritySupervisor {
                 return Some(fault);
             }
         }
-        if events.contains(&E::Disarm) {
+        let arm_enters_authority = arm_guard
+            && events.contains(&E::Arm)
+            && matches!(
+                state,
+                AuthorityState::Disarmed | AuthorityState::LatchedSafe
+            );
+        if events.contains(&E::Disarm)
+            && (matches!(state, AuthorityState::Nominal | AuthorityState::Caution)
+                || arm_enters_authority)
+        {
             return Some(E::Disarm);
         }
         PRIORITY.into_iter().find(|event| {

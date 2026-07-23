@@ -1,13 +1,89 @@
-# leo-pnt
+# leo-pnt — GPS-denied maritime navigation from LEO satellite signals
 
-GPS-denied maritime positioning, navigation and timing (PNT) from LEO satellite signals of
-opportunity (Starlink, OneWeb, Iridium, Orbcomm), received on a Nuand bladeRF 2.0 micro and
-fused with inertial, speed-log and heading sensors into a solution suitable for feeding an
-ArduPilot Rover autopilot. This is a **research build**: it is designed to answer whether
-LEO Doppler can navigate a boat without GNSS, and how well, while also being engineered
-toward eventual operational use. See `docs/HANDOFF_PROMPT_BLADERF.md` for the full original
-brief (mission, fixed constraints, and the ten specific failure modes this repo is built to
-avoid).
+**Can a boat navigate without GPS by listening to satellites that were never meant to help it?**
+
+This repository is a research navigator that answers that question in engineering terms. It
+measures Doppler shift on the downlinks of LEO constellations — Starlink, OneWeb, Iridium,
+Orbcomm — none of which are navigation systems, and fuses those measurements with a ship's
+own inertial, speed-log and heading sensors into a position/velocity/heading solution good
+enough to feed an ArduPilot autopilot. No GNSS receiver contributes to the navigation
+solution; a free-running rubidium/OCXO frequency reference replaces GPS-disciplined timing
+entirely, and the receiver clock is estimated as part of the navigation filter.
+
+Built in Rust (12-crate workspace) + Python (MAVLink/SITL tooling), against a Nuand bladeRF
+2.0 micro SDR front end, for a manned displacement-hull test vessel.
+
+> **Safety notice — read first.** This is research software. It is not a navigation product,
+> it has never steered a real vessel, and its own safety case forbids it from doing so:
+> the steering-authority supervisor is fail-closed and every authority parameter is
+> deliberately unfrozen, so the software cannot grant itself steering authority in its
+> current state. Nothing here is validated against real RF signals yet. Do not navigate
+> with this.
+
+## The idea in one diagram
+
+```mermaid
+flowchart LR
+    subgraph RF["RF front end (hardware: not yet integrated)"]
+        A1["Ku LNB<br/>Starlink / OneWeb"] --> SDR["bladeRF 2.0 micro<br/>2ch coherent RX<br/>free-running Rb/OCXO ref"]
+        A2["L-band antenna<br/>Iridium"] --> SDR
+        A3["137 MHz RX<br/>Orbcomm (independent)"]
+    end
+    SDR --> TRK["pnt-tracker<br/>correlation-peak Doppler"]
+    A3 --> TRK
+    EPH["pnt-ephemeris<br/>SupGP/TLE + SGP4<br/>6 h age gate"] --> PRED["pnt-predictor<br/>predicted Doppler + Jacobian"]
+    TRK --> EXEC
+    PRED --> EXEC
+    subgraph EXEC["fusion-executive (sole orchestrator)"]
+        GATE["chi-square<br/>innovation gate"] --> EKF["pnt-estimator<br/>error-state EKF<br/>pos / vel / heading / clock"]
+        EKF --> SUP["pnt-integrity<br/>authority supervisor<br/>fail-closed"]
+    end
+    IMU["IMU / heading /<br/>speed log / (GNSS: truth only)"] --> EXEC
+    EXEC --> J["pnt-journal<br/>crash-safe on-disk record"]
+    J --> REP["pnt-replay<br/>same log twice:<br/>aided vs GNSS-withheld"]
+    SUP --> BR["tools/mavlink_bridge<br/>GPS_INPUT @ 5 Hz"]
+    BR --> AP["ArduPilot Rover<br/>(SITL-verified)"]
+```
+
+## Why this is hard (and interesting)
+
+- **LEO Doppler is a velocity instrument, not a position instrument.** Receiver velocity
+  shows up in the Doppler measurement immediately; position is only recoverable from how
+  the Doppler curve evolves over 10–20 minutes of constant-heading sailing. The whole
+  system design — estimator states, test campaign, even the autopilot interface — follows
+  from that asymmetry.
+- **No GPS time, anywhere.** A GPS-disciplined oscillator would defeat the premise, so the
+  frequency reference free-runs and the filter carries receiver clock bias and drift as
+  estimated states, plus per-satellite transmit-frequency nuisance states.
+- **The research question must not contaminate itself.** A single `gnss_authority` switch
+  (`production | recorded_only | off`) routes GNSS to fusion, to a physically separate
+  truth journal only, or nowhere — same executable code path in every mode. Headline
+  statistics are only ever computed offline from GNSS-withheld runs, scored against the
+  truth journal, never against another estimate.
+- **It steers a manned boat (eventually).** So authority to steer is a continuously
+  re-earned lease: a G1–G4 conjunction (human arm, solution integrity within protection
+  limits, calibration validity, watchdog liveness) evaluated in a fail-closed supervisor
+  whose output type cannot even represent an autonomous manoeuvre command.
+
+## Headline synthetic result (demonstration, not performance)
+
+From the deterministic end-to-end rehearsal (`mission-study`, seed 1, 180 s, synthetic IQ
+through the real tracker → journals → EKF → replay; `.orchestration/DECISIONS.md` D39):
+
+| denied-mode run (same journal) | horiz. position RMS | horiz. speed RMS |
+|---|---:|---:|
+| dead-reckoning only | 153.1 m | 1.31 m/s |
+| + disclosed receiver prior (Doppler suppressed) | 116.1 m | 0.28 m/s |
+| + prior + LEO Doppler assimilation | **91.8 m** | 2.19 m/s |
+| GNSS-aided reference | 0.83 m | 0.35 m/s |
+
+Two honesty notes baked into the pipeline itself: the receiver prior is disclosed and its
+contribution separately attributed (an earlier version of this table conflated it with the
+Doppler contribution — adversarial review caught it, and the four-way attribution is now a
+tested output); and Doppler assimilation currently *degrades* the velocity solution against
+the same-initialization baseline — a known open item under investigation, stated in the
+output rather than hidden by baseline choice. All numbers are synthetic-configuration
+demonstrations of the wiring, not accuracy claims about real signals.
 
 ## Document hierarchy
 
@@ -177,3 +253,30 @@ What remains before a sea trial, per D27 and D39:
 and status, `DECISIONS.md` for load-bearing rulings (one line each, append-only), and
 `briefs/` / `reports/` for the per-unit work and its dual review. Consult it before treating
 any open item above as unexamined — most have a specific decision number.
+
+## How this was built
+
+The repo was produced by a multi-model orchestration: units of work were specified in
+written briefs, implemented by one model, and then **adversarially reviewed by two
+independent non-author models** (with fix rounds gated on re-verification) before any
+merge to `main`. Reviews were empirical, not rhetorical — reviewers ran the gates, probed
+edge cases with their own harnesses, Monte-Carlo'd the DSP, fault-injected the tests, and
+re-derived the math. Several review rounds caught real, subtle defects before they could
+ship: a steering-authority latch bypass, a covariance test that passed with process noise
+deleted, a MAVLink yaw sentinel that the pinned ArduPilot would have parsed as a phantom
+295° heading, an HDOP choice that silently made EKF aiding impossible, and the
+prior-confounded headline table above. The complete audit trail — every ruling, every
+review verdict, every fix disposition — lives in `.orchestration/DECISIONS.md` (D1–D41)
+and `.orchestration/reports/`.
+
+## License
+
+No license has been chosen yet; all rights reserved by default. Open an issue if you want
+to build on this and a license decision will be made.
+
+## Origin
+
+The project implements `docs/HANDOFF_PROMPT_BLADERF.md` — a detailed engineering brief
+distilled from a prior attempt, including the ten specific failure modes that attempt hit
+and this build was structured to avoid. Reading that document first is the fastest way to
+understand why the repo is shaped the way it is.

@@ -112,6 +112,8 @@ fn truth_gap_is_excluded_and_counted() {
     assert_eq!(report.aided.excluded_no_near_truth, 4);
     assert_eq!(report.withheld.matched_epochs, 0);
     assert_eq!(report.withheld.excluded_no_near_truth, 4);
+    assert_eq!(report.comparison.excluded_no_paired_epoch, 3);
+    assert_eq!(report.comparison.excluded_no_near_truth, 4);
 }
 
 #[test]
@@ -130,6 +132,7 @@ fn report_json_round_trips_with_provenance() {
     let json = serde_json::to_string(&report).unwrap();
     let decoded: ReplayReport = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.schema_version, REPORT_SCHEMA_VERSION);
+    assert_eq!(decoded.schema_version, 2);
     assert_eq!(decoded.run_uuid, "run-fixture");
     assert_eq!(decoded.config_hash, "sha256:fixture");
     assert_eq!(decoded.aided.mode, "production");

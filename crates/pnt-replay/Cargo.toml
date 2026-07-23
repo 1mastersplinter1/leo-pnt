@@ -10,6 +10,7 @@ pnt-config = { path = "../pnt-config" }
 pnt-estimator = { path = "../pnt-estimator" }
 pnt-integrity = { path = "../pnt-integrity" }
 pnt-journal = { path = "../pnt-journal" }
+pnt-ephemeris = { path = "../pnt-ephemeris" }
 pnt-time = { path = "../pnt-time" }
 pnt-types = { path = "../pnt-types" }
 serde = { version = "1.0", features = ["derive"] }

@@ -183,6 +183,29 @@ fn orbcomm_is_rejected_before_fusion_by_default() {
 }
 
 #[test]
+fn orbcomm_is_rejected_before_an_installed_doppler_pipeline() {
+    let store =
+        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
+            .unwrap();
+    let mut executive = Executive::test_stub(GnssAuthority::Production)
+        .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
+    let routes = executive.process(envelope(
+        1,
+        MeasurementPayload::TrackerDoppler(TrackerDoppler {
+            constellation: Constellation::Orbcomm,
+            correlation_peak_hz: 12.0,
+            nominal_carrier_hz: 137_000_000.0,
+        }),
+    ));
+    assert!(routes.is_empty());
+    assert_eq!(executive.filter().measurement_updates(), 0);
+    assert_eq!(executive.journals().integrity_events().len(), 1);
+    assert!(executive.journals().integrity_events()[0]
+        .reason
+        .contains("not provisioned"));
+}
+
+#[test]
 fn oneweb_is_gated_by_config() {
     let observation = MeasurementPayload::TrackerDoppler(TrackerDoppler {
         constellation: Constellation::OneWeb,

@@ -388,6 +388,7 @@ version = "0.1.0"
 dependencies = [
  "fusion-executive",
  "pnt-config",
+ "pnt-ephemeris",
  "pnt-estimator",
  "pnt-integrity",
  "pnt-journal",

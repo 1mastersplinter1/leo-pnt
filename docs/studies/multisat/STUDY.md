@@ -1,45 +1,32 @@
-# Multi-satellite LOS-diversity study
+# Controlled multi-satellite LOS-diversity study
 
-**SYNTHETIC ORBITAL FIXTURE [UNVERIFIED]. Every error is measured from the production Executive + FilterStub state against truth; no output is clamped or formula-fitted.**
+**SYNTHETIC CONTROLLED EXPERIMENT [UNVERIFIED]. Endpoints come from the production Executive + FilterStub against generator truth; no result is clamped or target-fitted.**
 
-## Headline
+## Real result
 
-The real filter reached <=200 m with 1 requested satellites.
+Controlled N=8 manoeuvring result: mean 116.3 m, p95 554.8 m, range 7.8-554.8 m across 8 seeds (200 m-1 km).
 
-| scenario | requested N | visible min/mean/max | used min/mean/max | accepted/rejected | nuisance states | final position / velocity | honest class |
-|---|---:|---:|---:|---:|---:|---:|---|
-| 60 min constant-heading denied leg | 1 | 45/49.2/53 | 1/1.0/1 | 129/2 | 46 | 33.8 m / 0.030 m/s | <100 m |
-| 60 min constant-heading denied leg | 2 | 45/49.2/53 | 2/2.0/2 | 258/4 | 59 | 74.9 m / 0.227 m/s | <100 m |
-| 60 min constant-heading denied leg | 4 | 45/49.2/53 | 4/4.0/4 | 516/8 | 92 | 65.1 m / 0.389 m/s | <100 m |
-| 60 min constant-heading denied leg | 8 | 45/49.2/53 | 8/8.0/8 | 1032/16 | 135 | 6.1 m / 0.045 m/s | <100 m |
-| D45 100 km constant-heading passage | 1 | 45/48.8/54 | 1/1.0/1 | 934/2 | 295 | 2.4 m / 0.027 m/s | <100 m |
-| D45 100 km constant-heading passage | 2 | 45/48.8/54 | 2/2.0/2 | 1868/4 | 418 | 1.6 m / 0.008 m/s | <100 m |
-| D45 100 km constant-heading passage | 4 | 45/48.8/54 | 4/4.0/4 | 3736/8 | 539 | 22.0 m / 0.035 m/s | <100 m |
-| D45 100 km constant-heading passage | 8 | 45/48.8/54 | 8/8.0/8 | 7472/16 | 614 | 11.4 m / 0.036 m/s | <100 m |
+N=8 does not reach the 100-200 m class under proper controls (p95 554.8 m). The finite GDOP (1.93) shows distinct instantaneous geometry, but clock/per-SV bias observability, manoeuvre dynamics, cadence, and the 5-minute leg still limit the present filter. D51's single-satellite limitation is therefore not closed.
 
-## Convergence curves
+| geometry | N | fixed SVs | GDOP mean/p95 | endpoint position mean/p95/spread | velocity mean | accepted/rejected mean | class |
+|---|---:|---|---:|---:|---:|---:|---|
+| fixed single LOS; no handover | 1 | [70049] | unobservable/infinite/unobservable/infinite | 118.3/222.3/10.8-222.3 m | 0.493 m/s | 22.0/0.0 | 200 m-1 km |
+| fixed simultaneous multi-LOS cohort; no handover | 2 | [70049, 70219] | unobservable/infinite/unobservable/infinite | 109.5/287.4/16.8-287.4 m | 0.529 m/s | 44.0/0.0 | 200 m-1 km |
+| fixed simultaneous multi-LOS cohort; no handover | 4 | [70049, 70219, 70346, 70366] | 9.31/30.82 | 220.8/523.0/12.4-523.0 m | 2.045 m/s | 81.0/7.0 | 200 m-1 km |
+| fixed simultaneous multi-LOS cohort; no handover | 8 | [70049, 70219, 70346, 70366, 70367, 70386, 70516, 70536] | 1.79/1.93 | 116.3/554.8/7.8-554.8 m | 1.144 m/s | 144.4/31.6 | 200 m-1 km |
 
-Every point below is a real filter-state error against truth.
+## Controls and interpretation
 
-- 60 min constant-heading denied leg / N=1: 0 min=0.5 m (0.018 m/s), 10 min=51.0 m (0.165 m/s), 20 min=32.9 m (0.153 m/s), 30 min=38.1 m (0.052 m/s), 40 min=84.8 m (0.081 m/s), 50 min=7.9 m (0.087 m/s), 60 min=33.8 m (0.030 m/s)
-- 60 min constant-heading denied leg / N=2: 0 min=0.3 m (0.119 m/s), 10 min=21.6 m (0.280 m/s), 20 min=25.5 m (0.143 m/s), 30 min=24.3 m (0.167 m/s), 40 min=111.4 m (0.159 m/s), 50 min=106.1 m (0.259 m/s), 60 min=74.9 m (0.227 m/s)
-- 60 min constant-heading denied leg / N=4: 0 min=0.6 m (0.079 m/s), 10 min=30.6 m (0.223 m/s), 20 min=20.8 m (0.173 m/s), 30 min=39.9 m (0.563 m/s), 40 min=44.1 m (0.132 m/s), 50 min=35.8 m (0.240 m/s), 60 min=65.1 m (0.389 m/s)
-- 60 min constant-heading denied leg / N=8: 0 min=0.4 m (0.109 m/s), 10 min=15.7 m (0.132 m/s), 20 min=3.6 m (0.093 m/s), 30 min=14.2 m (0.048 m/s), 40 min=17.3 m (0.089 m/s), 50 min=19.8 m (0.243 m/s), 60 min=6.1 m (0.045 m/s)
-- D45 100 km constant-heading passage / N=1: 0 min=0.4 m (0.086 m/s), 10 min=21.4 m (0.025 m/s), 20 min=53.6 m (0.065 m/s), 30 min=96.7 m (0.112 m/s), 40 min=33.1 m (0.057 m/s), 50 min=45.2 m (0.131 m/s), 60 min=19.9 m (0.054 m/s), 70 min=18.2 m (0.065 m/s), 80 min=37.7 m (0.138 m/s), 90 min=93.6 m (0.125 m/s), 100 min=129.9 m (0.112 m/s), 110 min=55.4 m (0.104 m/s), 120 min=185.5 m (0.265 m/s), 130 min=28.3 m (0.140 m/s), 140 min=32.0 m (0.186 m/s), 150 min=83.0 m (0.121 m/s), 160 min=28.1 m (0.095 m/s), 170 min=35.2 m (0.110 m/s), 180 min=34.2 m (0.097 m/s), 190 min=35.5 m (0.048 m/s), 200 min=26.3 m (0.065 m/s), 210 min=22.0 m (0.078 m/s), 220 min=38.2 m (0.097 m/s), 230 min=194.7 m (0.334 m/s), 240 min=54.4 m (0.095 m/s), 250 min=23.6 m (0.058 m/s), 260 min=44.1 m (0.076 m/s), 270 min=33.3 m (0.135 m/s), 280 min=64.2 m (0.123 m/s), 290 min=102.3 m (0.091 m/s), 300 min=134.7 m (0.200 m/s), 310 min=14.6 m (0.051 m/s), 320 min=19.2 m (0.047 m/s), 330 min=35.9 m (0.144 m/s), 340 min=154.7 m (0.211 m/s), 350 min=14.3 m (0.086 m/s), 360 min=27.2 m (0.105 m/s), 370 min=41.1 m (0.065 m/s), 380 min=115.8 m (0.090 m/s), 390 min=63.1 m (0.025 m/s), 400 min=19.2 m (0.058 m/s), 410 min=17.0 m (0.020 m/s), 420 min=30.8 m (0.008 m/s), 430 min=14.3 m (0.050 m/s), 440 min=21.2 m (0.038 m/s), 450 min=14.1 m (0.027 m/s), 460 min=18.4 m (0.019 m/s)
-- D45 100 km constant-heading passage / N=2: 0 min=0.5 m (0.107 m/s), 10 min=26.2 m (0.282 m/s), 20 min=56.7 m (0.284 m/s), 30 min=46.9 m (0.231 m/s), 40 min=47.5 m (0.094 m/s), 50 min=63.8 m (0.433 m/s), 60 min=45.7 m (0.164 m/s), 70 min=26.9 m (0.199 m/s), 80 min=45.2 m (0.239 m/s), 90 min=62.3 m (0.176 m/s), 100 min=40.9 m (0.200 m/s), 110 min=55.2 m (0.230 m/s), 120 min=46.6 m (0.313 m/s), 130 min=39.8 m (0.168 m/s), 140 min=23.5 m (0.060 m/s), 150 min=14.7 m (0.129 m/s), 160 min=40.8 m (0.100 m/s), 170 min=48.1 m (0.161 m/s), 180 min=134.4 m (0.381 m/s), 190 min=113.5 m (0.224 m/s), 200 min=27.9 m (0.098 m/s), 210 min=33.8 m (0.200 m/s), 220 min=79.1 m (0.435 m/s), 230 min=39.8 m (0.105 m/s), 240 min=146.0 m (0.586 m/s), 250 min=60.7 m (0.314 m/s), 260 min=22.5 m (0.068 m/s), 270 min=45.4 m (0.146 m/s), 280 min=33.5 m (0.071 m/s), 290 min=132.0 m (0.492 m/s), 300 min=128.4 m (0.333 m/s), 310 min=71.2 m (0.295 m/s), 320 min=31.5 m (0.125 m/s), 330 min=24.3 m (0.090 m/s), 340 min=87.5 m (0.322 m/s), 350 min=53.3 m (0.104 m/s), 360 min=46.0 m (0.168 m/s), 370 min=109.2 m (0.093 m/s), 380 min=37.6 m (0.118 m/s), 390 min=19.4 m (0.050 m/s), 400 min=12.2 m (0.052 m/s), 410 min=62.9 m (0.026 m/s), 420 min=13.4 m (0.072 m/s), 430 min=24.1 m (0.037 m/s), 440 min=8.4 m (0.033 m/s), 450 min=10.4 m (0.012 m/s), 460 min=10.3 m (0.023 m/s)
-- D45 100 km constant-heading passage / N=4: 0 min=0.6 m (0.138 m/s), 10 min=36.6 m (0.208 m/s), 20 min=45.6 m (0.468 m/s), 30 min=21.5 m (0.602 m/s), 40 min=21.0 m (0.205 m/s), 50 min=36.7 m (0.374 m/s), 60 min=41.6 m (0.300 m/s), 70 min=45.1 m (0.343 m/s), 80 min=33.4 m (0.206 m/s), 90 min=31.4 m (0.398 m/s), 100 min=30.2 m (0.272 m/s), 110 min=97.6 m (0.587 m/s), 120 min=111.8 m (0.887 m/s), 130 min=21.0 m (0.138 m/s), 140 min=100.4 m (0.407 m/s), 150 min=27.9 m (0.367 m/s), 160 min=62.4 m (0.491 m/s), 170 min=44.4 m (0.534 m/s), 180 min=42.8 m (0.728 m/s), 190 min=19.8 m (0.178 m/s), 200 min=33.8 m (0.474 m/s), 210 min=39.2 m (0.340 m/s), 220 min=30.3 m (0.326 m/s), 230 min=39.4 m (0.344 m/s), 240 min=16.0 m (0.345 m/s), 250 min=46.2 m (0.637 m/s), 260 min=26.6 m (0.232 m/s), 270 min=21.6 m (0.331 m/s), 280 min=29.8 m (0.145 m/s), 290 min=29.9 m (0.157 m/s), 300 min=35.8 m (0.208 m/s), 310 min=21.1 m (0.457 m/s), 320 min=7.6 m (0.208 m/s), 330 min=59.5 m (0.291 m/s), 340 min=47.9 m (0.432 m/s), 350 min=10.0 m (0.133 m/s), 360 min=46.1 m (0.260 m/s), 370 min=25.0 m (0.161 m/s), 380 min=35.2 m (0.119 m/s), 390 min=30.1 m (0.077 m/s), 400 min=8.1 m (0.030 m/s), 410 min=36.7 m (0.112 m/s), 420 min=29.3 m (0.097 m/s), 430 min=7.6 m (0.050 m/s), 440 min=17.7 m (0.049 m/s), 450 min=9.0 m (0.077 m/s), 460 min=19.7 m (0.036 m/s)
-- D45 100 km constant-heading passage / N=8: 0 min=0.5 m (0.046 m/s), 10 min=32.2 m (0.169 m/s), 20 min=24.0 m (0.182 m/s), 30 min=25.5 m (0.138 m/s), 40 min=13.0 m (0.026 m/s), 50 min=18.6 m (0.143 m/s), 60 min=13.0 m (0.069 m/s), 70 min=26.8 m (0.210 m/s), 80 min=20.3 m (0.112 m/s), 90 min=16.8 m (0.065 m/s), 100 min=17.2 m (0.089 m/s), 110 min=8.4 m (0.087 m/s), 120 min=11.1 m (0.033 m/s), 130 min=20.2 m (0.104 m/s), 140 min=16.8 m (0.109 m/s), 150 min=8.0 m (0.037 m/s), 160 min=5.6 m (0.069 m/s), 170 min=15.9 m (0.075 m/s), 180 min=11.5 m (0.182 m/s), 190 min=22.5 m (0.106 m/s), 200 min=12.3 m (0.100 m/s), 210 min=11.4 m (0.114 m/s), 220 min=11.9 m (0.089 m/s), 230 min=5.6 m (0.179 m/s), 240 min=13.3 m (0.139 m/s), 250 min=5.3 m (0.094 m/s), 260 min=8.1 m (0.064 m/s), 270 min=12.8 m (0.100 m/s), 280 min=5.4 m (0.101 m/s), 290 min=11.7 m (0.087 m/s), 300 min=16.5 m (0.107 m/s), 310 min=8.1 m (0.126 m/s), 320 min=7.5 m (0.123 m/s), 330 min=12.0 m (0.076 m/s), 340 min=21.7 m (0.172 m/s), 350 min=25.1 m (0.082 m/s), 360 min=9.0 m (0.086 m/s), 370 min=11.0 m (0.066 m/s), 380 min=4.9 m (0.042 m/s), 390 min=7.8 m (0.038 m/s), 400 min=14.9 m (0.073 m/s), 410 min=15.3 m (0.085 m/s), 420 min=17.2 m (0.062 m/s), 430 min=14.4 m (0.050 m/s), 440 min=16.9 m (0.058 m/s), 450 min=4.0 m (0.044 m/s), 460 min=6.9 m (0.030 m/s)
+- Seeds: [223617062, 223617063, 223617064, 223617065, 223617066, 223617067, 223617068, 223617069]; individual endpoint errors are retained in `results.json`.
+- Dynamics: pnt-mission generator: 3 deg/s coordinated-turn command, wave/slam, and speed-scaled IMU at 7 kn [UNVERIFIED].
+- Geometry: A single persistent satellite cohort is selected once per mission. N tiers use nested prefixes, all satellites remain above 5 deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes. GDOP is the conventional instantaneous velocity-plus-common-clock geometry metric; N<4 is reported as unobservable/infinite. Per-SV nuisance biases make actual observability weaker than GDOP alone.
+- Clock stress: receiver drift 0.030 m/s (0.100 ppb) and deterministic [UNVERIFIED] signed 0.35-1.05 Hz, fixed per SV and seed. These values and the noise model are [UNVERIFIED].
+- Measurement stress: bounded ±0.5 Hz nominal error plus deterministic signed 12 Hz tracker outliers at about 1/17 observations [UNVERIFIED].
+- The production chi-square gate is `Some(9.0)` and accepted/rejected counts are measured from integrity events.
+- Duration limitation: a 15-minute trial found zero SVs continuously above 5°; the five-minute denied leg is the tested interval that retained an eight-SV no-handover cohort. It covers the generator turn across GNSS loss but is not endurance evidence.
 
-## Geometry and limitations
+## D51 reconciliation
 
-The N=1 versus N=2/4/8 rows vary the number of simultaneous LOS observations while holding truth, dynamics, filter, gate, cadence, and noise distribution fixed. Differing LOS unit vectors constrain different projections of receiver velocity and, over time, position; coplanar or repeated LOS adds little. The EKF augments a separate range-rate-bias nuisance state for every satellite it sees.
+D51 used a fixed single ISS, a much longer 100 km leg, and 30-minute Doppler cadence. This experiment changes none of its findings. It answers the narrower D54 question by holding the mission, cadence, persistent SV identities, clock errors, noise distribution, filter, gate, and outlier process fixed while changing only the number of simultaneous LOS directions. The old U-MS1 constant-velocity/zero-clock/handover headline was confounded and is withdrawn.
 
-The N=1 result is **not** a reproduction of D51's fixed single-ISS fixture. It uses one satellite at each epoch but hands over among the currently highest-elevation satellites, so its changing LOS over time supplies diversity; its nuisance-state count records those distinct SVs. N=8 is the clearest simultaneous-diversity result and is also the strongest, reaching 6.1 m after 60 denied minutes and 11.4 m after 100 km. The non-monotonic N=1/2/4 endpoints show that a single endpoint and one synthetic seed are not an accuracy distribution.
-
-The 960-record fixture is synthetic [UNVERIFIED], using published constellation-class shell parameters: Starlink 53°/550 km, OneWeb 87.9°/1200 km, and Iridium 86.4°/780 km. RAAN, anomaly, epoch, near-circular eccentricity, measurement noise, IMU stressor, 10 s integration decimation, 30 s Doppler cadence, and constant-ECEF vessel track are [UNVERIFIED]. Visibility is recomputed at every Doppler epoch with a 5° mask; no below-horizon observation is fed to the executive. Real dated OMM/SupGP and captured residual replay remain required.
-
-The production chi-square threshold is explicitly `Some(9.0)`; nonzero rejected counts prove it acted rather than merely being configured.
-
-## Routed next step
-
-Validate the synthetic fixture result against dated real multi-constellation OMM/SupGP records and captured tracker residuals.
+The 960-orbit shell grid, selection rule, clock values, transmit biases, cadence, manoeuvre/wave parameters, and measurement errors remain synthetic [UNVERIFIED]. Dated OMM/SupGP and captured residual replay are still required.

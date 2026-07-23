@@ -96,6 +96,13 @@ pub struct ArmCommand {
     pub source_id: SourceId,
 }
 
+/// Human helm acknowledgement of an authority alarm.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AckCommand {
+    pub host_monotonic_ns: u64,
+    pub source_id: SourceId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TrackerDoppler {
     pub constellation: Constellation,
@@ -111,6 +118,7 @@ pub enum MeasurementPayload {
     Gnss(GnssFix),
     TrackerDoppler(TrackerDoppler),
     ArmCommand(ArmCommand),
+    AckCommand(AckCommand),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -373,6 +381,18 @@ mod tests {
         assert_eq!(
             MeasurementPayload::ArmCommand(command.clone()),
             MeasurementPayload::ArmCommand(command)
+        );
+    }
+
+    #[test]
+    fn acknowledgement_is_a_bus_payload() {
+        let command = AckCommand {
+            host_monotonic_ns: 42,
+            source_id: SourceId("helm".into()),
+        };
+        assert_eq!(
+            MeasurementPayload::AckCommand(command.clone()),
+            MeasurementPayload::AckCommand(command)
         );
     }
 }

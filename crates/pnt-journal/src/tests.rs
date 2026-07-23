@@ -82,6 +82,13 @@ fn mixed_roundtrip_is_bit_exact_and_truth_is_separate() {
                 nominal_carrier_hz: 1.6e9,
             }),
         ),
+        envelope(
+            4,
+            MeasurementPayload::AckCommand(AckCommand {
+                host_monotonic_ns: 204,
+                source_id: SourceId("helm".into()),
+            }),
+        ),
     ];
     for v in &values {
         w.try_write_measurement(v).unwrap();
@@ -98,7 +105,7 @@ fn mixed_roundtrip_is_bit_exact_and_truth_is_separate() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    for (record, expected) in records.iter().take(3).zip(&values) {
+    for (record, expected) in records.iter().take(values.len()).zip(&values) {
         let MeasurementJournalRecord::Envelope(actual) = record else {
             panic!()
         };
@@ -107,7 +114,7 @@ fn mixed_roundtrip_is_bit_exact_and_truth_is_separate() {
             encode_measurement(&MeasurementJournalRecord::Envelope(expected.clone())).unwrap()
         );
     }
-    assert_eq!(records.len(), 4);
+    assert_eq!(records.len(), values.len() + 1);
     let truth = TruthReader::open(&dir.0)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()

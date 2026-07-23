@@ -8,9 +8,9 @@
 )]
 
 use pnt_types::{
-    ArmAction, ArmCommand, Constellation, Frame, GnssFix, Heading, ImuSample, MeasurementEnvelope,
-    MeasurementPayload, Provenance, QualityFlags, SourceId, SpeedThroughWater, TimeTag,
-    TrackerDoppler, UtcTime, SCHEMA_VERSION,
+    AckCommand, ArmAction, ArmCommand, Constellation, Frame, GnssFix, Heading, ImuSample,
+    MeasurementEnvelope, MeasurementPayload, Provenance, QualityFlags, SourceId, SpeedThroughWater,
+    TimeTag, TrackerDoppler, UtcTime, SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1073,6 +1073,11 @@ fn enc_payload(e: &mut Encoder, p: &MeasurementPayload) -> Result<(), JournalErr
             e.u64(v.host_monotonic_ns);
             e.string(&v.source_id.0)?
         }
+        MeasurementPayload::AckCommand(v) => {
+            e.u8(7);
+            e.u64(v.host_monotonic_ns);
+            e.string(&v.source_id.0)?
+        }
     }
     Ok(())
 }
@@ -1127,6 +1132,10 @@ fn dec_payload(d: &mut Decoder<'_>) -> Result<MeasurementPayload, JournalError> 
                 2 => ArmAction::Disarm,
                 _ => return Err(JournalError::Codec("arm action")),
             },
+            host_monotonic_ns: d.u64()?,
+            source_id: SourceId(d.string()?),
+        }),
+        7 => MeasurementPayload::AckCommand(AckCommand {
             host_monotonic_ns: d.u64()?,
             source_id: SourceId(d.string()?),
         }),

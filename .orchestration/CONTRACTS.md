@@ -237,3 +237,54 @@ Correction to v4 wording: horizontal, speed, and vertical accuracy values are de
 the `SolutionEpoch` accessors at emission, not materialised when the epoch is constructed.
 An epoch containing any non-finite state, covariance, or derived accuracy value is not
 written to NDJSON and produces a journalled integrity event instead.
+
+## v5 (2026-07-23)
+
+v5 retains v1--v4.1 and replaces the fail-open integrity placeholder with the authority
+supervisor contract from `SAFETY_CASE.md` §1--§3.
+
+`AuthorityParams` carries separate aided and denied `ProtectionLimits` for horizontal
+position (m), horizontal velocity (m/s), and heading (rad), plus `Option<f64>` fields for
+`t_lease`, `t_dr`, `t_eph`, `dwell_clear`, `dwell_rearm`, `caution_enter`,
+`caution_clear`, `revoke_threshold`, and `T_ack` (seconds for all time values). Every
+numeric must be present, finite, and non-negative. If any field is `None` or invalid, the
+supervisor can never grant steering authority. This is the literal D17 fail-closed gate;
+there are no numeric defaults.
+
+The supervisor consumes clock-service monotonic nanoseconds only, `ArmCommand`, solution
+sequence and covariance-derived horizontal-position/horizontal-velocity/heading accuracies,
+active profile, last-absolute-observation time, ephemeris age/integrity, and calibration ID.
+Calibration identity is checked by an injected validator; absence is always rejection and
+the default validator accepts any present, non-empty ID. **Amended by v5.1; see below.** A renewing frame is exactly
+`sequence advanced && G2 && G3`, independent of current lease state. Deadline equality is
+expiry. Arm defaults false, disarm withdraws G1, and every fault revocation clears the arm
+latch so a fresh arm command is required.
+
+Outputs are `AuthorityOutput { steering_authorised, state, alarm, transition }`. `transition`
+identifies only supervisor state transitions. The output type deliberately has no vehicle
+mode, manoeuvre, RTL, Loiter, or disarm command. The six states, eleven events, guarded arm
+cells, destination-state authority/annunciation, simultaneous priority, dwells, ACK timeout,
+and latched recovery are exactly the total matrix in `SAFETY_CASE.md` §2.2.
+
+The executive routes `ArmCommand` only to integrity and supplies every emitted solution to
+the supervisor before deriving `SolutionEpoch.steering_authorised`. Its production-default
+skeleton constructor installs the real supervisor with an incomplete parameter register and
+is therefore fail-closed. `test_stub` remains explicitly stub-backed for focused legacy
+executive tests.
+
+## v5.1 (2026-07-23)
+
+v5.1 amends, but does not replace, v5. `AckCommand` is the helm acknowledgement sibling of
+`ArmCommand` on the measurement bus. It carries clock-service-stamped
+`host_monotonic_ns: u64` and `source_id: SourceId`, is journalled, and is routed by the
+executive only to `IntegrityAuthorityGate::acknowledge`; it never enters the estimator.
+Acknowledgement changes annunciation/latch state only as specified by the §2.2 matrix and
+does not itself restore steering authority.
+
+Every accepted IMU propagation emits a DR-fill solution epoch through both
+`IntegrityAuthorityGate::solution` and the NDJSON seam. This intentionally uses the IMU
+propagation cadence rather than an unverified decimator: lease renewal remains conditional
+on sequence advance plus G2/G3, while absolute-observation age independently revokes at
+`t_dr`. A grant-capable supervisor can be constructed only with complete parameters and an
+explicit calibration validator; the incomplete-register constructor is a hard error if
+given complete parameters.

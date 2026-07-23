@@ -1,13 +1,13 @@
 use fusion_executive::{DopplerPipeline, Executive, RoutingDestination};
 use pnt_config::{Config, GnssAuthority};
 use pnt_estimator::{Estimator, FilterStub};
-use pnt_integrity::IntegrityStub;
+use pnt_integrity::{AuthorityParams, AuthoritySupervisor, IntegrityStub, ProtectionLimits};
 use pnt_journal::MemoryJournals;
 use pnt_time::ManualClock;
 use pnt_types::{
-    ArmAction, ArmCommand, Constellation, FilterState, Frame, GnssFix, Heading, ImuSample,
-    MeasurementEnvelope, MeasurementPayload, Provenance, QualityFlags, SourceId, SpeedThroughWater,
-    TimeTag, TrackerDoppler, UtcTime,
+    AckCommand, ArmAction, ArmCommand, Constellation, FilterState, Frame, GnssFix, Heading,
+    ImuSample, MeasurementEnvelope, MeasurementPayload, Provenance, QualityFlags, SourceId,
+    SpeedThroughWater, TimeTag, TrackerDoppler, UtcTime,
 };
 
 fn envelope(sequence: u64, payload: MeasurementPayload) -> MeasurementEnvelope {
@@ -63,7 +63,7 @@ fn recorded_only_sends_gnss_to_truth_but_not_fusion() {
 
 #[test]
 fn production_gnss_is_dual_routed_and_off_is_journalled_as_a_reject() {
-    let mut production = Executive::test_default(GnssAuthority::Production);
+    let mut production = Executive::test_stub(GnssAuthority::Production);
     assert_eq!(
         production.process(envelope(1, MeasurementPayload::Gnss(GnssFix::default()))),
         vec![RoutingDestination::Fusion, RoutingDestination::TruthJournal]
@@ -71,7 +71,7 @@ fn production_gnss_is_dual_routed_and_off_is_journalled_as_a_reject() {
     assert_eq!(production.journals().truth_records().len(), 1);
     assert!(production.filter().measurement_updates() > 0);
 
-    let mut off = Executive::test_default(GnssAuthority::Off);
+    let mut off = Executive::test_stub(GnssAuthority::Off);
     assert!(off
         .process(envelope(1, MeasurementPayload::Gnss(GnssFix::default())))
         .is_empty());
@@ -82,7 +82,7 @@ fn production_gnss_is_dual_routed_and_off_is_journalled_as_a_reject() {
 
 #[test]
 fn heading_and_speed_route_to_real_updates() {
-    let mut executive = Executive::test_default(GnssAuthority::Off);
+    let mut executive = Executive::test_stub(GnssAuthority::Off);
     executive.process(envelope(
         1,
         MeasurementPayload::Heading(Heading { radians: 0.2 }),
@@ -118,7 +118,7 @@ fn authority_modes_change_routing_table_not_processing_graph() {
 
 #[test]
 fn covariance_grows_on_every_imu_tick_without_measurements() {
-    let mut executive = Executive::test_default(GnssAuthority::Off);
+    let mut executive = Executive::test_stub(GnssAuthority::Off);
     for sequence in 1..=3 {
         executive.process(envelope(
             sequence,
@@ -135,7 +135,7 @@ fn covariance_grows_on_every_imu_tick_without_measurements() {
 
 #[test]
 fn synthetic_imu_and_measurement_emit_a_solution_epoch() {
-    let mut executive = Executive::test_default(GnssAuthority::Production);
+    let mut executive = Executive::test_stub(GnssAuthority::Production);
     executive.process(envelope(
         1,
         MeasurementPayload::Imu(ImuSample {
@@ -145,13 +145,29 @@ fn synthetic_imu_and_measurement_emit_a_solution_epoch() {
     ));
     executive.process(envelope(2, MeasurementPayload::Gnss(GnssFix::default())));
     let epochs = executive.take_solution_epochs();
-    assert_eq!(epochs.len(), 1);
-    assert_eq!(epochs[0].monotonic_ns, 2);
+    assert_eq!(epochs.len(), 2);
+    assert_eq!(epochs[0].monotonic_ns, 1);
+    assert_eq!(epochs[1].monotonic_ns, 2);
+}
+
+#[test]
+fn default_real_supervisor_is_fail_closed() {
+    let mut executive = Executive::default_fail_closed(GnssAuthority::Production);
+    executive.process(envelope(
+        1,
+        MeasurementPayload::ArmCommand(ArmCommand {
+            action: ArmAction::Arm,
+            host_monotonic_ns: 0,
+            source_id: SourceId("helm".into()),
+        }),
+    ));
+    executive.process(envelope(2, MeasurementPayload::Gnss(GnssFix::default())));
+    assert!(!executive.take_solution_epochs()[0].steering_authorised);
 }
 
 #[test]
 fn orbcomm_is_rejected_before_fusion_by_default() {
-    let mut executive = Executive::test_default(GnssAuthority::Production);
+    let mut executive = Executive::test_stub(GnssAuthority::Production);
     let routes = executive.process(envelope(
         1,
         MeasurementPayload::TrackerDoppler(TrackerDoppler {
@@ -173,7 +189,7 @@ fn oneweb_is_gated_by_config() {
         correlation_peak_hz: 0.0,
         nominal_carrier_hz: 1.0e9,
     });
-    let mut disabled = Executive::test_default(GnssAuthority::Off);
+    let mut disabled = Executive::test_stub(GnssAuthority::Off);
     assert!(disabled
         .process(envelope(1, observation.clone()))
         .is_empty());
@@ -210,6 +226,7 @@ fn oneweb_is_gated_by_config() {
 #[derive(Default)]
 struct ArmGate {
     commands: Vec<ArmCommand>,
+    acknowledgements: Vec<AckCommand>,
 }
 impl pnt_integrity::IntegrityAuthorityGate for ArmGate {
     fn steering_authorised(&mut self, _: &FilterState, _: u64) -> bool {
@@ -217,6 +234,9 @@ impl pnt_integrity::IntegrityAuthorityGate for ArmGate {
     }
     fn arm_command(&mut self, command: &ArmCommand) {
         self.commands.push(command.clone());
+    }
+    fn acknowledge(&mut self, command: &AckCommand) {
+        self.acknowledgements.push(command.clone());
     }
 }
 
@@ -243,6 +263,106 @@ fn arm_command_reaches_authority_and_never_filter_update() {
     assert_eq!(executive.filter().measurement_updates(), 0);
     assert_eq!(executive.integrity().commands.len(), 1);
     assert_eq!(executive.journals().measurement_records().len(), 1);
+}
+
+#[test]
+fn acknowledge_reaches_authority_and_never_filter_update() {
+    let mut executive = Executive::new(
+        Config {
+            gnss_authority: GnssAuthority::Off,
+            oneweb_enabled: false,
+        },
+        ManualClock::default(),
+        FilterStub::default(),
+        ArmGate::default(),
+        MemoryJournals::default(),
+    );
+    executive.process(envelope(
+        1,
+        MeasurementPayload::AckCommand(AckCommand {
+            host_monotonic_ns: 1,
+            source_id: SourceId("helm".into()),
+        }),
+    ));
+    assert_eq!(executive.filter().measurement_updates(), 0);
+    assert_eq!(executive.integrity().acknowledgements.len(), 1);
+    assert_eq!(executive.journals().measurement_records().len(), 1);
+}
+
+#[derive(Debug)]
+struct ScriptedClock(std::collections::VecDeque<u64>);
+
+impl pnt_time::ClockService for ScriptedClock {
+    fn ingress_monotonic_ns(&mut self) -> u64 {
+        self.0.pop_front().expect("clock script exhausted")
+    }
+}
+
+fn dr_params() -> AuthorityParams {
+    AuthorityParams {
+        aided: ProtectionLimits {
+            horizontal_position_m: Some(1.0e9),
+            horizontal_velocity_mps: Some(1.0e9),
+            heading_rad: Some(1.0e9),
+        },
+        denied: ProtectionLimits {
+            horizontal_position_m: Some(1.0e9),
+            horizontal_velocity_mps: Some(1.0e9),
+            heading_rad: Some(1.0e9),
+        },
+        t_lease_s: Some(2.0e-9),
+        t_dr_s: Some(5.0e-9),
+        t_eph_s: Some(1.0),
+        dwell_clear_s: Some(0.0),
+        dwell_rearm_s: Some(0.0),
+        caution_enter: Some(1.0e9),
+        caution_clear: Some(1.0e9),
+        revoke_threshold: Some(1.0e10),
+        t_ack_s: Some(1.0),
+    }
+}
+
+#[test]
+fn imu_dr_fill_renews_lease_until_absolute_observation_exceeds_t_dr() {
+    let clock = ScriptedClock([0, 1, 2, 3, 4, 5, 6, 7].into());
+    let supervisor =
+        AuthoritySupervisor::with_calibration_validator(dr_params(), |id| id == "cal-1");
+    let mut executive = Executive::new(
+        Config {
+            gnss_authority: GnssAuthority::Production,
+            oneweb_enabled: false,
+        },
+        clock,
+        FilterStub::default(),
+        supervisor,
+        MemoryJournals::default(),
+    );
+    executive.process(envelope(
+        0,
+        MeasurementPayload::ArmCommand(ArmCommand {
+            action: ArmAction::Arm,
+            host_monotonic_ns: 0,
+            source_id: SourceId("helm".into()),
+        }),
+    ));
+    executive.process(envelope(1, MeasurementPayload::Gnss(GnssFix::default())));
+    for sequence in 2..=7 {
+        executive.process(envelope(
+            sequence,
+            MeasurementPayload::Imu(ImuSample::default()),
+        ));
+    }
+    let epochs = executive.take_solution_epochs();
+    assert_eq!(epochs.len(), 7, "GNSS plus every IMU propagate tick emits");
+    assert!(epochs.iter().take(6).all(|epoch| epoch.steering_authorised));
+    assert!(
+        !epochs[6].steering_authorised,
+        "t_dr, not the continuously renewed t_lease, revokes authority"
+    );
+    assert_eq!(
+        executive.integrity().state(),
+        pnt_integrity::AuthorityState::Warning
+    );
 }
 
 #[test]
@@ -404,7 +524,7 @@ fn divergent_doppler_is_gate_rejected_without_filter_update() {
         pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
             .unwrap();
     let observation = tracker_envelope(&store, 1.0e9);
-    let mut executive = Executive::test_default(GnssAuthority::Production)
+    let mut executive = Executive::test_stub(GnssAuthority::Production)
         .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
     executive.process(envelope(
         1,
@@ -440,7 +560,7 @@ fn default_elevation_mask_rejects_below_mask_and_journals_it() {
         .sqrt();
     let receiver = satellite.position_m.map(|v| -6_371_000.0 * v / radius);
     let observation = tracker_envelope(&store, 0.0);
-    let mut executive = Executive::test_default(GnssAuthority::Production)
+    let mut executive = Executive::test_stub(GnssAuthority::Production)
         .with_doppler_pipeline(DopplerPipeline::new(store));
     executive.process(envelope(
         1,

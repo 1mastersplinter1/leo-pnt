@@ -13,6 +13,7 @@ use pnt_integrity::{
 };
 use pnt_journal::{IntegrityEvent, JournalSinks, MemoryJournals};
 use pnt_predictor::{geometric_range_rate_linearisation, predict, ReceiverState, SatelliteState};
+use pnt_smoother::{FilterEstimate, ReseedCandidate, ReseedDecision, ReseedGate};
 use pnt_time::{ClockService, ManualClock};
 use pnt_types::{Constellation, MeasurementEnvelope, MeasurementPayload, SolutionEpoch};
 
@@ -360,6 +361,40 @@ where
     #[must_use]
     pub const fn filter(&self) -> &E {
         &self.filter
+    }
+
+    /// Submits a fixed-lag smoother reseed candidate (U4e). The candidate is evaluated against
+    /// the live filter's navigation-core estimate by the fail-closed [`ReseedGate`]; on accept
+    /// the core state/covariance is overwritten (the reseed is the autopilot-facing surface),
+    /// on reject the filter is held unchanged and the reason is journalled. Returns whether the
+    /// reseed was applied.
+    ///
+    /// Note on information ownership: while a smoother is active it must own the measurements
+    /// (they must not also update the EKF, or reseeding double-counts). Wiring the executive's
+    /// measurement routing to the smoother — and the kill-switch that returns ownership to the
+    /// EKF — is the remaining follow-up; this method is the reseed seam that makes the gate
+    /// usable and testable end to end.
+    pub fn submit_smoother_reseed(
+        &mut self,
+        gate: &ReseedGate,
+        candidate: &ReseedCandidate,
+    ) -> bool {
+        let (state, covariance) = self.filter.core_estimate();
+        let live = FilterEstimate { state, covariance };
+        match gate.evaluate(candidate, &live) {
+            ReseedDecision::Accept { state, covariance } => {
+                self.filter.apply_reseed(&state, &covariance);
+                true
+            }
+            ReseedDecision::Reject(reason) => {
+                self.journals.write_integrity(IntegrityEvent {
+                    monotonic_ns: self.clock.ingress_monotonic_ns(),
+                    source_id: "smoother-reseed".to_owned(),
+                    reason: format!("reseed rejected: {reason:?}"),
+                });
+                false
+            }
+        }
     }
 
     #[must_use]

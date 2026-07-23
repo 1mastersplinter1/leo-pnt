@@ -28,6 +28,11 @@ pub trait Estimator {
     fn update(&mut self, measurement: &MeasurementEnvelope);
     fn state(&self) -> FilterState;
     fn update_predicted_doppler(&mut self, update: &DopplerRangeRateUpdate) -> UpdateResult;
+    /// The navigation-core state and covariance (the fixed `CORE_DIM` block), for the smoother
+    /// reseed contract (U4e). Returned as `(state, covariance)` in `nalgebra` form.
+    fn core_estimate(&self) -> (DVector<f64>, DMatrix<f64>);
+    /// Overwrites the navigation-core block with an accepted smoother reseed (U4e).
+    fn apply_reseed(&mut self, core_state: &DVector<f64>, core_covariance: &DMatrix<f64>);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -697,6 +702,38 @@ impl Estimator for FilterStub {
     fn update_predicted_doppler(&mut self, update: &DopplerRangeRateUpdate) -> UpdateResult {
         self.update_doppler(update)
     }
+
+    fn core_estimate(&self) -> (DVector<f64>, DMatrix<f64>) {
+        let state = self.x.rows(0, CORE_DIM).into_owned();
+        let covariance = self
+            .covariance
+            .view((0, 0), (CORE_DIM, CORE_DIM))
+            .into_owned();
+        (state, covariance)
+    }
+
+    /// Overwrites the navigation-core block with an accepted smoother reseed (U4e). Augmented
+    /// states (per-satellite biases, receiver clocks) are left untouched — a stationary batch
+    /// reseed constrains the navigation core, not per-pass nuisances. The caller must have
+    /// already passed the reseed through the `ReseedGate`; this performs the overwrite only.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `core_state`/`core_covariance` are not exactly `CORE_DIM`-sized.
+    fn apply_reseed(&mut self, core_state: &DVector<f64>, core_covariance: &DMatrix<f64>) {
+        assert!(
+            core_state.len() == CORE_DIM
+                && core_covariance.nrows() == CORE_DIM
+                && core_covariance.ncols() == CORE_DIM,
+            "reseed must be core-dimensioned"
+        );
+        for i in 0..CORE_DIM {
+            self.x[i] = core_state[i];
+            for j in 0..CORE_DIM {
+                self.covariance[(i, j)] = core_covariance[(i, j)];
+            }
+        }
+    }
 }
 
 /// Legacy scalar STW model: horizontal ground-speed magnitude and its Jacobian (current
@@ -877,6 +914,30 @@ mod tests {
                 "velocity leaked without STW"
             );
         }
+    }
+
+    #[test]
+    fn apply_reseed_overwrites_the_core_block_and_preserves_augmented_states() {
+        let mut filter = FilterStub::default();
+        // Augment a satellite bias so there is an augmented state beyond the core.
+        let nuisance = filter.augment_satellite_bias("sat", 42.0);
+        filter.x[nuisance] = 7.0;
+        assert!(filter.x.len() > CORE_DIM);
+
+        let mut core_state = DVector::zeros(CORE_DIM);
+        core_state[POS] = 111.0;
+        core_state[VEL] = 2.0;
+        let mut core_cov = DMatrix::identity(CORE_DIM, CORE_DIM) * 3.0;
+        core_cov[(POS, POS)] = 9.0;
+
+        filter.apply_reseed(&core_state, &core_cov);
+
+        assert!((filter.x[POS] - 111.0).abs() < f64::EPSILON);
+        assert!((filter.x[VEL] - 2.0).abs() < f64::EPSILON);
+        assert!((filter.covariance[(POS, POS)] - 9.0).abs() < f64::EPSILON);
+        // The augmented satellite state and its variance are untouched.
+        assert!((filter.x[nuisance] - 7.0).abs() < f64::EPSILON);
+        assert!((filter.covariance[(nuisance, nuisance)] - 42.0).abs() < f64::EPSILON);
     }
 
     #[test]

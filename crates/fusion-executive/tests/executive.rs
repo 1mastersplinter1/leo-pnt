@@ -621,6 +621,10 @@ impl Estimator for PoisonedEstimator {
     ) -> pnt_estimator::UpdateResult {
         unreachable!()
     }
+    fn core_estimate(&self) -> (nalgebra::DVector<f64>, nalgebra::DMatrix<f64>) {
+        (nalgebra::DVector::zeros(0), nalgebra::DMatrix::zeros(0, 0))
+    }
+    fn apply_reseed(&mut self, _: &nalgebra::DVector<f64>, _: &nalgebra::DMatrix<f64>) {}
 }
 
 #[test]
@@ -644,4 +648,62 @@ fn non_finite_epoch_is_not_emitted_and_is_journalled() {
     assert!(executive.journals().integrity_events()[0]
         .reason
         .contains("non-finite"));
+}
+
+#[test]
+fn an_accepted_smoother_reseed_updates_the_core_state_fail_closed() {
+    use nalgebra::{DMatrix, DVector};
+    use pnt_smoother::{ReseedCandidate, ReseedGate};
+
+    let mut executive = Executive::test_stub(GnssAuthority::Off);
+    // A well-conditioned reseed the gate will accept: modest step, honest covariance.
+    let (state, _cov) = executive.filter().core_estimate();
+    let n = state.len();
+    let mut reseed = DVector::zeros(n);
+    reseed[0] = 5.0; // small position nudge
+    let candidate = ReseedCandidate {
+        state: reseed,
+        covariance: DMatrix::identity(n, n) * 10.0,
+        lag_seconds: 1.0,
+    };
+    let accepted = executive.submit_smoother_reseed(&ReseedGate::default(), &candidate);
+    assert!(accepted, "a well-conditioned reseed should be accepted");
+    let (after, _) = executive.filter().core_estimate();
+    assert!((after[0] - 5.0).abs() < 1.0e-9, "core state was reseeded");
+}
+
+#[test]
+fn a_rejected_smoother_reseed_holds_the_filter_and_journals_the_reason() {
+    use nalgebra::{DMatrix, DVector};
+    use pnt_smoother::{ReseedCandidate, ReseedGate};
+
+    let mut executive = Executive::test_stub(GnssAuthority::Off);
+    let (before, _) = executive.filter().core_estimate();
+    let n = before.len();
+    // An implausible jump beyond max_step -> rejected, fail-closed.
+    let mut reseed = DVector::zeros(n);
+    reseed[0] = 1.0e9;
+    let candidate = ReseedCandidate {
+        state: reseed,
+        covariance: DMatrix::identity(n, n) * 10.0,
+        lag_seconds: 1.0,
+    };
+    let accepted = executive.submit_smoother_reseed(
+        &ReseedGate {
+            max_step: 100.0,
+            ..ReseedGate::default()
+        },
+        &candidate,
+    );
+    assert!(!accepted, "an implausible reseed must be rejected");
+    let (after, _) = executive.filter().core_estimate();
+    assert!(
+        (after[0] - before[0]).abs() < f64::EPSILON,
+        "filter must be held unchanged on rejection (fail-closed)"
+    );
+    assert!(executive
+        .journals()
+        .integrity_events()
+        .iter()
+        .any(|event| event.reason.contains("reseed rejected")));
 }

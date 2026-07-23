@@ -24,3 +24,12 @@ synthetic geometry/tuning, Doppler assimilation improves position RMS given the 
 **degrades speed RMS against the same-initialization baseline** (mechanism [UNVERIFIED],
 pending an estimator tuning study). This is a synthetic demonstration of integration, not
 a real-signal or operational performance claim; real-signal behavior remains unverified.
+
+## High-speed envelope
+
+`MissionConfig` accepts speeds through 10.3 m/s (20 kn). Its opt-in `coordinated_turn`
+commands yaw rate during the turn; `wave_slam` creates seeded, bounded half-sine vertical
+bursts with a configurable pitch-coupled horizontal term; and `speed_scaled_imu` linearly
+scales IMU white noise and fixed bias from a reference speed. All default to `None`, leaving
+legacy output and RNG draw order unchanged. The wave/slam model is a synthetic stand-in
+**[UNVERIFIED vs real planing data]**, not a calibrated sea-state, hull, or mount model.

@@ -8,6 +8,7 @@
 )]
 
 pub mod estimator;
+pub mod highspeed;
 
 use std::f64::consts::TAU;
 use std::fs;

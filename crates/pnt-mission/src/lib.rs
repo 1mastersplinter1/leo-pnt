@@ -28,6 +28,8 @@ const TLE: &str = include_str!("../../pnt-ephemeris/tests/fixtures/iss.tle");
 
 #[derive(Debug, thiserror::Error)]
 pub enum MissionError {
+    #[error("invalid mission configuration: {0}")]
+    InvalidConfig(String),
     #[error(transparent)]
     Journal(#[from] JournalError),
     #[error(transparent)]
@@ -38,6 +40,33 @@ pub enum MissionError {
     TrackerConfig(#[from] ConfigError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+}
+
+/// Optional coordinated-turn dynamics. `None` retains the historical mission byte-for-byte.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CoordinatedTurnConfig {
+    /// Commanded yaw rate during the middle ten percent of the mission.
+    pub rate_rad_s: f64,
+}
+
+/// Seeded synthetic planing-hull wave/slam stand-in.
+///
+/// This is **[UNVERIFIED vs real planing data]**. Bursts use a bounded half-sine vertical
+/// acceleration and a pitch-coupled horizontal component. They are not a sea-state model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WaveSlamConfig {
+    pub burst_rate_hz: f64,
+    pub duration_s: f64,
+    pub vertical_peak_mps2: f64,
+    pub pitch_coupling: f64,
+}
+
+/// Optional linear speed scaling for IMU white noise and fixed bias.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpeedScaledImuConfig {
+    pub reference_speed_mps: f64,
+    pub noise_per_speed_ratio: f64,
+    pub bias_per_speed_ratio: f64,
 }
 
 /// Configuration values are deliberately modest by default so the smoke command is quick.
@@ -56,6 +85,9 @@ pub struct MissionConfig {
     pub gnss_noise_std_m: f64,
     pub doppler_noise_std_hz: f64,
     pub elevation_mask_rad: f64,
+    pub coordinated_turn: Option<CoordinatedTurnConfig>,
+    pub wave_slam: Option<WaveSlamConfig>,
+    pub speed_scaled_imu: Option<SpeedScaledImuConfig>,
 }
 
 impl Default for MissionConfig {
@@ -74,6 +106,9 @@ impl Default for MissionConfig {
             gnss_noise_std_m: 0.5,
             doppler_noise_std_hz: 2.0,
             elevation_mask_rad: 5.0_f64.to_radians(),
+            coordinated_turn: None,
+            wave_slam: None,
+            speed_scaled_imu: None,
         }
     }
 }
@@ -147,6 +182,7 @@ pub fn generate_mission(
     output: impl AsRef<Path>,
     config: &MissionConfig,
 ) -> Result<MissionSummary, MissionError> {
+    validate_config(config)?;
     let output = output.as_ref();
     let store = EphemerisStore::from_tle_str(TLE)?;
     let epoch = store.epoch(NORAD_ID).expect("fixture satellite exists");
@@ -181,7 +217,8 @@ pub fn generate_mission(
 
     for tick in 0..=total {
         let seconds = tick as f64 * dt;
-        let (heading, turn_rate) = heading_profile(seconds, config.duration_s as f64);
+        let (heading, turn_rate) =
+            heading_profile(seconds, config.duration_s as f64, config.coordinated_turn);
         if turn_rate.abs() > f64::EPSILON {
             turn_samples += 1;
         } else {
@@ -201,12 +238,16 @@ pub fn generate_mission(
         let utc = start + Duration::nanoseconds(i64::try_from(timestamp).unwrap_or(i64::MAX));
         let truth_position = local_to_ecef(north, east);
         let velocity_ecef = local_vector_to_ecef(velocity[0], velocity[1]);
-        let acceleration_ecef = local_vector_to_ecef(acceleration_ne[0], acceleration_ne[1]);
+        let slam = wave_slam_acceleration(seconds, config.seed, config.wave_slam);
+        let acceleration_ecef =
+            local_vector_to_ecef(acceleration_ne[0] + slam[0], acceleration_ne[1]);
+        let (imu_noise, imu_bias_scale) = scaled_imu(config);
         let imu = ImuSample {
             acceleration_mps2: std::array::from_fn(|axis| {
                 acceleration_ecef[axis]
-                    + config.imu_bias_mps2[axis]
-                    + config.imu_noise_std_mps2 * rng.normal()
+                    + if axis == 0 { slam[2] } else { 0.0 }
+                    + config.imu_bias_mps2[axis] * imu_bias_scale
+                    + imu_noise * rng.normal()
             }),
             angular_rate_rps: [0.0, 0.0, turn_rate],
         };
@@ -216,7 +257,7 @@ pub fn generate_mission(
             None,
             "imu",
             Frame::Sensor,
-            vec![config.imu_noise_std_mps2.powi(2)],
+            vec![imu_noise.powi(2)],
             MeasurementPayload::Imu(imu),
         ))?;
         sequence += 1;
@@ -461,17 +502,109 @@ pub fn run_study(
     Ok(report)
 }
 
-fn heading_profile(seconds: f64, duration: f64) -> (f64, f64) {
+fn heading_profile(
+    seconds: f64,
+    duration: f64,
+    coordinated: Option<CoordinatedTurnConfig>,
+) -> (f64, f64) {
     let turn_start = duration * 0.45;
     let turn_end = duration * 0.55;
     if seconds < turn_start {
         (0.0, 0.0)
     } else if seconds < turn_end {
-        let rate = FRAC_PI_2 / (turn_end - turn_start).max(1.0);
-        (rate * (seconds - turn_start), rate)
+        let legacy_rate = FRAC_PI_2 / (turn_end - turn_start).max(1.0);
+        let rate = coordinated.map_or(legacy_rate, |value| value.rate_rad_s);
+        let heading = rate * (seconds - turn_start);
+        (heading, rate)
     } else {
-        (FRAC_PI_2, 0.0)
+        let legacy_rate = FRAC_PI_2 / (turn_end - turn_start).max(1.0);
+        let rate = coordinated.map_or(legacy_rate, |value| value.rate_rad_s);
+        (rate * (turn_end - turn_start), 0.0)
     }
+}
+
+fn validate_config(config: &MissionConfig) -> Result<(), MissionError> {
+    if !(0.0..=10.3).contains(&config.speed_through_water_mps) {
+        return Err(MissionError::InvalidConfig(
+            "speed_through_water_mps must be in 0..=10.3".into(),
+        ));
+    }
+    if config.imu_rate_hz == 0 {
+        return Err(MissionError::InvalidConfig(
+            "imu_rate_hz must be non-zero".into(),
+        ));
+    }
+    if let Some(turn) = config.coordinated_turn {
+        if !turn.rate_rad_s.is_finite() || turn.rate_rad_s == 0.0 {
+            return Err(MissionError::InvalidConfig(
+                "coordinated turn rate must be finite and non-zero".into(),
+            ));
+        }
+    }
+    if let Some(wave) = config.wave_slam {
+        if !wave.burst_rate_hz.is_finite()
+            || wave.burst_rate_hz < 0.0
+            || !wave.duration_s.is_finite()
+            || wave.duration_s <= 0.0
+            || !wave.vertical_peak_mps2.is_finite()
+            || wave.vertical_peak_mps2 < 0.0
+            || !wave.pitch_coupling.is_finite()
+        {
+            return Err(MissionError::InvalidConfig(
+                "wave/slam values must be finite, with non-negative rate/peak and positive duration"
+                    .into(),
+            ));
+        }
+    }
+    if let Some(scaling) = config.speed_scaled_imu {
+        if !scaling.reference_speed_mps.is_finite()
+            || scaling.reference_speed_mps <= 0.0
+            || !scaling.noise_per_speed_ratio.is_finite()
+            || !scaling.bias_per_speed_ratio.is_finite()
+        {
+            return Err(MissionError::InvalidConfig(
+                "speed-scaled IMU values must be finite and reference speed must be positive"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn scaled_imu(config: &MissionConfig) -> (f64, f64) {
+    config
+        .speed_scaled_imu
+        .map_or((config.imu_noise_std_mps2, 1.0), |scaling| {
+            let ratio = config.speed_through_water_mps / scaling.reference_speed_mps - 1.0;
+            (
+                config.imu_noise_std_mps2 * (1.0 + scaling.noise_per_speed_ratio * ratio).max(0.0),
+                (1.0 + scaling.bias_per_speed_ratio * ratio).max(0.0),
+            )
+        })
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn wave_slam_acceleration(seconds: f64, seed: u64, config: Option<WaveSlamConfig>) -> [f64; 3] {
+    let Some(config) = config else {
+        return [0.0; 3];
+    };
+    // One deterministic Bernoulli opportunity per burst duration. Hashing the interval makes
+    // the result independent of sample rate and avoids perturbing the legacy RNG stream.
+    let interval = (seconds / config.duration_s).floor() as u64;
+    let phase = seconds.rem_euclid(config.duration_s) / config.duration_s;
+    let mut hash = interval ^ seed ^ 0x5741_5645_534c_414d;
+    hash ^= hash >> 30;
+    hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    hash ^= hash >> 27;
+    hash = hash.wrapping_mul(0x94d0_49bb_1331_11eb);
+    hash ^= hash >> 31;
+    let unit = hash as f64 / u64::MAX as f64;
+    let probability = (config.burst_rate_hz * config.duration_s).clamp(0.0, 1.0);
+    if unit >= probability {
+        return [0.0; 3];
+    }
+    let vertical = config.vertical_peak_mps2 * (std::f64::consts::PI * phase).sin();
+    [vertical * config.pitch_coupling, 0.0, vertical]
 }
 
 fn velocity_ne(heading: f64, config: &MissionConfig) -> [f64; 2] {
@@ -594,4 +727,50 @@ pub fn read_manifest(path: impl AsRef<Path>) -> Result<RunManifest, MissionError
     Ok(serde_json::from_reader(
         std::fs::File::open(path.as_ref().join("manifest.json")).map_err(JournalError::Io)?,
     )?)
+}
+
+#[cfg(test)]
+mod high_speed_tests {
+    use super::*;
+
+    #[test]
+    fn slam_is_seeded_bounded_and_pitch_coupled() {
+        let config = WaveSlamConfig {
+            burst_rate_hz: 10.0,
+            duration_s: 1.0,
+            vertical_peak_mps2: 4.0,
+            pitch_coupling: 0.2,
+        };
+        let first = wave_slam_acceleration(0.5, 4, Some(config));
+        let second = wave_slam_acceleration(0.5, 4, Some(config));
+        assert_eq!(first.map(f64::to_bits), second.map(f64::to_bits));
+        assert!(first[2].abs() <= 4.0);
+        assert!((first[0] - first[2] * 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn envelope_accepts_twenty_knots_and_rejects_more() {
+        let mut config = MissionConfig {
+            speed_through_water_mps: 10.3,
+            ..MissionConfig::default()
+        };
+        assert!(validate_config(&config).is_ok());
+        config.speed_through_water_mps = 10.31;
+        assert!(matches!(
+            validate_config(&config),
+            Err(MissionError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn configured_turn_rate_controls_centripetal_acceleration() {
+        let config = MissionConfig {
+            speed_through_water_mps: 10.0,
+            coordinated_turn: Some(CoordinatedTurnConfig { rate_rad_s: 0.1 }),
+            ..MissionConfig::default()
+        };
+        let (_, rate) = heading_profile(46.0, 100.0, config.coordinated_turn);
+        assert!((rate - 0.1).abs() < f64::EPSILON);
+        assert!((config.speed_through_water_mps * rate - 1.0).abs() < f64::EPSILON);
+    }
 }

@@ -161,3 +161,43 @@ Development proceeds as connected vertical slices:
 Every slice must demonstrate that the running estimator propagates from IMU input even
 when no measurements update it. Unit success without an executable end-to-end path is not
 completion.
+
+## Implementation status (2026-07-23)
+
+Appended addendum; the reviewed body above is unchanged. This maps the thirteen modules
+above to their shipped crate and state as of the ship record (D27) and the post-ship waves
+that followed it (D28-D39). Status only — see `.orchestration/DECISIONS.md` for rationale
+and `.orchestration/PLAN.md` for the unit table.
+
+| # | Module | Crate(s) | State |
+|---|--------|----------|-------|
+| 1 | Configuration and authority | `pnt-config`, `fusion-executive` | Shipped. `gnss_authority` rejects unknown values; routing enforced at bus ingress before any fusion update. |
+| 2 | Clock/time service | `pnt-time` | Shipped. `ClockService`/`ManualClock` own monotonic ordering; estimator owns clock bias/drift as filter states, not system time. |
+| 3 | Sensor adapters | `fusion-executive` ingress paths | Shipped for IMU, heading, speed-through-water, GNSS, Orbcomm-reject, tracker Doppler. No physical device adapters (SDR/serial) exist yet — inputs are journal/synthetic/SITL-driven. |
+| 4 | SDR capture | — | Not built. No bladeRF capture path exists; `pnt-tracker` and `pnt-mission` consume synthetic or fixture-derived IQ/observations, not live RF. |
+| 5 | Signal trackers | `pnt-tracker` | Shipped (U-T1, D36): FFT correlation-peak Doppler over a frequency/delay grid with phase refinement, `NoDetection` below threshold. Synthetic-IQ validated over 2000-4000 Monte-Carlo seeds; real PSS/SSS/beacon sequences are `[UNVERIFIED]` (U-R4 research only, no real-signal decoder in-tree). OneWeb tracking remains gated on the un-run 24-hour occupancy survey. |
+| 6 | Ephemeris store and propagator | `pnt-ephemeris` | Shipped (U-E1, D21): local OMM/TLE storage, six-hour default age gate, SGP4 propagation, TEME-to-ECEF, Vallado-case-validated. |
+| 7 | Doppler predictor | `pnt-predictor` | Shipped. Geometric range-rate/Doppler prediction and its linearisation both live here (relocated from the executive per D26 — see "known deviations" below). |
+| 8 | Observation integrity gate | `pnt-estimator` (chi-square/NIS gate) + `fusion-executive` (elevation mask, decision routing/journalling) | Shipped, but not as a standalone crate — see "known deviations". Elevation mask defaults to **5 degrees**, `[UNVERIFIED]` tuning value (`fusion-executive::DopplerPipeline`, default `elevation_mask_rad = Some(5.0_f64.to_radians())`; `without_elevation_mask()` / `with_elevation_mask_degrees()` available). Chi-square threshold is an explicit, optional `Option<f64>` per update. |
+| 9 | Estimator | `pnt-estimator` | Shipped (U-F1, D22): nine-state error-state EKF, IMU-driven propagation every event, per-satellite/per-pass transmit-frequency nuisance bias with retirement, MSL sea-surface pseudo-measurement. |
+| 10 | Solution integrity monitor | `pnt-integrity` (`AuthoritySolution`, protection limits) | Shipped as part of the authority supervisor below; not a separate crate. |
+| 11 | Authority supervisor | `pnt-integrity` (`AuthoritySupervisor`) | Shipped and **real** (U-A1, D33): fail-closed, monotonic watchdog independent of estimator convergence, arm/disarm input (D13) wired, alarm escalation. Reached CLOSED only after four dual-review rounds each of which caught a real latch/merge bypass (D30-D33) — none reached `main`. `IntegrityStub` (unconditional fail-open) still exists in the crate as an explicit placeholder for tests/tooling that do not exercise authority logic; `fusion-executive`'s default production constructor uses `AuthoritySupervisor::fail_closed`, not the stub. |
+| 12 | MAVLink publisher | `tools/mavlink_bridge` (Python, not a Rust crate) | Shipped (U-M1, D24): 5 Hz `GPS_INPUT`, independent horizontal/speed accuracy, MSL-constrained `alt`, `vd = 0`, real HDOP forwarding, yaw-unavailable sentinel fixed to spec (0, not 65535). SITL-validated against pinned `Rover-4.6.3` (`tools/sitl`), including the D17a characterisation of native ArduPilot behaviour on `GPS_INPUT` silence — SITL-only, on-vessel confirmation still open. |
+| 13 | Journal/replay service | `pnt-journal` (write/read), `pnt-replay` (offline replay) | Shipped. `FileJournals` is a real on-disk hand-rolled binary codec with CRC-32 (U-J1, D29), replacing the earlier in-memory-only journals. `pnt-replay::replay_paired` reproduces the same measurement stream into fresh `production`/`recorded_only` executives for truth-scored comparison, and can now assimilate journalled `TrackerDoppler` in denied-mode replay via an optional Doppler-pipeline configuration (U-I3, D39). |
+
+`pnt-mission` (not numbered above; a capstone, not an architecture module) generates,
+journals and studies a synthetic full-stack rehearsal through the same `pnt-replay` path
+(U-E2/U-I3, D38/D39) — the synthetic stand-in for build-order step 9's real-capture headline.
+
+### Known deviations already ruled (not open items)
+
+- **The observation integrity gate (module 8) is not a separate crate.** The chi-square/NIS
+  accept-reject decision lives in `pnt-estimator`'s update functions; elevation screening and
+  decision routing/journalling live in `fusion-executive`. Raised as U-I2 review finding F6
+  and accepted as informational, not a blocking deviation (`.orchestration/reports/U-I2-review-opus.md`:
+  "F6 info gate-in-estimator boundary accepted").
+- **Doppler linearisation (module 7) lives in `pnt-predictor`, not hand-built in the
+  executive.** An early integration pass hand-built the Jacobian inline in
+  `fusion-executive`, which review (U-I2 Opus F1) identified as both an architecture
+  deviation from this document and a finite-difference test blind spot; U-I2.1 relocated it
+  to `pnt-predictor` per module 7 and added finite-difference checks (D26).

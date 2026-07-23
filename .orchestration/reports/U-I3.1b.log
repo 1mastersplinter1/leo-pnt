@@ -1,0 +1,353 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.5
+--------
+workdir: /home/od/work/leo-pnt-wt-UI3
+model: gpt-5.6-sol
+provider: openai
+approval: on-request
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 019f8ce7-9b38-76e3-a23a-f99b480d55fc
+--------
+user
+You are unit U-I3.1 resuming after an interruption. The worktree has UNCOMMITTED partial fix-round work (modified pnt-mission lib+tests, pnt-replay lib, fusion-executive tests) — main is already merged in. Read .orchestration/reports/U-I3-review-opus.md (your mandate: findings F1-F7 — four-way attribution table with disclosed prior, honest velocity-degradation statement, isolating test assertions, epoch-set disclosure, routes footnote, Orbcomm-with-pipeline reject test), inspect git diff, finish ALL items, and get the gate green: PATH="$HOME/.cargo/bin:$HOME/.cargo/bin:$PATH" cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --all -- --check. Update .orchestration/reports/U-I3.md dispositions + corrected tables. Commit on branch unit/U-I3; never merge to main.
+codex
+I’m resuming U-I3.1 from the existing worktree. I’ll first reconcile the review findings against the uncommitted diff, then finish the implementation/tests, run the full gate, update the report, and commit only on `unit/U-I3`.
+exec
+/bin/bash -lc "sed -n '1,240p' .orchestration/reports/U-I3-review-opus.md && git status --short --branch && git diff --stat && git diff" in /home/od/work/leo-pnt-wt-UI3
+ succeeded in 0ms:
+(Reviewer: Opus, fresh context, deep seat. Verdict: FAIL — evidentiary misattribution; wiring itself sound.)
+- F1 HIGH/high pnt-mission/src/lib.rs:358 vs :359-375 + report:21-27 — denied-with-Doppler gets a truth-equivalent receiver prior (position [6378137,0,0], velocity [0,-0.10,3.25] = truth generator's own initial state); DR-only baseline gets FilterStub::default() (origin). Reviewer isolation: prior-only (Doppler suppressed via chi2=0) scores 116.08 m — ~60% of the 153→92 improvement — with mupd=362. Report attributes the whole delta to Doppler. Fix: four-way table (DR-only, prior-only, prior+Doppler, optionally no-prior+Doppler 13216 m), disclose the prior explicitly, attribute contributions separately.
+- F2 MED/high — velocity story inverted by baseline choice: vs prior-only (0.277) Doppler degrades speed RMS ~8× (2.186); report says "did not improve" vs 1.312. State the degradation plainly + explain (see F6: expected LEO-Doppler geometry, strong position/weak adverse receiver-velocity constraint with stub-filter tuning; [UNVERIFIED] pending real EKF tuning study).
+- F3 MED/high tests/mission.rs:114-124 — test asserts doppler<dr which prior-only already satisfies; does not isolate the Doppler contribution. Fix: assert prior+Doppler position < prior-only (the true Doppler contribution) and record the velocity behavior honestly (assert the measured direction with a comment, or bound it).
+- F4 LOW-MED/high — Doppler run scores 724 epochs vs 543 (extra accepted-Doppler epochs); headline mixes fix frequency with fix quality — disclose; optionally score on a common epoch grid.
+- F5 LOW/high — doppler_fusion_routes counts routing (181 in all modes; honest but invites misreading) — relabel or footnote; measurement_updates delta is the assimilation evidence.
+- F6 LOW/med — no sign/frame bug: position improves with true prior; degradation is geometry/tuning honesty; update path untouched by U-I3.
+- F7 LOW/high — Orbcomm ingress gate intact (pre-routing), but add the with-pipeline reject test.
+- Process: worktree lacked .orchestration/briefs/U-I3.md and D38 (branch forked before those commits) — merge main first in the fix round.
+Confirmed clean: circularity, determinism (bit-exact incl. Production + denied+Doppler), schema v2 counters, prior-update exclusion arithmetic, every reported number reproduces.
+## unit/U-I3
+ M crates/fusion-executive/tests/executive.rs
+ M crates/pnt-mission/src/lib.rs
+ M crates/pnt-mission/tests/mission.rs
+ M crates/pnt-replay/src/lib.rs
+ crates/fusion-executive/tests/executive.rs | 23 ++++++++
+ crates/pnt-mission/src/lib.rs              | 88 ++++++++++++++++++++++++------
+ crates/pnt-mission/tests/mission.rs        | 42 +++++++++++---
+ crates/pnt-replay/src/lib.rs               |  2 +-
+ 4 files changed, 131 insertions(+), 24 deletions(-)
+diff --git a/crates/fusion-executive/tests/executive.rs b/crates/fusion-executive/tests/executive.rs
+index dd5eed3..c205eeb 100644
+--- a/crates/fusion-executive/tests/executive.rs
++++ b/crates/fusion-executive/tests/executive.rs
+@@ -182,6 +182,29 @@ fn orbcomm_is_rejected_before_fusion_by_default() {
+     assert_eq!(executive.journals().measurement_records().len(), 1);
+ }
+ 
++#[test]
++fn orbcomm_is_rejected_before_an_installed_doppler_pipeline() {
++    let store =
++        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
++            .unwrap();
++    let mut executive = Executive::test_stub(GnssAuthority::Production)
++        .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
++    let routes = executive.process(envelope(
++        1,
++        MeasurementPayload::TrackerDoppler(TrackerDoppler {
++            constellation: Constellation::Orbcomm,
++            correlation_peak_hz: 12.0,
++            nominal_carrier_hz: 137_000_000.0,
++        }),
++    ));
++    assert!(routes.is_empty());
++    assert_eq!(executive.filter().measurement_updates(), 0);
++    assert_eq!(executive.journals().integrity_events().len(), 1);
++    assert!(executive.journals().integrity_events()[0]
++        .reason
++        .contains("not provisioned"));
++}
++
+ #[test]
+ fn oneweb_is_gated_by_config() {
+     let observation = MeasurementPayload::TrackerDoppler(TrackerDoppler {
+diff --git a/crates/pnt-mission/src/lib.rs b/crates/pnt-mission/src/lib.rs
+index 27387ae..11ce80c 100644
+--- a/crates/pnt-mission/src/lib.rs
++++ b/crates/pnt-mission/src/lib.rs
+@@ -97,16 +97,34 @@ pub struct StudyReport {
+     pub caveat: String,
+     pub mission: MissionSummary,
+     pub replay: ReplayReport,
+-    pub three_way: ThreeWayTable,
++    pub four_way: FourWayTable,
++    pub attribution: StudyAttribution,
+     pub qualitative_demonstration: QualitativeDemonstration,
+     pub integration_gaps: Vec<String>,
+ }
+ 
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+-pub struct ThreeWayTable {
+-    pub aided: RunSummary,
++pub struct FourWayTable {
+     pub denied_dr_only: RunSummary,
+-    pub denied_with_doppler: RunSummary,
++    pub denied_prior_only: RunSummary,
++    pub denied_prior_with_doppler: RunSummary,
++    pub denied_no_prior_with_doppler: RunSummary,
++}
++
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++pub struct StudyAttribution {
++    /// Caller-provided initialization; this is truth-equivalent for the synthetic fixture.
++    pub disclosed_receiver_prior: ReceiverPrior,
++    /// DR-only RMS minus prior-only RMS. Positive values mean the prior reduced error.
++    pub prior: RmsContribution,
++    /// Prior-only RMS minus prior+Doppler RMS. Positive values mean Doppler reduced error.
++    pub doppler_given_prior: RmsContribution,
++}
++
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++pub struct RmsContribution {
++    pub position_rms_reduction_m: f64,
++    pub speed_rms_reduction_mps: f64,
+ }
+ 
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+@@ -356,31 +374,69 @@ pub fn run_study(
+     let output = output.as_ref();
+     let mission = generate_mission(output, config)?;
+     let replay = replay_paired(output, 1)?;
++    let receiver_prior = ReceiverPrior {
++        position_ecef_m: local_to_ecef(0.0, 0.0),
++        velocity_ecef_mps: local_vector_to_ecef(
++            config.speed_through_water_mps + config.current_north_mps,
++            config.current_east_mps,
++        ),
++        position_variance_m2: [1.0; 3],
++        velocity_variance_mps2: [1.0; 3],
++    };
+     let doppler_config = ReplayDopplerConfig {
+         ephemeris_tle: TLE.to_owned(),
+         // The denied filter intentionally has no GNSS-derived geodetic initialization.
+         // Disable elevation screening while retaining the same ephemeris and measurements.
+         elevation_mask_degrees: None,
+         chi_square_threshold: None,
+-        receiver_prior: Some(ReceiverPrior {
+-            position_ecef_m: local_to_ecef(0.0, 0.0),
+-            velocity_ecef_mps: local_vector_to_ecef(
+-                config.speed_through_water_mps + config.current_north_mps,
+-                config.current_east_mps,
+-            ),
+-            position_variance_m2: [1.0; 3],
+-            velocity_variance_mps2: [1.0; 3],
+-        }),
++        receiver_prior: Some(receiver_prior),
+     };
+     let doppler_replay = replay_paired_configured(output, 1, Some(&doppler_config))?;
++    let mut prior_only_config = doppler_config.clone();
++    prior_only_config.chi_square_threshold = Some(0.0);
++    let prior_only_replay =
++        replay_paired_configured(output, 1, Some(&prior_only_config))?;
++    let mut no_prior_doppler_config = doppler_config.clone();
++    no_prior_doppler_config.receiver_prior = None;
++    let no_prior_doppler_replay =
++        replay_paired_configured(output, 1, Some(&no_prior_doppler_config))?;
+     let aided = replay.aided.horizontal_position_error_m.rms;
+     let withheld = replay.withheld.horizontal_position_error_m.rms;
++    let dr = &replay.withheld;
++    let prior_only = &prior_only_replay.withheld;
++    let prior_with_doppler = &doppler_replay.withheld;
++    let contribution = |baseline: &RunSummary, treatment: &RunSummary| RmsContribution {
++        position_rms_reduction_m: baseline
++            .horizontal_position_error_m
++            .rms
++            .expect("generated mission has scored position epochs")
++            - treatment
++                .horizontal_position_error_m
++                .rms
++                .expect("generated mission has scored position epochs"),
++        speed_rms_reduction_mps: baseline
++            .horizontal_speed_error_mps
++            .rms
++            .expect("generated mission has scored speed epochs")
++            - treatment
++                .horizontal_speed_error_mps
++                .rms
++                .expect("generated mission has scored speed epochs"),
++    };
++    let prior_contribution = contribution(dr, prior_only);
++    let doppler_given_prior_contribution = contribution(prior_only, prior_with_doppler);
+     let report = StudyReport {
+         caveat: "SYNTHETIC DEMONSTRATION ONLY — not a performance claim; real-signal behavior is [UNVERIFIED].".into(),
+-        three_way: ThreeWayTable {
+-            aided: replay.aided.clone(),
++        four_way: FourWayTable {
+             denied_dr_only: replay.withheld.clone(),
+-            denied_with_doppler: doppler_replay.withheld,
++            denied_prior_only: prior_only_replay.withheld,
++            denied_prior_with_doppler: doppler_replay.withheld,
++            denied_no_prior_with_doppler: no_prior_doppler_replay.withheld,
++        },
++        attribution: StudyAttribution {
++            disclosed_receiver_prior: receiver_prior,
++            prior: prior_contribution,
++            doppler_given_prior: doppler_given_prior_contribution,
+         },
+         qualitative_demonstration: QualitativeDemonstration {
+             aided_smaller_than_withheld: aided.zip(withheld).is_some_and(|(a, w)| a < w),
+diff --git a/crates/pnt-mission/tests/mission.rs b/crates/pnt-mission/tests/mission.rs
+index 65bdfb6..23191c8 100644
+--- a/crates/pnt-mission/tests/mission.rs
++++ b/crates/pnt-mission/tests/mission.rs
+@@ -63,7 +63,8 @@ fn generated_capture_round_trips_all_measurements_and_truth() {
+ #[test]
+ fn paired_study_is_a_synthetic_qualitative_rehearsal() {
+     let directory = TempDir::new().unwrap();
+-    let report = run_study(directory.path(), &small(11)).unwrap();
++    // The seeded headline geometry is the scope of the qualitative direction assertions.
++    let report = run_study(directory.path(), &MissionConfig::default()).unwrap();
+     assert!(report.caveat.contains("not a performance claim"));
+     assert!(report.qualitative_demonstration.aided_smaller_than_withheld);
+     assert!(
+@@ -111,17 +112,44 @@ fn paired_study_is_a_synthetic_qualitative_rehearsal() {
+         report.mission.truth_count
+     );
+     assert_eq!(report.replay.withheld.gnss_fusion_routes, 0);
+-    let dr = &report.three_way.denied_dr_only;
+-    let doppler = &report.three_way.denied_with_doppler;
++    let dr = &report.four_way.denied_dr_only;
++    let prior_only = &report.four_way.denied_prior_only;
++    let doppler = &report.four_way.denied_prior_with_doppler;
+     assert!(doppler.doppler_fusion_routes > 0);
+-    assert!(doppler.measurement_updates > dr.measurement_updates);
++    assert_eq!(
++        prior_only.measurement_updates, dr.measurement_updates,
++        "the configured prior is excluded from journal-driven update counts"
++    );
++    assert!(doppler.measurement_updates > prior_only.measurement_updates);
+     assert!(
+         doppler.horizontal_position_error_m.rms.unwrap()
+-            < dr.horizontal_position_error_m.rms.unwrap(),
+-        "synthetic Doppler rehearsal should improve position RMS: DR={:?}, Doppler={:?}",
+-        dr.horizontal_position_error_m.rms,
++            < prior_only.horizontal_position_error_m.rms.unwrap(),
++        "Doppler contribution must be isolated from the prior: prior={:?}, prior+Doppler={:?}",
++        prior_only.horizontal_position_error_m.rms,
+         doppler.horizontal_position_error_m.rms
+     );
++    assert!(
++        doppler.horizontal_speed_error_mps.rms.unwrap()
++            > prior_only.horizontal_speed_error_mps.rms.unwrap(),
++        "this synthetic geometry/tuning degrades velocity: prior={:?}, prior+Doppler={:?}",
++        prior_only.horizontal_speed_error_mps.rms,
++        doppler.horizontal_speed_error_mps.rms
++    );
++    assert!(report.attribution.prior.position_rms_reduction_m > 0.0);
++    assert!(
++        report
++            .attribution
++            .doppler_given_prior
++            .position_rms_reduction_m
++            > 0.0
++    );
++    assert!(
++        report
++            .attribution
++            .doppler_given_prior
++            .speed_rms_reduction_mps
++            < 0.0
++    );
+ }
+ 
+ #[test]
+diff --git a/crates/pnt-replay/src/lib.rs b/crates/pnt-replay/src/lib.rs
+index 1cfd717..769bf2b 100644
+--- a/crates/pnt-replay/src/lib.rs
++++ b/crates/pnt-replay/src/lib.rs
+@@ -66,7 +66,7 @@ pub struct ReplayDopplerConfig {
+     pub receiver_prior: Option<ReceiverPrior>,
+ }
+ 
+-#[derive(Clone, Copy, Debug, PartialEq)]
++#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct ReceiverPrior {
+     pub position_ecef_m: [f64; 3],
+     pub velocity_ecef_mps: [f64; 3],
+
+exec
+/bin/bash -lc "find .. -name AGENTS.md -print; sed -n '1,260p' .orchestration/reports/U-I3.md; rg \"three_way|FourWayTable|denied_with_doppler|doppler_fusion_routes\" crates .orchestration/reports/U-I3.md" in /home/od/work/leo-pnt-wt-UI3
+ succeeded in 110ms:
+# U-I3 report — Doppler assimilation in replay
+
+## Result
+
+Implemented optional replay Doppler configuration using immutable TLE records, explicit
+elevation-mask and innovation-gate choices, and an optional caller-owned receiver prior.
+Every Executive receives a fresh ephemeris store and pipeline. Both paired modes still
+consume clones of one already-loaded measurement vector. The prior is never derived from
+measurement or truth journals and its initialization updates are excluded from the reported
+journal `measurement_updates` count.
+
+The mission study now emits aided, denied DR-only, and denied-with-Doppler summaries from
+the same journal. This is a synthetic integration demonstration, not a performance claim.
+
+## Seeded evidence
+
+Default mission (`seed=1`, `duration_s=180`):
+
+| run | Doppler fusion routes | measurement updates | position RMS (m) | speed RMS (m/s) |
+|---|---:|---:|---:|---:|
+| aided | 181 | 1448 | 0.8261608336425085 | 0.3491087994720640 |
+| denied DR-only | 181 | 362 | 153.1263153931950 | 1.3118538039291545 |
+| denied with Doppler | 181 | 543 | 91.79453277363858 | 2.186010970891528 |
+
+Denied-with-Doppler accepted 181 additional journal-driven updates and improved synthetic
+position RMS relative to DR-only. Speed RMS did not improve. These numbers demonstrate
+wiring and a qualitative position result only; they do not establish real-signal accuracy.
+
+## D35 carried items
+
+- Closed comparison pairing accounting: schema v2 separately reports
+  `excluded_no_paired_epoch` and `excluded_no_near_truth`.
+- Retained direct aided-minus-withheld sign assertions and hand-derived statistics tests.
+- Retained exact input-count identity assertions across authority modes.
+- Extended bit-exact replay assertions to Production and denied-with-Doppler.
+
+## Schema change
+
+`ReplayReport.schema_version` is now `2`. `RunSummary` adds
+`doppler_fusion_routes`; `ComparisonSummary` adds both exclusion counts. The README
+documents these fields and configured replay semantics.
+
+## Verification
+
+- Focused: `cargo test -p pnt-replay -p pnt-mission` — PASS.
+- `cargo test` — PASS.
+- `cargo clippy --all-targets -- -D warnings` — PASS.
+- `cargo fmt --all -- --check` — PASS.
+
+## [UNVERIFIED]
+
+- Real RF/capture behavior and operational performance.
+- Surveyed antenna lever arm (the Executive still uses its documented zero lever-arm hook).
+- Whether the synthetic position improvement generalizes to other geometries, missions,
+  noise models, gate settings, or receiver priors.
+.orchestration/reports/U-I3.md:`doppler_fusion_routes`; `ComparisonSummary` adds both exclusion counts. The README
+crates/pnt-replay/src/lib.rs:    pub doppler_fusion_routes: u64,
+crates/pnt-replay/src/lib.rs:    pub doppler_fusion_routes: u64,
+crates/pnt-replay/src/lib.rs:    let mut doppler_fusion_routes = 0;
+crates/pnt-replay/src/lib.rs:            doppler_fusion_routes += fusion;
+crates/pnt-replay/src/lib.rs:        doppler_fusion_routes,
+crates/pnt-replay/src/lib.rs:        doppler_fusion_routes: run.doppler_fusion_routes,
+crates/pnt-replay/README.md:the same already-loaded measurement vector. `doppler_fusion_routes` counts journaled
+crates/pnt-mission/tests/mission.rs:    assert!(doppler.doppler_fusion_routes > 0);
+crates/pnt-mission/README.md:The emitted `three_way` table reports aided, denied dead-reckoning-only, and denied with
+crates/pnt-mission/src/lib.rs:    pub four_way: FourWayTable,
+crates/pnt-mission/src/lib.rs:pub struct FourWayTable {
+crates/pnt-mission/src/lib.rs:        four_way: FourWayTable {
+
+codex
+The partial code already covers the core isolation design and the Orbcomm pipeline rejection case. I found one stale public README and the unit report still contains the original three-way attribution, so I’ll correct those alongside any compile/test issues and regenerate the exact four-way evidence from the study output.
+exec
+/bin/bash -lc "sed -n '1,220p' crates/pnt-mission/README.md; sed -n '1,180p' crates/pnt-replay/README.md; cargo test -p pnt-mission -p fusion-executive --tests" in /home/od/work/leo-pnt-wt-UI3

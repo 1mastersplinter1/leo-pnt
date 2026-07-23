@@ -1,1 +1,5 @@
 target/
+tools/.venv/
+tools/sitl/ardupilot/
+tools/sitl/evidence/eeprom.bin
+tools/sitl/logs/

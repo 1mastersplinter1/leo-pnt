@@ -35,3 +35,15 @@ Ordering rationale (from handoff failure modes): executive before modules (#4), 
 | U-I2 | Integration: Doppler pipeline wired through executive + contracts v4/v4.1 | Sol (codex) | SERIAL | U-E1, U-F1 | **done — merged (D26)** |
 | U-A1 | Authority supervisor (SAFETY_CASE §1–§3, fail-closed) | Sol (codex) | wave 4 | U-S1, U-I2 | **done — merged (D33)** |
 | U-J1 | On-disk journals (FileJournals) | Sol (codex) | wave 4 | U-C1 | **done — merged (D29)** |
+
+## Wave 5 / 6 — final units
+
+| Unit | Title | Author model | Mode | Depends on | Status |
+|------|-------|--------------|------|-----------|--------|
+| U-T1 | Correlation Doppler tracker (`pnt-tracker`), synthetic-IQ validated | Sol (codex) | wave 5 | U-I2 | **done — merged (D36)** |
+| U-R3 | Replay harness (`pnt-replay`), aided/withheld truth-anchored statistics | Sol (codex) | wave 5 | U-J1, U-I2 | **done — merged (D35)** |
+| U-R4 | LEO downlink signal-structure research (live web, stdout contract) | Grok | wave 5 PARALLEL | — | **done (unreviewed, D5/D9 gate; stdout per U-R4 brief)** |
+| U-E2 | Synthetic end-to-end mission capstone (`pnt-mission`) | Sol (codex) | wave 6 | U-T1, U-R3 | **done — merged (D38)**, U-E2.1 applied (commit 9b8cf52, gate closed D38) |
+| U-N1 | Authority-contract numeric-freeze proposal (`PARAMS_PROPOSAL.md`, docs-only) | Sol (codex) | wave 6 | U-A1, U-T1 | **done — merged (D38)**, PROPOSED-NOT-FROZEN |
+| U-I3 | Doppler assimilation in replay: the real denied-mode headline | Sol (codex) | wave 6 | U-E2, U-R3 | **done — merged (D39)** |
+| U-D2 | Documentation-currency pass (root README, ARCHITECTURE addendum, this table) | Sonnet | wave 6, docs-only | all above | **fix round after single-seat verification** |

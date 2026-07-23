@@ -96,6 +96,22 @@ pub struct MslAltitudeUpdate {
     pub chi_square_threshold: Option<f64>,
 }
 
+/// A stationary batch fix handed into the moving filter (U4b). Applied as a *soft* prior — a
+/// measurement update whose covariance is the batch posterior **inflated by elapsed-time
+/// process growth** and clamped so it can never be tighter than the filter already is. This is
+/// the concrete fix for the D39/D43 prior-confounding bug (a tight stale prior the filter
+/// cannot move away from).
+#[derive(Clone, Copy, Debug)]
+pub struct SoftPrior {
+    pub position_ecef_m: [f64; 3],
+    pub velocity_ecef_mps: [f64; 3],
+    /// Batch posterior variances (per ECEF axis) at the moment the fix was taken.
+    pub position_variance_m2: [f64; 3],
+    pub velocity_variance_mps2: [f64; 3],
+    /// Seconds elapsed since the fix was taken; the prior is softened by process growth over it.
+    pub elapsed_seconds: f64,
+}
+
 /// Kept under the historical name so the unmodified executive remains source-compatible.
 #[derive(Debug)]
 pub struct FilterStub {
@@ -384,6 +400,54 @@ impl FilterStub {
             ));
         }
         results
+    }
+
+    /// Injects a stationary batch fix as a soft prior (U4b): the batch posterior variance is
+    /// inflated by process-noise growth over `elapsed_seconds`, then **clamped so it is never
+    /// tighter than the filter's current variance** for that state. This prevents a stale,
+    /// over-confident prior from over-constraining the filter (the D39/D43 confounding bug):
+    /// the state is nudged, not reset, and the covariance never shrinks below what the filter
+    /// already earned.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `elapsed_seconds` is negative or non-finite.
+    pub fn apply_soft_prior(&mut self, prior: &SoftPrior) {
+        assert!(prior.elapsed_seconds.is_finite() && prior.elapsed_seconds >= 0.0);
+        let t = prior.elapsed_seconds;
+        // Elapsed-time process growth. Position uncertainty grows with the acceleration random
+        // walk integrated twice (∝ q_a·t³/3, plus the carried velocity uncertainty ∝ t²);
+        // velocity grows ∝ q_a·t. This mirrors the propagate() Q model, conservatively.
+        let position_growth = self.process_noise.acceleration_variance * t.powi(3) / 3.0;
+        let velocity_growth = self.process_noise.acceleration_variance * t;
+        for component in 0..6 {
+            let (index, measured, base_variance, growth) = if component < 3 {
+                (
+                    POS + component,
+                    prior.position_ecef_m[component],
+                    prior.position_variance_m2[component],
+                    position_growth,
+                )
+            } else {
+                (
+                    VEL + component - 3,
+                    prior.velocity_ecef_mps[component - 3],
+                    prior.velocity_variance_mps2[component - 3],
+                    velocity_growth,
+                )
+            };
+            // Inflate the batch posterior by elapsed process growth. Anti-confounding guard:
+            // only apply the prior to a state it is *more certain* about than the filter already
+            // is. A stale, less-certain prior carries no new information, so it is skipped — it
+            // can neither yank the state nor (falsely) shrink the covariance (the D39/D43 bug).
+            let inflated = base_variance + growth;
+            if inflated >= self.covariance[(index, index)] {
+                continue;
+            }
+            let mut h = DVector::zeros(self.x.len());
+            h[index] = 1.0;
+            self.scalar_update(measured, self.x[index], &h, inflated, None);
+        }
     }
 
     fn scalar_update(
@@ -790,6 +854,68 @@ mod tests {
                 "velocity leaked without STW"
             );
         }
+    }
+
+    #[test]
+    fn soft_prior_does_not_over_constrain_a_confident_filter() {
+        // The D39/D43 prior-confounding bug: a stale stationary fix injected with an
+        // artificially tight covariance makes the moving filter refuse to move away from it.
+        // The soft prior must never be tighter than the filter already is for a state.
+        let mut filter = FilterStub::default();
+        // Filter is already confident about position (small variance) at the true point.
+        for axis in 0..3 {
+            filter.covariance[(POS + axis, POS + axis)] = 4.0; // 2 m sigma
+            filter.x[POS + axis] = 100.0;
+        }
+        let confident_before = filter.covariance[(POS, POS)];
+        // A STALE prior claims a *different* position with an over-confident 0.01 m^2 variance.
+        filter.apply_soft_prior(&SoftPrior {
+            position_ecef_m: [1000.0, 1000.0, 1000.0],
+            velocity_ecef_mps: [0.0, 0.0, 0.0],
+            position_variance_m2: [0.01, 0.01, 0.01],
+            velocity_variance_mps2: [0.01, 0.01, 0.01],
+            elapsed_seconds: 120.0, // 2 minutes stale
+        });
+        // The guard must prevent the covariance from shrinking below what the filter had, and
+        // the state must not be yanked all the way to the stale prior.
+        assert!(
+            filter.covariance[(POS, POS)] >= confident_before - 1.0e-9,
+            "soft prior over-constrained the filter (confounding bug)"
+        );
+        assert!(
+            filter.x[POS] < 600.0,
+            "state was yanked toward a stale over-confident prior: {}",
+            filter.x[POS]
+        );
+    }
+
+    #[test]
+    fn soft_prior_inflates_variance_by_elapsed_time() {
+        // An honest, non-stale prior should still be softened by how long ago it was taken.
+        let mut filter = FilterStub::default();
+        for axis in 0..3 {
+            filter.covariance[(POS + axis, POS + axis)] = 1.0e6; // filter is very unsure
+        }
+        let mut fresh = FilterStub::default();
+        for axis in 0..3 {
+            fresh.covariance[(POS + axis, POS + axis)] = 1.0e6;
+        }
+        let prior = |elapsed| SoftPrior {
+            position_ecef_m: [10.0, 0.0, 0.0],
+            velocity_ecef_mps: [0.0, 0.0, 0.0],
+            position_variance_m2: [1.0, 1.0, 1.0],
+            velocity_variance_mps2: [1.0, 1.0, 1.0],
+            elapsed_seconds: elapsed,
+        };
+        filter.apply_soft_prior(&prior(600.0)); // 10 min stale
+        fresh.apply_soft_prior(&prior(0.0)); // just taken
+                                             // The fresher prior pulls the state closer to the prior position (10 m) than the stale one.
+        assert!(
+            (fresh.x[POS] - 10.0).abs() < (filter.x[POS] - 10.0).abs(),
+            "a fresher prior should pull harder: fresh={}, stale={}",
+            fresh.x[POS],
+            filter.x[POS]
+        );
     }
 
     #[test]

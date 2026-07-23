@@ -1,9 +1,5 @@
-//! Deterministic validation campaigns for the PNT research stack.
-
-pub mod estimator;
-
-//! Deterministic synthetic-IQ stress studies for `pnt-tracker`.
-
+//! Deterministic validation campaigns for the PNT research stack:
+//! synthetic-IQ tracker stress studies and estimator consistency studies.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,

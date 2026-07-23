@@ -217,8 +217,20 @@ mode/actuation/timing depend on flight mode, EKF source/validity and configurati
 on this backend timeout alone. The earlier claim that Case B is bounded by a "~4 s configured
 non-manoeuvre timeout" is therefore **withdrawn**. Until U-M1 characterises the behaviour in
 SITL, **Case B's residual is classified `uncontrolled-pending-evidence`** — the same honest
-status as H6(a) and H7 — and the only responder currently relied upon is the **physical helm /
-kill-cord**. A one-way companion→ArduPilot TX failure is **not observable to the companion**
+treatment as H6/H7.
+
+*Amendment (2026-07-23, per D24): U-M1's SITL characterisation at pinned Rover-4.6.3 now
+exists — see `tools/sitl/evidence/D17a.md`. Measured: fix-type degradation at ~1.0 s of
+`GPS_INPUT` silence; EKF failsafe (`FS_EKF_ACTION=1`) commanded armed HOLD (throttle zero,
+neutral steering, no manoeuvre) at ~5.07 s; a companion-commanded HOLD executes in ~51 ms.
+This upgrades Case B from `uncontrolled-pending-evidence` to `SITL-characterised`: at this
+firmware and configuration a bounded non-manoeuvre response exists, via the EKF failsafe
+rather than `GPS_TIMEOUT_MS` as such. Scope limits: SITL-only (sea-trial confirmation
+pending), measured in GUIDED mode with default failsafe configuration; other modes and
+configurations remain [UNVERIFIED]. The pre-trial checklist retains confirmation of this
+behaviour on the actual vessel installation. Pending that on-vessel confirmation, the
+conservatively credited responder remains the **physical helm / kill-cord** — the same honest
+status as H6(a) and H7.* A one-way companion→ArduPilot TX failure is **not observable to the companion**
 without a return heartbeat; the companion judges link health via the ArduPilot→companion MAVLink
 heartbeat with its own deadline, but even on detection it cannot correct ArduPilot over the
 failed channel — detection serves alarm and logging, not actuator control.

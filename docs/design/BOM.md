@@ -255,6 +255,9 @@ quote, per the brief's own instruction ("no purchases, no quote requests").
 
 ## Iridium STL — procurement note, not a priced line item
 
+> **Superseded (2026-07-23, D42): STL is rejected by user decision — owned equipment only,
+> no service fees. Do not pursue the quote steps below; retained for the record only.**
+
 Per the brief and per R2 §1.4: no public list price exists for the Iridium STL service
 subscription or for VIAVI's SecureTime LEO receiver modules (STL-2600 / STL-1000). Both
 require a vendor quote. **Procurement action, not a BOM line:**

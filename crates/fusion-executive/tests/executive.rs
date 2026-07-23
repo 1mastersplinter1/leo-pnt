@@ -488,11 +488,86 @@ fn fixture_doppler_updates_filter_and_emits_bridge_schema_ndjson() {
 }
 
 #[test]
+fn inflated_ephemeris_is_accepted_and_journalled_as_a_note() {
+    let store =
+        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
+            .unwrap();
+    let query = store.epoch(25544).unwrap() + chrono::Duration::hours(7);
+    let aging = pnt_config::EphemerisAgingConfig {
+        los_rate_rad_s: 1.0e-6,
+        ..pnt_config::EphemerisAgingConfig::default()
+    };
+    let mut executive = Executive::new(
+        Config {
+            gnss_authority: GnssAuthority::Production,
+            oneweb_enabled: false,
+        },
+        ManualClock::default(),
+        FilterStub::default(),
+        IntegrityStub,
+        MemoryJournals::default(),
+    )
+    .with_ephemeris_aging(aging)
+    .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
+    let receiver = [3_518_304.71, 784_390.70, 5_244_191.85];
+    executive.process(envelope(
+        1,
+        MeasurementPayload::Gnss(GnssFix {
+            position_ecef_m: receiver,
+            velocity_ned_mps: [0.0; 3],
+        }),
+    ));
+    let satellite =
+        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
+            .unwrap()
+            .propagate_ecef_with_age(25544, query, chrono::Duration::hours(30))
+            .unwrap()
+            .state;
+    let prediction = pnt_predictor::predict(
+        pnt_predictor::SatelliteState {
+            position_ecef_m: satellite.position_m,
+            velocity_ecef_mps: satellite.velocity_mps,
+        },
+        pnt_predictor::ReceiverState {
+            position_ecef_m: executive.filter().state().position_ecef_m,
+            velocity_ecef_mps: executive.filter().state().velocity_ecef_mps,
+            clock_drift_mps: 0.0,
+        },
+        0.0,
+        1.6e9,
+        -90.0,
+    )
+    .unwrap();
+    let mut observation = envelope(
+        2,
+        MeasurementPayload::TrackerDoppler(TrackerDoppler {
+            constellation: Constellation::Starlink,
+            correlation_peak_hz: prediction.correlation_peak_hz,
+            nominal_carrier_hz: 1.6e9,
+        }),
+    );
+    observation.source_id = SourceId("25544".into());
+    observation.utc = Some(UtcTime {
+        rfc3339: query.to_rfc3339(),
+        uncertainty_ns: 1,
+    });
+    executive.process(observation);
+    assert!(executive.journals().integrity_events().iter().any(|event| {
+        event.reason.contains("NOTE ephemeris age") && event.reason.contains("applied sigma_add")
+    }));
+    assert!(executive
+        .journals()
+        .integrity_events()
+        .iter()
+        .any(|event| { event.reason == "Doppler innovation accepted" }));
+}
+
+#[test]
 fn stale_ephemeris_rejection_is_journalled() {
     let store =
         pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
             .unwrap();
-    let stale_time = store.epoch(25544).unwrap() + chrono::Duration::hours(7);
+    let stale_time = store.epoch(25544).unwrap() + chrono::Duration::hours(31);
     let mut executive = Executive::new(
         Config {
             gnss_authority: GnssAuthority::Off,

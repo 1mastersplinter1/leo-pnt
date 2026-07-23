@@ -1,7 +1,7 @@
 //! The sole runtime orchestrator.
 
-use chrono::{DateTime, Utc};
-use pnt_config::{Config, GnssAuthority};
+use chrono::{DateTime, Duration, Utc};
+use pnt_config::{Config, EphemerisAgingConfig, GnssAuthority};
 use pnt_ephemeris::EphemerisStore;
 use pnt_estimator::{DopplerRangeRateUpdate, Estimator, FilterStub, UpdateResult};
 use pnt_integrity::{
@@ -17,6 +17,38 @@ use pnt_types::{Constellation, MeasurementEnvelope, MeasurementPayload, Solution
 pub enum RoutingDestination {
     Fusion,
     TruthJournal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EphemerisAgeBand {
+    Fresh,
+    Inflated { sigma_add_mps: f64 },
+    Rejected,
+}
+
+/// Maps the fitted orbit-position error curve into additive range-rate uncertainty.
+///
+/// The LOS rotation approximation is `sigma_rr = |u_dot| sigma_r`; independent variance
+/// already represented at the fresh boundary is removed in quadrature.
+#[must_use]
+pub fn ephemeris_age_band(age_s: f64, config: EphemerisAgingConfig) -> EphemerisAgeBand {
+    if age_s <= config.fresh_age_s {
+        return EphemerisAgeBand::Fresh;
+    }
+    if age_s > config.ceiling_age_s {
+        return EphemerisAgeBand::Rejected;
+    }
+    let orbit_sigma_m = |seconds: f64| {
+        1000.0
+            * (config.orbit_error_intercept_km
+                + config.orbit_error_slope_km_per_h * seconds / 3600.0)
+    };
+    let current = orbit_sigma_m(age_s);
+    let fresh = orbit_sigma_m(config.fresh_age_s);
+    EphemerisAgeBand::Inflated {
+        sigma_add_mps: config.los_rate_rad_s
+            * (current.mul_add(current, -fresh * fresh)).max(0.0).sqrt(),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,6 +68,7 @@ pub struct Executive<C, E, I, J> {
     doppler: Option<DopplerPipeline>,
     solution_sequence: u64,
     last_absolute_observation_ns: Option<u64>,
+    ephemeris_aging: EphemerisAgingConfig,
 }
 
 pub struct DopplerPipeline {
@@ -94,12 +127,19 @@ where
             doppler: None,
             solution_sequence: 0,
             last_absolute_observation_ns: None,
+            ephemeris_aging: EphemerisAgingConfig::default(),
         }
     }
 
     #[must_use]
     pub fn with_doppler_pipeline(mut self, pipeline: DopplerPipeline) -> Self {
         self.doppler = Some(pipeline);
+        self
+    }
+
+    #[must_use]
+    pub fn with_ephemeris_aging(mut self, config: EphemerisAgingConfig) -> Self {
+        self.ephemeris_aging = config;
         self
     }
 
@@ -167,7 +207,7 @@ where
         }
         if let MeasurementPayload::Imu(imu) = &envelope.payload {
             self.filter.propagate(*imu);
-            self.emit_epoch(envelope, true);
+            self.emit_epoch(envelope, Some(0.0));
             return;
         }
         if matches!(envelope.payload, MeasurementPayload::TrackerDoppler(_)) {
@@ -178,9 +218,10 @@ where
         if matches!(envelope.payload, MeasurementPayload::Gnss(_)) {
             self.last_absolute_observation_ns = Some(envelope.host_receive_monotonic_ns);
         }
-        self.emit_epoch(envelope, true);
+        self.emit_epoch(envelope, Some(0.0));
     }
 
+    #[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
     fn process_doppler(&mut self, envelope: &MeasurementEnvelope) {
         let MeasurementPayload::TrackerDoppler(observation) = envelope.payload else {
             return;
@@ -202,10 +243,24 @@ where
             let query = DateTime::parse_from_rfc3339(&utc.rfc3339)
                 .map_err(|error| error.to_string())?
                 .with_timezone(&Utc);
-            let satellite = pipeline
+            let ceiling =
+                Duration::nanoseconds((self.ephemeris_aging.ceiling_age_s * 1e9).round() as i64);
+            let propagated = pipeline
                 .store
-                .propagate_ecef(norad_id, query)
+                .propagate_ecef_with_age(norad_id, query, ceiling)
                 .map_err(|error| error.to_string())?;
+            let age_s = propagated.age.seconds();
+            let sigma_add_mps = match ephemeris_age_band(age_s, self.ephemeris_aging) {
+                EphemerisAgeBand::Fresh => 0.0,
+                EphemerisAgeBand::Inflated { sigma_add_mps } => sigma_add_mps,
+                EphemerisAgeBand::Rejected => {
+                    return Err(format!(
+                        "ephemeris age {age_s:.9}s exceeds graduated ceiling {:.9}s",
+                        self.ephemeris_aging.ceiling_age_s
+                    ));
+                }
+            };
+            let satellite = propagated.state;
             let state = self.filter.state();
             // [UNVERIFIED] No surveyed lever arm is wired yet; receiver position/velocity are
             // therefore the vessel-reference state (zero lever-arm hook).
@@ -252,28 +307,45 @@ where
                 measured_range_rate_mps: measured,
                 predicted_range_rate_mps: prediction.range_rate_mps,
                 core_jacobian: jacobian,
-                variance_mps2: variance_hz2 * scale * scale,
+                variance_mps2: variance_hz2 * scale * scale + sigma_add_mps * sigma_add_mps,
                 chi_square_threshold: pipeline.chi_square_threshold,
                 satellite_bias_variance_mps2: 100.0,
             };
-            Ok::<UpdateResult, String>(self.filter.update_predicted_doppler(&update))
+            Ok::<(UpdateResult, f64, f64), String>((
+                self.filter.update_predicted_doppler(&update),
+                age_s,
+                sigma_add_mps,
+            ))
         })();
         match result {
-            Ok(update) if update.accepted => {
+            Ok((update, age_s, sigma_add_mps)) if update.accepted => {
+                if sigma_add_mps > 0.0 {
+                    self.journals.write_integrity(IntegrityEvent {
+                        monotonic_ns: envelope.host_receive_monotonic_ns,
+                        source_id: envelope.source_id.0.clone(),
+                        reason: format!(
+                            "NOTE ephemeris age {age_s:.9}s; applied sigma_add {sigma_add_mps:.9} m/s"
+                        ),
+                    });
+                }
                 self.journals.write_integrity(IntegrityEvent {
                     monotonic_ns: envelope.host_receive_monotonic_ns,
                     source_id: envelope.source_id.0.clone(),
                     reason: "Doppler innovation accepted".to_owned(),
                 });
                 self.last_absolute_observation_ns = Some(envelope.host_receive_monotonic_ns);
-                self.emit_epoch(envelope, true);
+                self.emit_epoch(envelope, Some(age_s));
             }
-            Ok(_) => self.reject(envelope, "innovation chi-square gate rejected"),
+            Ok((_, _, _)) => self.reject(envelope, "innovation chi-square gate rejected"),
             Err(reason) => self.reject(envelope, &reason),
         }
     }
 
-    fn emit_epoch(&mut self, envelope: &MeasurementEnvelope, observation_integrity: bool) {
+    fn emit_epoch(
+        &mut self,
+        envelope: &MeasurementEnvelope,
+        ephemeris_age_s: impl Into<Option<f64>>,
+    ) {
         let monotonic_ns = envelope.host_receive_monotonic_ns;
         let state = self.filter.state();
         self.solution_sequence = self.solution_sequence.saturating_add(1);
@@ -286,7 +358,7 @@ where
                     GnssAuthority::RecordedOnly | GnssAuthority::Off => AuthorityProfile::Denied,
                 },
                 last_absolute_observation_ns: self.last_absolute_observation_ns,
-                ephemeris_age_s: observation_integrity.then_some(0.0),
+                ephemeris_age_s: ephemeris_age_s.into(),
                 calibration_id: Some(&envelope.calibration_id),
             },
             monotonic_ns,
@@ -413,4 +485,53 @@ fn epoch_json(epoch: &SolutionEpoch) -> Option<String> {
         return None;
     }
     Some(format!("{{\"monotonic_ns\":{},\"state\":{{\"position_ecef_m\":[{},{},{}],\"horizontal_velocity_ned_mps\":[{},{}],\"heading_rad\":{},\"receiver_clock_bias_m\":{},\"receiver_clock_drift_mps\":{}}},\"steering_authorised\":{},\"horiz_accuracy_m\":{},\"speed_accuracy_mps\":{},\"vert_accuracy_m\":{},\"msl_alt_m\":0.0}}", epoch.monotonic_ns, s.position_ecef_m[0], s.position_ecef_m[1], s.position_ecef_m[2], s.horizontal_velocity_ned_mps[0], s.horizontal_velocity_ned_mps[1], s.heading_rad, s.receiver_clock_bias_m, s.receiver_clock_drift_mps, epoch.steering_authorised, accuracies[0], accuracies[1], accuracies[2]))
+}
+
+#[cfg(test)]
+mod aging_tests {
+    use super::*;
+
+    #[test]
+    fn age_bands_have_exact_nanosecond_boundaries() {
+        let config = EphemerisAgingConfig::default();
+        assert_eq!(
+            ephemeris_age_band(config.fresh_age_s, config),
+            EphemerisAgeBand::Fresh
+        );
+        assert!(matches!(
+            ephemeris_age_band(config.fresh_age_s + 1e-9, config),
+            EphemerisAgeBand::Inflated { .. }
+        ));
+        assert!(matches!(
+            ephemeris_age_band(config.ceiling_age_s, config),
+            EphemerisAgeBand::Inflated { .. }
+        ));
+        assert_eq!(
+            ephemeris_age_band(config.ceiling_age_s + 1e-9, config),
+            EphemerisAgeBand::Rejected
+        );
+    }
+
+    #[test]
+    fn inflation_matches_finite_difference_geometry_mapping() {
+        let config = EphemerisAgingConfig::default();
+        let age = 24.0 * 3600.0;
+        let EphemerisAgeBand::Inflated { sigma_add_mps } = ephemeris_age_band(age, config) else {
+            panic!("expected inflation")
+        };
+        let orbit_m = |seconds: f64| {
+            1000.0
+                * (config.orbit_error_intercept_km
+                    + config.orbit_error_slope_km_per_h * seconds / 3600.0)
+        };
+        // Central finite difference of range u(t)·dr with u rotating at configured LOS rate.
+        let h = 1.0e-3;
+        let rate = |error_m: f64| {
+            let range = |t: f64| error_m * (config.los_rate_rad_s * t).sin();
+            (range(h) - range(-h)) / (2.0 * h)
+        };
+        let expected =
+            (rate(orbit_m(age)).powi(2) - rate(orbit_m(config.fresh_age_s)).powi(2)).sqrt();
+        assert!((sigma_add_mps - expected).abs() < 1.0e-8);
+    }
 }

@@ -23,7 +23,29 @@ impl FromStr for GnssAuthority {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// `[UNVERIFIED]` defaults for graduated ephemeris measurement weighting.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EphemerisAgingConfig {
+    pub fresh_age_s: f64,
+    pub ceiling_age_s: f64,
+    pub orbit_error_intercept_km: f64,
+    pub orbit_error_slope_km_per_h: f64,
+    pub los_rate_rad_s: f64,
+}
+
+impl Default for EphemerisAgingConfig {
+    fn default() -> Self {
+        Self {
+            fresh_age_s: 21_600.0,
+            ceiling_age_s: 108_000.0,
+            orbit_error_intercept_km: 0.386_666_666_666_666_7,
+            orbit_error_slope_km_per_h: 0.092_222_222_222_222_22,
+            los_rate_rad_s: 0.0076,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Config {
     pub gnss_authority: GnssAuthority,
     pub oneweb_enabled: bool,

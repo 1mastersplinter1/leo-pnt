@@ -188,3 +188,28 @@ replay through propagation, measurement updates, integrity, authority decision a
 be replayed aided and GNSS-withheld. MAVLink integration shall be checked in ArduPilot SITL
 against a pinned firmware commit and artifact checksum. Measurements, inferences and
 estimates shall remain distinguishable in resulting evidence.
+
+## Amendment 2026-07-23 — graduated ephemeris aging
+
+This amendment replaces the provisional binary six-hour paragraph above. For ephemeris age
+`a <= t_fresh = 6 h`, Doppler uses nominal measurement weighting. For
+`6 h < a <= t_ceiling = 30 h`, the observation remains eligible but receives additive
+range-rate uncertainty. For `a > 30 h`, it is hard-rejected. The inclusive 30 h ceiling gives
+six hours of margin beyond the supplied 24 h error datum while retaining a finite backstop;
+it is `[UNVERIFIED]` and shall be tightened from real-SupGP evidence.
+
+The supplied SGP4 orbit-error points are `sigma_r(6 h)=0.94 km` and
+`sigma_r(24 h)=2.6 km`. A linear fit gives
+`sigma_r(a)=0.386667 + 0.0922222 a_h km`. With line-of-sight unit vector `u`,
+the first-order range-rate perturbation is
+`delta rhodot = d(u·delta r)/dt ~= udot·delta r`. The conservative reference geometry uses
+`|udot| ~= v_rel/rho = 7.6 km/s / 1000 km = 0.0076 rad/s`. Because nominal weighting already
+covers the fresh-boundary uncertainty, the added one-sigma term is
+`sigma_add(a)=|udot| sqrt(sigma_r(a)^2 - sigma_r(6 h)^2)` (metres converted consistently).
+Thus `sigma_add(24 h) ~= 18.42 m/s`; the fit, geometry constants, isotropic-error assumption,
+and Doppler-domain mapping are all `[UNVERIFIED pending real-SupGP study]`.
+
+This graduated interval explicitly serves D45: a 6 kn vessel covers approximately 100 km in
+9 h, so ephemeris cached before departure remains usable for the entire denied passage with
+21 h of ceiling margin. Synthetic aging is availability evidence only; D43 applies because
+epoch shifting aliases orbital phase and cannot validate real ephemeris error growth.

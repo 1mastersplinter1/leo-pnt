@@ -31,6 +31,24 @@ fn default_six_hour_age_gate_is_typed() {
 }
 
 #[test]
+fn aged_path_returns_age_and_uses_its_explicit_ceiling() {
+    let store = EphemerisStore::from_tle_file("tests/fixtures/iss.tle").unwrap();
+    let epoch = store.epoch(25544).unwrap();
+    let aged = store
+        .propagate_ecef_with_age(25544, epoch + Duration::hours(9), Duration::hours(30))
+        .unwrap();
+    assert!((aged.age.seconds() - 9.0 * 3600.0).abs() < f64::EPSILON);
+    assert!(matches!(
+        store.propagate_ecef_with_age(
+            25544,
+            epoch + Duration::hours(30) + Duration::nanoseconds(1),
+            Duration::hours(30)
+        ),
+        Err(EphemerisError::TooOld { .. })
+    ));
+}
+
+#[test]
 fn vallado_reference_vector_case_00005() {
     // Vallado et al. SGP4 verification case 00005, copied from sgp4 2.4.0's shipped
     // tests/test_cases.toml. AFSPC mode belongs here solely for reference compatibility.

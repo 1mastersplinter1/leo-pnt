@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "synthetic_only": true,
+  "duration_h": 9.0,
+  "speed_kn": 6.0,
+  "distance_km": 100.0079136,
+  "gps_loss_h": 2.0,
+  "ephemeris_cache_h": 0.0,
+  "hard_6h": {
+    "doppler_available_until_h": 6.0,
+    "final_position_error_m": 3050.0,
+    "position_class": "dead-reckoning (>1 NM error)"
+  },
+  "graduated_30h": {
+    "doppler_available_until_h": 9.0,
+    "final_position_error_m": 350.0,
+    "position_class": "passage-held (<1 NM error)"
+  },
+  "caveat": "D43 applies: synthetic epoch aging aliases orbital phase and is a stand-in, not validation of real SupGP error growth."
+}

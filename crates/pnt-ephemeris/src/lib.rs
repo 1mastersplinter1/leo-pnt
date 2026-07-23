@@ -19,6 +19,24 @@ pub struct EcefState {
     pub velocity_mps: [f64; 3],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct EphemerisAge(Duration);
+
+impl EphemerisAge {
+    #[must_use]
+    pub fn seconds(self) -> f64 {
+        self.0
+            .to_std()
+            .map_or(f64::INFINITY, |age| age.as_secs_f64())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AgedEcefState {
+    pub state: EcefState,
+    pub age: EphemerisAge,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EphemerisError {
     #[error("failed to read local ephemeris: {0}")]
@@ -186,6 +204,43 @@ impl EphemerisStore {
         ))
     }
 
+    /// Propagates with a caller-selected hard ceiling and returns the typed ephemeris age.
+    ///
+    /// This is the graduated-weighting path; the legacy propagation methods retain their
+    /// configured six-hour behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-satellite, stale-ephemeris, time-conversion, or SGP4 error.
+    pub fn propagate_ecef_with_age(
+        &self,
+        norad_id: u64,
+        query: DateTime<Utc>,
+        ceiling: Duration,
+    ) -> Result<AgedEcefState, EphemerisError> {
+        let entry = self
+            .entries
+            .get(&norad_id)
+            .ok_or(EphemerisError::Missing(norad_id))?;
+        let age = query
+            .naive_utc()
+            .signed_duration_since(entry.elements.datetime)
+            .abs();
+        check_age_limit(norad_id, age, ceiling)?;
+        let minutes = entry
+            .elements
+            .datetime_to_minutes_since_epoch(&query.naive_utc())
+            .map_err(|e| EphemerisError::Propagation(e.to_string()))?;
+        let prediction = entry
+            .constants
+            .propagate(minutes)
+            .map_err(|e| EphemerisError::Propagation(e.to_string()))?;
+        Ok(AgedEcefState {
+            state: teme_to_ecef_at_gmst(prediction.position, prediction.velocity, gmst_rad(query)),
+            age: EphemerisAge(age),
+        })
+    }
+
     fn check_age(
         &self,
         norad_id: u64,
@@ -193,22 +248,23 @@ impl EphemerisStore {
         query: NaiveDateTime,
     ) -> Result<(), EphemerisError> {
         let age = query.signed_duration_since(epoch).abs();
-        if age > self.max_age {
-            let age_seconds = age
-                .to_std()
-                .map_or(f64::INFINITY, |value| value.as_secs_f64());
-            let limit_seconds = self
-                .max_age
-                .to_std()
-                .map_or(0.0, |value| value.as_secs_f64());
-            return Err(EphemerisError::TooOld {
-                norad_id,
-                age_seconds,
-                limit_seconds,
-            });
-        }
-        Ok(())
+        check_age_limit(norad_id, age, self.max_age)
     }
+}
+
+fn check_age_limit(norad_id: u64, age: Duration, limit: Duration) -> Result<(), EphemerisError> {
+    if age > limit {
+        let age_seconds = age
+            .to_std()
+            .map_or(f64::INFINITY, |value| value.as_secs_f64());
+        let limit_seconds = limit.to_std().map_or(0.0, |value| value.as_secs_f64());
+        return Err(EphemerisError::TooOld {
+            norad_id,
+            age_seconds,
+            limit_seconds,
+        });
+    }
+    Ok(())
 }
 
 /// Rotates TEME into an Earth-fixed frame using the IAU-1982 GMST expression and constant

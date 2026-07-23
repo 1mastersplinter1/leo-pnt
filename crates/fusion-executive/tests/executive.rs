@@ -77,6 +77,7 @@ fn production_gnss_is_dual_routed_and_off_is_journalled_as_a_reject() {
         .is_empty());
     assert_eq!(off.filter().measurement_updates(), 0);
     assert_eq!(off.journals().integrity_events().len(), 1);
+    assert_eq!(off.journals().measurement_records().len(), 1);
 }
 
 #[test]
@@ -162,6 +163,7 @@ fn orbcomm_is_rejected_before_fusion_by_default() {
     assert!(routes.is_empty());
     assert_eq!(executive.filter().measurement_updates(), 0);
     assert_eq!(executive.journals().integrity_events().len(), 1);
+    assert_eq!(executive.journals().measurement_records().len(), 1);
 }
 
 #[test]
@@ -178,6 +180,7 @@ fn oneweb_is_gated_by_config() {
     assert!(disabled.journals().integrity_events()[0]
         .reason
         .contains("OneWeb"));
+    assert_eq!(disabled.journals().measurement_records().len(), 1);
     let mut enabled = Executive::new(
         Config {
             gnss_authority: GnssAuthority::Off,
@@ -188,10 +191,20 @@ fn oneweb_is_gated_by_config() {
         IntegrityStub,
         MemoryJournals::default(),
     );
-    assert_eq!(
-        enabled.process(envelope(1, observation)),
-        vec![RoutingDestination::Fusion]
-    );
+    let store =
+        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
+            .unwrap();
+    let query = store.epoch(25544).unwrap();
+    enabled = enabled.with_doppler_pipeline(DopplerPipeline::new(store));
+    let mut routed = envelope(1, observation);
+    routed.source_id = SourceId("25544".into());
+    routed.utc = Some(UtcTime {
+        rfc3339: query.to_rfc3339(),
+        uncertainty_ns: 1,
+    });
+    assert_eq!(enabled.process(routed), vec![RoutingDestination::Fusion]);
+    assert_eq!(enabled.journals().measurement_records().len(), 1);
+    assert_eq!(enabled.journals().integrity_events().len(), 1);
 }
 
 #[derive(Default)]
@@ -248,7 +261,7 @@ fn fixture_doppler_updates_filter_and_emits_bridge_schema_ndjson() {
         IntegrityStub,
         MemoryJournals::default(),
     )
-    .with_doppler_pipeline(DopplerPipeline::new(store));
+    .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
     let receiver = [3_518_304.71, 784_390.70, 5_244_191.85];
     let mut fix = envelope(
         1,
@@ -257,7 +270,9 @@ fn fixture_doppler_updates_filter_and_emits_bridge_schema_ndjson() {
             velocity_ned_mps: [0.0; 3],
         }),
     );
-    fix.covariance = vec![f64::EPSILON];
+    // Unit variance keeps the fixture geometry well-defined while leaving a calculable
+    // amount of velocity covariance for the deliberately non-zero Doppler innovation.
+    fix.covariance = vec![1.0];
     executive.process(fix);
     let state = executive.filter().state();
     let satellite =
@@ -284,7 +299,7 @@ fn fixture_doppler_updates_filter_and_emits_bridge_schema_ndjson() {
         2,
         MeasurementPayload::TrackerDoppler(TrackerDoppler {
             constellation: Constellation::Starlink,
-            correlation_peak_hz: -1.6e9 * prediction.range_rate_mps / 299_792_458.0,
+            correlation_peak_hz: -1.6e9 * (prediction.range_rate_mps + 0.5) / 299_792_458.0,
             nominal_carrier_hz: 1.6e9,
         }),
     );
@@ -295,6 +310,18 @@ fn fixture_doppler_updates_filter_and_emits_bridge_schema_ndjson() {
     });
     executive.process(doppler);
     assert!(executive.filter().measurement_updates() >= 7);
+    let corrected = executive.filter().state();
+    let correction_norm = corrected
+        .velocity_ecef_mps
+        .iter()
+        .zip(state.velocity_ecef_mps)
+        .map(|(after, before)| (after - before).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        correction_norm > 1.0e-4 && correction_norm < 1.0,
+        "unexpected velocity correction {correction_norm}"
+    );
     let line = executive.take_solution_lines().pop().unwrap();
     let value: serde_json::Value = serde_json::from_str(&line).unwrap();
     for key in [
@@ -352,4 +379,126 @@ fn stale_ephemeris_rejection_is_journalled() {
         .reason
         .contains("too old"));
     assert_eq!(executive.filter().measurement_updates(), 0);
+}
+
+fn tracker_envelope(store: &pnt_ephemeris::EphemerisStore, peak_hz: f64) -> MeasurementEnvelope {
+    let mut value = envelope(
+        2,
+        MeasurementPayload::TrackerDoppler(TrackerDoppler {
+            constellation: Constellation::Starlink,
+            correlation_peak_hz: peak_hz,
+            nominal_carrier_hz: 1.6e9,
+        }),
+    );
+    value.source_id = SourceId("25544".into());
+    value.utc = Some(UtcTime {
+        rfc3339: store.epoch(25544).unwrap().to_rfc3339(),
+        uncertainty_ns: 1,
+    });
+    value
+}
+
+#[test]
+fn divergent_doppler_is_gate_rejected_without_filter_update() {
+    let store =
+        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
+            .unwrap();
+    let observation = tracker_envelope(&store, 1.0e9);
+    let mut executive = Executive::test_default(GnssAuthority::Production)
+        .with_doppler_pipeline(DopplerPipeline::new(store).without_elevation_mask());
+    executive.process(envelope(
+        1,
+        MeasurementPayload::Gnss(GnssFix {
+            position_ecef_m: [3_518_304.71, 784_390.70, 5_244_191.85],
+            velocity_ned_mps: [0.0; 3],
+        }),
+    ));
+    let updates_before = executive.filter().measurement_updates();
+    executive.process(observation);
+    assert_eq!(executive.filter().measurement_updates(), updates_before);
+    assert!(executive
+        .journals()
+        .integrity_events()
+        .last()
+        .unwrap()
+        .reason
+        .contains("chi-square"));
+}
+
+#[test]
+fn default_elevation_mask_rejects_below_mask_and_journals_it() {
+    let store =
+        pnt_ephemeris::EphemerisStore::from_tle_file("../pnt-ephemeris/tests/fixtures/iss.tle")
+            .unwrap();
+    let query = store.epoch(25544).unwrap();
+    let satellite = store.propagate_ecef(25544, query).unwrap();
+    let radius = satellite
+        .position_m
+        .iter()
+        .map(|v| v * v)
+        .sum::<f64>()
+        .sqrt();
+    let receiver = satellite.position_m.map(|v| -6_371_000.0 * v / radius);
+    let observation = tracker_envelope(&store, 0.0);
+    let mut executive = Executive::test_default(GnssAuthority::Production)
+        .with_doppler_pipeline(DopplerPipeline::new(store));
+    executive.process(envelope(
+        1,
+        MeasurementPayload::Gnss(GnssFix {
+            position_ecef_m: receiver,
+            velocity_ned_mps: [0.0; 3],
+        }),
+    ));
+    let updates_before = executive.filter().measurement_updates();
+    executive.process(observation);
+    assert_eq!(executive.filter().measurement_updates(), updates_before);
+    assert!(executive
+        .journals()
+        .integrity_events()
+        .last()
+        .unwrap()
+        .reason
+        .contains("BelowElevationMask"));
+}
+
+#[derive(Default)]
+struct PoisonedEstimator;
+impl Estimator for PoisonedEstimator {
+    fn propagate(&mut self, _: ImuSample) {}
+    fn update(&mut self, _: &MeasurementEnvelope) {}
+    fn state(&self) -> FilterState {
+        FilterState {
+            heading_rad: f64::NAN,
+            ..FilterState::default()
+        }
+    }
+    fn update_predicted_doppler(
+        &mut self,
+        _: &pnt_estimator::DopplerRangeRateUpdate,
+    ) -> pnt_estimator::UpdateResult {
+        unreachable!()
+    }
+}
+
+#[test]
+fn non_finite_epoch_is_not_emitted_and_is_journalled() {
+    let mut executive = Executive::new(
+        Config {
+            gnss_authority: GnssAuthority::Off,
+            oneweb_enabled: false,
+        },
+        ManualClock::default(),
+        PoisonedEstimator,
+        IntegrityStub,
+        MemoryJournals::default(),
+    );
+    executive.process(envelope(
+        1,
+        MeasurementPayload::Heading(Heading { radians: 0.2 }),
+    ));
+    assert!(executive.take_solution_lines().is_empty());
+    assert!(executive.take_solution_epochs().is_empty());
+    assert!(executive.journals().integrity_events()[0]
+        .reason
+        .contains("non-finite"));
 }

@@ -221,3 +221,19 @@ constructed. `heading_rad` may be JSON null only when unavailable. `msl_alt_m` i
 separate MSL-constrained altitude, not ECEF ellipsoid height. Until that estimator surface
 is connected, the executive's zero MSL value is `[UNVERIFIED]` and must not be treated as a
 validated publication value.
+
+## v4.1 (2026-07-22)
+
+v4.1 amends, but does not replace, v4. For every `TrackerDoppler` envelope, `source_id`
+is the satellite's decimal NORAD catalogue ID string and `utc` is required with a valid
+RFC3339 timestamp used for ephemeris propagation. Missing or malformed values are
+journalled rejects.
+
+The production Doppler pipeline applies a 5-degree elevation mask, converted to radians
+at its degrees-safe API boundary. The value is `[UNVERIFIED]` pending link-budget and
+replay tuning; callers may explicitly disable the mask for geometry-independent tests.
+
+Correction to v4 wording: horizontal, speed, and vertical accuracy values are derived by
+the `SolutionEpoch` accessors at emission, not materialised when the epoch is constructed.
+An epoch containing any non-finite state, covariance, or derived accuracy value is not
+written to NDJSON and produces a journalled integrity event instead.

@@ -60,6 +60,53 @@ Heading and speed routes, OneWeb disabled/enabled routing, Orbcomm rejection, au
 arm routing, stale-age rejection journalling, and fixture ephemeris through accepted Doppler
 update to finite-accuracy JSON parse and bridge-schema key checks.
 
+## U-I2.1 fix-round dispositions
+
+1. Opus F1/F4 — fixed. The geometric range-rate linearisation was moved to
+   `pnt-predictor`, matching ARCHITECTURE module 7 and making the exact function called by
+   `process_doppler` independently testable. Its position, velocity, and receiver-clock-drift
+   columns are checked against central differences. The executive fixture now supplies a
+   0.5 m/s innovation and requires a finite velocity correction bounded between 1e-4 and
+   1 m/s, so the update is no longer a zero-innovation decoy.
+2. Opus F5 / Sonnet F-1 — fixed. `DopplerPipeline` now defaults to a 5-degree elevation
+   mask, stored as `Option<f64>` radians; configuration crosses a validated degrees API and
+   tests can explicitly disable screening. The value is `[UNVERIFIED]` pending link-budget
+   and replay tuning. An executive test constructs below-mask geometry and proves a
+   journalled rejection without a Doppler filter update. CONTRACTS v4.1 records the default.
+3. Sonnet F-2 — fixed. A divergent correlation peak exercises the executive NIS path and
+   proves a chi-square integrity rejection with no additional filter update.
+4. Opus F2 — fixed. Policy rejects write the full ingress envelope before their integrity
+   event. Off-GNSS, Orbcomm, and disabled-OneWeb tests assert measurement journal growth.
+5. Opus F3 / Sonnet F-4 — fixed. Epoch emission checks the complete state, covariance, and
+   accessor-derived accuracies for finiteness. A poisoned estimator proves that neither an
+   NDJSON line nor a solution epoch is emitted and that an integrity event is written.
+6. Sonnet F-3 — fixed. CONTRACTS v4.1 pins TrackerDoppler `source_id` to the decimal NORAD
+   catalogue ID, requires valid RFC3339 `utc`, and corrects accuracy wording to accessor
+   derivation at emission.
+7. Sonnet weak-test note — fixed. The enabled OneWeb test installs a real ephemeris-backed
+   Doppler pipeline with valid NORAD/UTC metadata and asserts both the measurement record and
+   the downstream integrity decision, proving tracker-pipeline reachability.
+
+## U-I2.1 gate evidence
+
+Exact command:
+
+`PATH="$HOME/.cargo/bin:$PATH" cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --all -- --check`
+
+Exit status: 0. `cargo test` passed all suites: fusion executive 15, ephemeris 6,
+estimator 13, predictor 4, types 3, with all remaining unit and doc-test targets also
+passing (41 integration/unit tests total). Clippy completed the workspace all-targets pass
+with warnings denied. The final fmt check produced no diff. Final gate output ended with:
+
+```text
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+```
+
 ## `[UNVERIFIED]` list
 
 - Lever-arm compensation currently has an explicit zero-lever-arm hook; surveyed rotational

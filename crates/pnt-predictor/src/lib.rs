@@ -104,6 +104,32 @@ pub fn predict(
     })
 }
 
+/// Linearises geometric range rate plus receiver clock drift with respect to the
+/// nine-state navigation core: position, velocity, heading, clock bias, clock drift.
+///
+/// # Errors
+///
+/// Returns [`PredictError`] when the receiver and satellite geometry cannot produce a
+/// finite, non-degenerate range-rate prediction.
+pub fn geometric_range_rate_linearisation(
+    satellite: SatelliteState,
+    receiver: ReceiverState,
+) -> Result<[f64; 9], PredictError> {
+    let prediction = predict(satellite, receiver, 0.0, 1.0, -std::f64::consts::FRAC_PI_2)?;
+    let relative_velocity = sub(satellite.velocity_ecef_mps, receiver.velocity_ecef_mps);
+    let position_gradient: [f64; 3] = std::array::from_fn(|i| {
+        -(relative_velocity[i] - prediction.line_of_sight_ecef[i] * prediction.range_rate_mps)
+            / prediction.range_m
+    });
+    let mut jacobian = [0.0; 9];
+    jacobian[..3].copy_from_slice(&position_gradient);
+    for i in 0..3 {
+        jacobian[3 + i] = -prediction.line_of_sight_ecef[i];
+    }
+    jacobian[8] = 1.0;
+    Ok(jacobian)
+}
+
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }

@@ -6,7 +6,7 @@ use pnt_ephemeris::EphemerisStore;
 use pnt_estimator::{DopplerRangeRateUpdate, Estimator, FilterStub, UpdateResult};
 use pnt_integrity::{IntegrityAuthorityGate, IntegrityStub};
 use pnt_journal::{IntegrityEvent, JournalSinks, MemoryJournals};
-use pnt_predictor::{predict, ReceiverState, SatelliteState};
+use pnt_predictor::{geometric_range_rate_linearisation, predict, ReceiverState, SatelliteState};
 use pnt_time::{ClockService, ManualClock};
 use pnt_types::{Constellation, MeasurementEnvelope, MeasurementPayload, SolutionEpoch};
 
@@ -35,18 +35,38 @@ pub struct Executive<C, E, I, J> {
 
 pub struct DopplerPipeline {
     store: EphemerisStore,
-    pub elevation_mask_rad: f64,
+    elevation_mask_rad: Option<f64>,
     pub chi_square_threshold: Option<f64>,
 }
 
 impl DopplerPipeline {
     #[must_use]
-    pub const fn new(store: EphemerisStore) -> Self {
+    pub fn new(store: EphemerisStore) -> Self {
         Self {
             store,
-            elevation_mask_rad: -90.0,
+            elevation_mask_rad: Some(5.0_f64.to_radians()),
             chi_square_threshold: Some(9.0),
         }
+    }
+
+    /// Explicitly disables elevation screening, primarily for geometry-independent tests.
+    #[must_use]
+    pub fn without_elevation_mask(mut self) -> Self {
+        self.elevation_mask_rad = None;
+        self
+    }
+
+    #[must_use]
+    /// Configures the screening angle at a degrees-safe API boundary.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `degrees` is non-finite or outside the physical elevation range
+    /// `-90..=90`.
+    pub fn with_elevation_mask_degrees(mut self, degrees: f64) -> Self {
+        assert!(degrees.is_finite() && (-90.0..=90.0).contains(&degrees));
+        self.elevation_mask_rad = Some(degrees.to_radians());
+        self
     }
 }
 
@@ -95,6 +115,7 @@ where
         envelope.host_receive_monotonic_ns = self.clock.ingress_monotonic_ns();
         let routes = self.routes_for(&envelope.payload);
         if routes.is_empty() {
+            self.journals.write_measurement(&envelope);
             self.reject(&envelope, Self::rejection_reason(&envelope.payload));
         }
         for route in &routes {
@@ -140,7 +161,7 @@ where
             return;
         }
         self.filter.update(envelope);
-        self.emit_epoch(envelope.host_receive_monotonic_ns);
+        self.emit_epoch(envelope.host_receive_monotonic_ns, &envelope.source_id.0);
     }
 
     fn process_doppler(&mut self, envelope: &MeasurementEnvelope) {
@@ -183,24 +204,25 @@ where
                 },
                 0.0,
                 observation.nominal_carrier_hz,
-                pipeline.elevation_mask_rad,
+                pipeline
+                    .elevation_mask_rad
+                    .unwrap_or(-std::f64::consts::FRAC_PI_2),
             )
             .map_err(|error| format!("prediction rejected: {error:?}"))?;
             let measured =
                 -observation.correlation_peak_hz * 299_792_458.0 / observation.nominal_carrier_hz;
-            let relative_velocity: [f64; 3] =
-                std::array::from_fn(|i| satellite.velocity_mps[i] - state.velocity_ecef_mps[i]);
-            let position_gradient: [f64; 3] = std::array::from_fn(|i| {
-                -(relative_velocity[i]
-                    - prediction.line_of_sight_ecef[i] * prediction.range_rate_mps)
-                    / prediction.range_m
-            });
-            let mut jacobian = [0.0; 9];
-            jacobian[..3].copy_from_slice(&position_gradient);
-            for i in 0..3 {
-                jacobian[3 + i] = -prediction.line_of_sight_ecef[i];
-            }
-            jacobian[8] = 1.0;
+            let jacobian = geometric_range_rate_linearisation(
+                SatelliteState {
+                    position_ecef_m: satellite.position_m,
+                    velocity_ecef_mps: satellite.velocity_mps,
+                },
+                ReceiverState {
+                    position_ecef_m: state.position_ecef_m,
+                    velocity_ecef_mps: state.velocity_ecef_mps,
+                    clock_drift_mps: 0.0,
+                },
+            )
+            .map_err(|error| format!("linearisation rejected: {error:?}"))?;
             let variance_hz2 = envelope
                 .covariance
                 .first()
@@ -226,18 +248,26 @@ where
                     source_id: envelope.source_id.0.clone(),
                     reason: "Doppler innovation accepted".to_owned(),
                 });
-                self.emit_epoch(envelope.host_receive_monotonic_ns);
+                self.emit_epoch(envelope.host_receive_monotonic_ns, &envelope.source_id.0);
             }
             Ok(_) => self.reject(envelope, "innovation chi-square gate rejected"),
             Err(reason) => self.reject(envelope, &reason),
         }
     }
 
-    fn emit_epoch(&mut self, monotonic_ns: u64) {
+    fn emit_epoch(&mut self, monotonic_ns: u64, source_id: &str) {
         let state = self.filter.state();
         let steering_authorised = self.integrity.steering_authorised(&state, monotonic_ns);
         let epoch = SolutionEpoch::new(monotonic_ns, state, steering_authorised);
-        self.solution_lines.push(epoch_json(&epoch));
+        let Some(line) = epoch_json(&epoch) else {
+            self.journals.write_integrity(IntegrityEvent {
+                monotonic_ns,
+                source_id: source_id.to_owned(),
+                reason: "solution epoch contains a non-finite value".to_owned(),
+            });
+            return;
+        };
+        self.solution_lines.push(line);
         self.solution_epochs.push(epoch);
     }
 
@@ -305,7 +335,30 @@ impl Executive<ManualClock, FilterStub, IntegrityStub, MemoryJournals> {
     }
 }
 
-fn epoch_json(epoch: &SolutionEpoch) -> String {
+fn epoch_json(epoch: &SolutionEpoch) -> Option<String> {
     let s = &epoch.state;
-    format!("{{\"monotonic_ns\":{},\"state\":{{\"position_ecef_m\":[{},{},{}],\"horizontal_velocity_ned_mps\":[{},{}],\"heading_rad\":{},\"receiver_clock_bias_m\":{},\"receiver_clock_drift_mps\":{}}},\"steering_authorised\":{},\"horiz_accuracy_m\":{},\"speed_accuracy_mps\":{},\"vert_accuracy_m\":{},\"msl_alt_m\":0.0}}", epoch.monotonic_ns, s.position_ecef_m[0], s.position_ecef_m[1], s.position_ecef_m[2], s.horizontal_velocity_ned_mps[0], s.horizontal_velocity_ned_mps[1], s.heading_rad, s.receiver_clock_bias_m, s.receiver_clock_drift_mps, epoch.steering_authorised, epoch.horizontal_accuracy_m(), epoch.speed_accuracy_mps(), epoch.vertical_accuracy_m())
+    let accuracies = [
+        epoch.horizontal_accuracy_m(),
+        epoch.speed_accuracy_mps(),
+        epoch.vertical_accuracy_m(),
+    ];
+    if s.position_ecef_m
+        .iter()
+        .chain(s.velocity_ecef_mps.iter())
+        .chain(s.horizontal_velocity_ned_mps.iter())
+        .chain(
+            [
+                s.heading_rad,
+                s.receiver_clock_bias_m,
+                s.receiver_clock_drift_mps,
+            ]
+            .iter(),
+        )
+        .chain(s.covariance.iter())
+        .chain(accuracies.iter())
+        .any(|value| !value.is_finite())
+    {
+        return None;
+    }
+    Some(format!("{{\"monotonic_ns\":{},\"state\":{{\"position_ecef_m\":[{},{},{}],\"horizontal_velocity_ned_mps\":[{},{}],\"heading_rad\":{},\"receiver_clock_bias_m\":{},\"receiver_clock_drift_mps\":{}}},\"steering_authorised\":{},\"horiz_accuracy_m\":{},\"speed_accuracy_mps\":{},\"vert_accuracy_m\":{},\"msl_alt_m\":0.0}}", epoch.monotonic_ns, s.position_ecef_m[0], s.position_ecef_m[1], s.position_ecef_m[2], s.horizontal_velocity_ned_mps[0], s.horizontal_velocity_ned_mps[1], s.heading_rad, s.receiver_clock_bias_m, s.receiver_clock_drift_mps, epoch.steering_authorised, accuracies[0], accuracies[1], accuracies[2]))
 }

@@ -55,8 +55,8 @@ fn short_mission_matches_main_committed_artifact_fingerprints() {
     // new output against the legacy baseline, rather than merely comparing two new runs.
     for (name, expected) in [
         ("manifest.json", 0x7569_3296_14f8_7b51),
-        ("measurements-000000.seg", 0x03a5_b3da_f92c_8325),
-        ("truth-000000.seg", 0xb0a4_5e7a_6473_d976),
+        ("measurements-000000.seg", 0x9b28_a34c_df36_014d),
+        ("truth-000000.seg", 0x513e_e069_cd73_ac66),
     ] {
         assert_eq!(
             fnv1a(&fs::read(directory.path().join(name)).unwrap()),

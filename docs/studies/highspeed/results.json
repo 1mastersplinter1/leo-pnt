@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "caveat": "SYNTHETIC CAPABILITY/PLUMBING DEMONSTRATION [UNVERIFIED]; not a navigation-performance or denied-authority claim.",
-  "scenario": "Aided for 300 s to a real converged EKF state, then GNSS denied for 100 km at each of 7/20/30 kn; wave/slam on; graduated ephemeris aging on.",
+  "scenario": "Aided until covariance steady state is verified at 300 s, then GNSS denied for 100 km at each of 7/20/30 kn; the real EKF uses the production chi-square gate (9.0), wave/slam is on, and graduated ephemeris aging is on.",
   "wave_model": "Zero-mean full-cycle acceleration integrated into both truth and IMU. 100-450 ms duration and 0.44 g RMS anchor are R5-sourced; 0.25 s, opportunity rate, pitch coupling, speed scaling, and mapping 0.44 g RMS to 6.10 m/s^2 sinusoidal peak are [UNVERIFIED]. The 30 kn 1.84x peak scale is [UNVERIFIED].",
   "results": [
     {
@@ -10,25 +10,26 @@
       "denied_distance_km": 100.0,
       "denied_duration_h": 7.713888888888889,
       "loss_state": {
-        "position_error_m": 0.7131743976820705,
-        "velocity_error_mps": 0.23530933107962917,
-        "position_covariance_trace_m2": 0.29121063849027023,
+        "position_error_m": 0.713174397733877,
+        "velocity_error_mps": 0.2353093310705242,
+        "position_covariance_trace_m2": 0.29121063849034634,
         "covariance_dimension": 10
       },
-      "position_error_rms_m": 63547045.05161588,
-      "position_error_p95_m": 136734162.83918235,
-      "landfall_position_error_m": 40944894.05161732,
-      "velocity_error_rms_mps": 53604.8557746159,
-      "velocity_error_p95_mps": 82111.85685498417,
-      "position_error_class": ">=500 m",
+      "position_error_rms_m": 103645.82883989331,
+      "position_error_p95_m": 203809.21946819496,
+      "landfall_position_error_m": 44908.15266397538,
+      "velocity_error_rms_mps": 14.666370698951221,
+      "velocity_error_p95_mps": 26.211625628626408,
+      "position_error_class": "10-100 km",
       "ephemeris_age_h": 7.7972222222222225,
       "ephemeris_age_margin_h": 22.20277777777778,
-      "accepted_doppler_updates": 16,
+      "accepted_doppler_updates": 13,
+      "rejected_doppler_updates": 3,
       "aged_doppler_updates": 3,
       "manoeuvre_convergence": {
-        "time_s": 2561.499999999998,
-        "truth_distance_m": 8989.034650256383,
-        "criterion": "first 5 s below pre-turn thresholds 15630347.0 m / 65819.802 m/s"
+        "time_s": null,
+        "truth_distance_m": null,
+        "criterion": "not reported: filter was not converged before turn (105554.1 m / 19.753 m/s)"
       }
     },
     {
@@ -37,25 +38,26 @@
       "denied_distance_km": 100.0,
       "denied_duration_h": 2.7,
       "loss_state": {
-        "position_error_m": 0.3924225389436441,
-        "velocity_error_mps": 0.25284279623506206,
-        "position_covariance_trace_m2": 0.34561732991861854,
+        "position_error_m": 0.3924225390655456,
+        "velocity_error_mps": 0.25284279648938923,
+        "position_covariance_trace_m2": 0.3456173299187769,
         "covariance_dimension": 10
       },
-      "position_error_rms_m": 104862828.1364789,
-      "position_error_p95_m": 209930997.3551389,
-      "landfall_position_error_m": 134375499.83779523,
-      "velocity_error_rms_mps": 91052.22342175632,
-      "velocity_error_p95_mps": 107076.38226500207,
-      "position_error_class": ">=500 m",
+      "position_error_rms_m": 10490.777847084271,
+      "position_error_p95_m": 19215.0682729219,
+      "landfall_position_error_m": 11619.874029139444,
+      "velocity_error_rms_mps": 2.718315845933855,
+      "velocity_error_p95_mps": 4.312849378408295,
+      "position_error_class": "10-100 km",
       "ephemeris_age_h": 2.783333333333333,
       "ephemeris_age_margin_h": 27.216666666666665,
-      "accepted_doppler_updates": 6,
+      "accepted_doppler_updates": 5,
+      "rejected_doppler_updates": 1,
       "aged_doppler_updates": 0,
       "manoeuvre_convergence": {
-        "time_s": 1752.0,
-        "truth_distance_m": 17855.727362819536,
-        "criterion": "first 5 s below pre-turn thresholds 24838592.4 m / 128387.407 m/s"
+        "time_s": null,
+        "truth_distance_m": null,
+        "criterion": "not reported: filter was not converged before turn (8745.5 m / 4.606 m/s)"
       }
     },
     {
@@ -64,32 +66,36 @@
       "denied_distance_km": 100.0,
       "denied_duration_h": 1.8,
       "loss_state": {
-        "position_error_m": 0.3118488446620645,
-        "velocity_error_mps": 0.25154207613681695,
-        "position_covariance_trace_m2": 0.3667659703740398,
+        "position_error_m": 0.3118488437267409,
+        "velocity_error_mps": 0.2515420759761282,
+        "position_covariance_trace_m2": 0.36676597037389047,
         "covariance_dimension": 10
       },
-      "position_error_rms_m": 105957924.53960441,
-      "position_error_p95_m": 220146684.7025145,
-      "landfall_position_error_m": 158771669.86730433,
-      "velocity_error_rms_mps": 89004.89805845036,
-      "velocity_error_p95_mps": 107094.05685320696,
-      "position_error_class": ">=500 m",
+      "position_error_rms_m": 5949.179545517826,
+      "position_error_p95_m": 9284.020461051756,
+      "landfall_position_error_m": 9677.249185852743,
+      "velocity_error_rms_mps": 3.1656147734399087,
+      "velocity_error_p95_mps": 4.763240271129071,
+      "position_error_class": "1-10 km",
       "ephemeris_age_h": 1.8833333333333333,
       "ephemeris_age_margin_h": 28.116666666666667,
-      "accepted_doppler_updates": 4,
+      "accepted_doppler_updates": 3,
+      "rejected_doppler_updates": 1,
       "aged_doppler_updates": 0,
       "manoeuvre_convergence": {
-        "time_s": 0.9999999999995453,
-        "truth_distance_m": 0.0,
-        "criterion": "first 5 s below pre-turn thresholds 238127927.3 m / 115769.870 m/s"
+        "time_s": null,
+        "truth_distance_m": null,
+        "criterion": "not reported: filter was not converged before turn (8245.0 m / 7.113 m/s)"
       }
     }
   ],
   "d50_consistency": "Consistent with D50: this synthetic run demonstrates plumbing only. It does not support denied operation at 20 kn; 30 kn remains aided/manual-only and exploratory, with no denied autonomous authority.",
   "integration_notes": [
-    "Position, velocity, covariance and reconvergence are read from the real EKF state against generator truth; no endpoint or convergence formula is used.",
-    "Distance-to-reconvergence is accumulated from truth positions after the generator's actual coordinated turn, independently of elapsed time.",
-    "Graduated aging is exercised by the executive Doppler pipeline; the 30 h ceiling and synthetic TLE aging remain [UNVERIFIED] per D43/D45."
+    "This ISS-TLE-only fixture supplies one satellite. Single-satellite range-rate geometry is near-unobservable for position, so its bounded roughly-ten-to-tens-of-kilometres errors are not the 100-200 m multi-satellite class.",
+    "D51 reconciliation: U-P1's smaller absolute errors came from a deliberately clamped toy PassageEstimator that cannot diverge; this study uses the real EKF with its production gate. U-P1 remains evidence only for the relative graduated-vs-hard aging comparison.",
+    "Position, velocity, covariance and any valid reconvergence are read from the real EKF state against generator truth; divergent runs are explicitly flagged and receive no reconvergence metric.",
+    "The 90-degree turn runs at a sharp, realistic 3 deg/s. Distance-to-reconvergence is accumulated from truth positions after that actual turn, independently of elapsed time.",
+    "Graduated aging is exercised by the executive Doppler pipeline; the 30 h ceiling and synthetic TLE aging remain [UNVERIFIED] per D43/D45.",
+    "OPEN / REQUIRED: build and run a multi-satellite fixture study before claiming the 100-200 m denied position class."
   ]
 }

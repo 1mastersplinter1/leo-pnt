@@ -291,6 +291,11 @@ pub fn generate_mission(
         measurement_count += 1;
 
         if tick % config.imu_rate_hz == 0 {
+            let down_velocity = if velocity[2] == 0.0 {
+                0.0
+            } else {
+                -velocity[2]
+            };
             let truth = envelope(
                 sequence,
                 timestamp,
@@ -302,7 +307,7 @@ pub fn generate_mission(
                     position_ecef_m: std::array::from_fn(|axis| {
                         truth_position[axis] + config.gnss_noise_std_m * rng.normal()
                     }),
-                    velocity_ned_mps: [velocity[0], velocity[1], -velocity[2]],
+                    velocity_ned_mps: [velocity[0], velocity[1], down_velocity],
                 }),
             );
             journals.try_write_measurement(&truth)?;
@@ -316,7 +321,7 @@ pub fn generate_mission(
                 vec![0.0],
                 MeasurementPayload::Gnss(GnssFix {
                     position_ecef_m: truth_position,
-                    velocity_ned_mps: [velocity[0], velocity[1], -velocity[2]],
+                    velocity_ned_mps: [velocity[0], velocity[1], down_velocity],
                 }),
             ))?;
             sequence += 1;

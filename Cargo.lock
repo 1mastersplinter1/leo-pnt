@@ -361,6 +361,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pnt-mission"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pnt-config",
+ "pnt-ephemeris",
+ "pnt-journal",
+ "pnt-predictor",
+ "pnt-replay",
+ "pnt-tracker",
+ "pnt-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "pnt-predictor"
 version = "0.1.0"
 

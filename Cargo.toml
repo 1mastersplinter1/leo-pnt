@@ -10,6 +10,7 @@ members = [
     "crates/pnt-ephemeris",
     "crates/pnt-predictor",
     "crates/pnt-replay",
+    "crates/pnt-mission",
     "crates/pnt-tracker",
 ]
 resolver = "2"

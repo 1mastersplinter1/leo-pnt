@@ -9,6 +9,7 @@
 
 pub mod estimator;
 pub mod highspeed;
+pub mod multisat;
 
 use std::f64::consts::TAU;
 use std::fs;

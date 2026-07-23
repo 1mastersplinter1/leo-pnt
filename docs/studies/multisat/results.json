@@ -1,0 +1,1259 @@
+{
+  "schema_version": 1,
+  "caveat": "SYNTHETIC ORBITAL FIXTURE [UNVERIFIED]. Every error is measured from the production Executive + FilterStub state against truth; no output is clamped or formula-fitted.",
+  "fixture": {
+    "synthetic_unverified": true,
+    "satellites": 960,
+    "shells": [
+      "Starlink-class: 550 km, 53.0 deg",
+      "OneWeb-class: 1200 km, 87.9 deg",
+      "Iridium-class: 780 km, 86.4 deg"
+    ],
+    "elevation_mask_deg": 5.0,
+    "epoch": "2020-07-12T21:16:01Z"
+  },
+  "outcomes": [
+    {
+      "scenario": "60 min constant-heading denied leg",
+      "requested_satellites": 1,
+      "duration_h": 1.0,
+      "distance_km": 12.9639888,
+      "visible_min": 45,
+      "visible_mean": 49.19083969465649,
+      "visible_max": 53,
+      "used_min": 1,
+      "used_mean": 1.0,
+      "used_max": 1,
+      "accepted_updates": 129,
+      "rejected_updates": 2,
+      "nuisance_state_count": 46,
+      "final_position_error_m": 33.75217919692777,
+      "final_velocity_error_mps": 0.030282191711264245,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.5054628190853462,
+          "velocity_error_mps": 0.017903455374154192
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 50.99665122476527,
+          "velocity_error_mps": 0.16453175633515235
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 32.91945238473752,
+          "velocity_error_mps": 0.15284645256511847
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 38.145014406997454,
+          "velocity_error_mps": 0.052163144400682815
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 84.75430436228996,
+          "velocity_error_mps": 0.08134865394814798
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 7.931642968801784,
+          "velocity_error_mps": 0.08693358156059552
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 33.75217919692777,
+          "velocity_error_mps": 0.030282191711264245
+        }
+      ]
+    },
+    {
+      "scenario": "60 min constant-heading denied leg",
+      "requested_satellites": 2,
+      "duration_h": 1.0,
+      "distance_km": 12.9639888,
+      "visible_min": 45,
+      "visible_mean": 49.19083969465649,
+      "visible_max": 53,
+      "used_min": 2,
+      "used_mean": 2.0,
+      "used_max": 2,
+      "accepted_updates": 258,
+      "rejected_updates": 4,
+      "nuisance_state_count": 59,
+      "final_position_error_m": 74.85568706566208,
+      "final_velocity_error_mps": 0.2273511892168257,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.26713127142122167,
+          "velocity_error_mps": 0.11911449961807397
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 21.55380815483586,
+          "velocity_error_mps": 0.28000933051149357
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 25.495346086678694,
+          "velocity_error_mps": 0.1426026596820624
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 24.305275737334558,
+          "velocity_error_mps": 0.16743009152687688
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 111.35773932843627,
+          "velocity_error_mps": 0.15918126494938817
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 106.1428705176194,
+          "velocity_error_mps": 0.25856732818972605
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 74.85568706566208,
+          "velocity_error_mps": 0.2273511892168257
+        }
+      ]
+    },
+    {
+      "scenario": "60 min constant-heading denied leg",
+      "requested_satellites": 4,
+      "duration_h": 1.0,
+      "distance_km": 12.9639888,
+      "visible_min": 45,
+      "visible_mean": 49.19083969465649,
+      "visible_max": 53,
+      "used_min": 4,
+      "used_mean": 4.0,
+      "used_max": 4,
+      "accepted_updates": 516,
+      "rejected_updates": 8,
+      "nuisance_state_count": 92,
+      "final_position_error_m": 65.11130473669955,
+      "final_velocity_error_mps": 0.38888568499071036,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.6429556889879589,
+          "velocity_error_mps": 0.07887796431556067
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 30.629774185607413,
+          "velocity_error_mps": 0.22291435674009624
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 20.83594469539216,
+          "velocity_error_mps": 0.1727987922233618
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 39.94729336886216,
+          "velocity_error_mps": 0.5626718970699114
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 44.12598593598668,
+          "velocity_error_mps": 0.13240338245695207
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 35.8115447227329,
+          "velocity_error_mps": 0.24047763560175106
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 65.11130473669955,
+          "velocity_error_mps": 0.38888568499071036
+        }
+      ]
+    },
+    {
+      "scenario": "60 min constant-heading denied leg",
+      "requested_satellites": 8,
+      "duration_h": 1.0,
+      "distance_km": 12.9639888,
+      "visible_min": 45,
+      "visible_mean": 49.19083969465649,
+      "visible_max": 53,
+      "used_min": 8,
+      "used_mean": 8.0,
+      "used_max": 8,
+      "accepted_updates": 1032,
+      "rejected_updates": 16,
+      "nuisance_state_count": 135,
+      "final_position_error_m": 6.076327435146231,
+      "final_velocity_error_mps": 0.0451336898435602,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.4090223664647037,
+          "velocity_error_mps": 0.10883294223996275
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 15.66959719492245,
+          "velocity_error_mps": 0.13213170584080017
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 3.604229963646799,
+          "velocity_error_mps": 0.09297942957651478
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 14.204328278571534,
+          "velocity_error_mps": 0.04768010002600724
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 17.315384653329474,
+          "velocity_error_mps": 0.08927412098301661
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 19.810928618312037,
+          "velocity_error_mps": 0.2428795816306968
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 6.076327435146231,
+          "velocity_error_mps": 0.0451336898435602
+        }
+      ]
+    },
+    {
+      "scenario": "D45 100 km constant-heading passage",
+      "requested_satellites": 1,
+      "duration_h": 7.713888888888889,
+      "distance_km": 100.00276916,
+      "visible_min": 45,
+      "visible_mean": 48.79380341880342,
+      "visible_max": 54,
+      "used_min": 1,
+      "used_mean": 1.0,
+      "used_max": 1,
+      "accepted_updates": 934,
+      "rejected_updates": 2,
+      "nuisance_state_count": 295,
+      "final_position_error_m": 2.3981516564181775,
+      "final_velocity_error_mps": 0.027368810196878094,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.3835672771717635,
+          "velocity_error_mps": 0.08635482793338123
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 21.404143165170264,
+          "velocity_error_mps": 0.024996196328379156
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 53.62168716164589,
+          "velocity_error_mps": 0.06491507373566849
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 96.68209508585993,
+          "velocity_error_mps": 0.1115167806106167
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 33.12366754408354,
+          "velocity_error_mps": 0.05671917338645648
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 45.22767883180706,
+          "velocity_error_mps": 0.13089253499226763
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 19.871663343073596,
+          "velocity_error_mps": 0.05441482032403195
+        },
+        {
+          "denied_min": 70.0,
+          "position_error_m": 18.21815215031427,
+          "velocity_error_mps": 0.06451590374222939
+        },
+        {
+          "denied_min": 80.0,
+          "position_error_m": 37.707585222669714,
+          "velocity_error_mps": 0.13830907926131544
+        },
+        {
+          "denied_min": 90.0,
+          "position_error_m": 93.5923499353331,
+          "velocity_error_mps": 0.12486027408161444
+        },
+        {
+          "denied_min": 100.0,
+          "position_error_m": 129.93978449178908,
+          "velocity_error_mps": 0.11185905539750632
+        },
+        {
+          "denied_min": 110.0,
+          "position_error_m": 55.42719394648865,
+          "velocity_error_mps": 0.10370581420275161
+        },
+        {
+          "denied_min": 120.0,
+          "position_error_m": 185.4884316547369,
+          "velocity_error_mps": 0.2653621380587047
+        },
+        {
+          "denied_min": 130.0,
+          "position_error_m": 28.255741126478114,
+          "velocity_error_mps": 0.13963157986093505
+        },
+        {
+          "denied_min": 140.0,
+          "position_error_m": 31.96223044452732,
+          "velocity_error_mps": 0.18644995157759559
+        },
+        {
+          "denied_min": 150.0,
+          "position_error_m": 83.02441279630924,
+          "velocity_error_mps": 0.12059946637771347
+        },
+        {
+          "denied_min": 160.0,
+          "position_error_m": 28.122418676688987,
+          "velocity_error_mps": 0.09522888060795653
+        },
+        {
+          "denied_min": 170.0,
+          "position_error_m": 35.242429600539964,
+          "velocity_error_mps": 0.11013087629015825
+        },
+        {
+          "denied_min": 180.0,
+          "position_error_m": 34.15211936231788,
+          "velocity_error_mps": 0.09721745535284086
+        },
+        {
+          "denied_min": 190.0,
+          "position_error_m": 35.54432646694126,
+          "velocity_error_mps": 0.04777392870715892
+        },
+        {
+          "denied_min": 200.0,
+          "position_error_m": 26.335864613449942,
+          "velocity_error_mps": 0.06477936988081744
+        },
+        {
+          "denied_min": 210.0,
+          "position_error_m": 21.958518281847486,
+          "velocity_error_mps": 0.07763535533090911
+        },
+        {
+          "denied_min": 220.0,
+          "position_error_m": 38.182370084836236,
+          "velocity_error_mps": 0.09653145117073927
+        },
+        {
+          "denied_min": 230.0,
+          "position_error_m": 194.6540300308785,
+          "velocity_error_mps": 0.334447352979062
+        },
+        {
+          "denied_min": 240.0,
+          "position_error_m": 54.4341427054836,
+          "velocity_error_mps": 0.0954150109630523
+        },
+        {
+          "denied_min": 250.0,
+          "position_error_m": 23.56568562693174,
+          "velocity_error_mps": 0.057530509535903045
+        },
+        {
+          "denied_min": 260.0,
+          "position_error_m": 44.12673539272833,
+          "velocity_error_mps": 0.07647370229616623
+        },
+        {
+          "denied_min": 270.0,
+          "position_error_m": 33.282097744270594,
+          "velocity_error_mps": 0.13483333201691086
+        },
+        {
+          "denied_min": 280.0,
+          "position_error_m": 64.15126998730064,
+          "velocity_error_mps": 0.12274580708281461
+        },
+        {
+          "denied_min": 290.0,
+          "position_error_m": 102.29275926813344,
+          "velocity_error_mps": 0.09051862421263092
+        },
+        {
+          "denied_min": 300.0,
+          "position_error_m": 134.67282966690428,
+          "velocity_error_mps": 0.20036963525398382
+        },
+        {
+          "denied_min": 310.0,
+          "position_error_m": 14.607949254226519,
+          "velocity_error_mps": 0.05069859172320042
+        },
+        {
+          "denied_min": 320.0,
+          "position_error_m": 19.1814476501651,
+          "velocity_error_mps": 0.047404702286164224
+        },
+        {
+          "denied_min": 330.0,
+          "position_error_m": 35.917363247163536,
+          "velocity_error_mps": 0.14420370114214703
+        },
+        {
+          "denied_min": 340.0,
+          "position_error_m": 154.74457400151394,
+          "velocity_error_mps": 0.211285263181178
+        },
+        {
+          "denied_min": 350.0,
+          "position_error_m": 14.293431164352475,
+          "velocity_error_mps": 0.08609028789749779
+        },
+        {
+          "denied_min": 360.0,
+          "position_error_m": 27.180952397380906,
+          "velocity_error_mps": 0.10502891953656458
+        },
+        {
+          "denied_min": 370.0,
+          "position_error_m": 41.114606553740785,
+          "velocity_error_mps": 0.0646260693198575
+        },
+        {
+          "denied_min": 380.0,
+          "position_error_m": 115.83828351814698,
+          "velocity_error_mps": 0.08975935087641927
+        },
+        {
+          "denied_min": 390.0,
+          "position_error_m": 63.06318791615899,
+          "velocity_error_mps": 0.025481781990400895
+        },
+        {
+          "denied_min": 400.0,
+          "position_error_m": 19.175472754095956,
+          "velocity_error_mps": 0.05809069944880096
+        },
+        {
+          "denied_min": 410.0,
+          "position_error_m": 16.962088621013734,
+          "velocity_error_mps": 0.019680307517869373
+        },
+        {
+          "denied_min": 420.0,
+          "position_error_m": 30.83794439240928,
+          "velocity_error_mps": 0.007913426894235997
+        },
+        {
+          "denied_min": 430.0,
+          "position_error_m": 14.27822012175014,
+          "velocity_error_mps": 0.05008719513196137
+        },
+        {
+          "denied_min": 440.0,
+          "position_error_m": 21.229596352025087,
+          "velocity_error_mps": 0.037818650361760714
+        },
+        {
+          "denied_min": 450.0,
+          "position_error_m": 14.114306718312953,
+          "velocity_error_mps": 0.026569457390271424
+        },
+        {
+          "denied_min": 460.0,
+          "position_error_m": 18.354799455782242,
+          "velocity_error_mps": 0.019280608415219284
+        }
+      ]
+    },
+    {
+      "scenario": "D45 100 km constant-heading passage",
+      "requested_satellites": 2,
+      "duration_h": 7.713888888888889,
+      "distance_km": 100.00276916,
+      "visible_min": 45,
+      "visible_mean": 48.79380341880342,
+      "visible_max": 54,
+      "used_min": 2,
+      "used_mean": 2.0,
+      "used_max": 2,
+      "accepted_updates": 1868,
+      "rejected_updates": 4,
+      "nuisance_state_count": 418,
+      "final_position_error_m": 1.5858107865713704,
+      "final_velocity_error_mps": 0.007870491133971853,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.5393782693428133,
+          "velocity_error_mps": 0.10678295929752947
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 26.240660021945605,
+          "velocity_error_mps": 0.2820970391684308
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 56.69903966768977,
+          "velocity_error_mps": 0.28449978671902393
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 46.865702888895015,
+          "velocity_error_mps": 0.2310555804673584
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 47.455909269271096,
+          "velocity_error_mps": 0.09442393110571168
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 63.765181703796216,
+          "velocity_error_mps": 0.43262710070381205
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 45.70205758336065,
+          "velocity_error_mps": 0.16426054419171143
+        },
+        {
+          "denied_min": 70.0,
+          "position_error_m": 26.887022449412207,
+          "velocity_error_mps": 0.19944259745106505
+        },
+        {
+          "denied_min": 80.0,
+          "position_error_m": 45.17844705831296,
+          "velocity_error_mps": 0.23894584739483044
+        },
+        {
+          "denied_min": 90.0,
+          "position_error_m": 62.31793959716188,
+          "velocity_error_mps": 0.17587230641488677
+        },
+        {
+          "denied_min": 100.0,
+          "position_error_m": 40.8961233395571,
+          "velocity_error_mps": 0.20019723720308072
+        },
+        {
+          "denied_min": 110.0,
+          "position_error_m": 55.22445268520738,
+          "velocity_error_mps": 0.23049262395227574
+        },
+        {
+          "denied_min": 120.0,
+          "position_error_m": 46.62088608877732,
+          "velocity_error_mps": 0.31331187266530236
+        },
+        {
+          "denied_min": 130.0,
+          "position_error_m": 39.83998430388652,
+          "velocity_error_mps": 0.16785465911825348
+        },
+        {
+          "denied_min": 140.0,
+          "position_error_m": 23.52807718275307,
+          "velocity_error_mps": 0.06035548460995076
+        },
+        {
+          "denied_min": 150.0,
+          "position_error_m": 14.746305693121394,
+          "velocity_error_mps": 0.1291035945982026
+        },
+        {
+          "denied_min": 160.0,
+          "position_error_m": 40.8408113952445,
+          "velocity_error_mps": 0.09969811864900498
+        },
+        {
+          "denied_min": 170.0,
+          "position_error_m": 48.139291949030266,
+          "velocity_error_mps": 0.16073357405857716
+        },
+        {
+          "denied_min": 180.0,
+          "position_error_m": 134.41276644584042,
+          "velocity_error_mps": 0.3814608515120304
+        },
+        {
+          "denied_min": 190.0,
+          "position_error_m": 113.47843244076338,
+          "velocity_error_mps": 0.2236841613918735
+        },
+        {
+          "denied_min": 200.0,
+          "position_error_m": 27.904777753809874,
+          "velocity_error_mps": 0.09804665224077365
+        },
+        {
+          "denied_min": 210.0,
+          "position_error_m": 33.798856532746974,
+          "velocity_error_mps": 0.1998757030655695
+        },
+        {
+          "denied_min": 220.0,
+          "position_error_m": 79.14256304045027,
+          "velocity_error_mps": 0.43508496491621385
+        },
+        {
+          "denied_min": 230.0,
+          "position_error_m": 39.76001869357609,
+          "velocity_error_mps": 0.10483270206227943
+        },
+        {
+          "denied_min": 240.0,
+          "position_error_m": 145.97721997989427,
+          "velocity_error_mps": 0.5863672753712523
+        },
+        {
+          "denied_min": 250.0,
+          "position_error_m": 60.690933085396345,
+          "velocity_error_mps": 0.3136391336769289
+        },
+        {
+          "denied_min": 260.0,
+          "position_error_m": 22.514120790164288,
+          "velocity_error_mps": 0.06832113429839122
+        },
+        {
+          "denied_min": 270.0,
+          "position_error_m": 45.44767592039472,
+          "velocity_error_mps": 0.14619100145263242
+        },
+        {
+          "denied_min": 280.0,
+          "position_error_m": 33.535349876969576,
+          "velocity_error_mps": 0.07056569582258361
+        },
+        {
+          "denied_min": 290.0,
+          "position_error_m": 131.9608377331518,
+          "velocity_error_mps": 0.4922481481785604
+        },
+        {
+          "denied_min": 300.0,
+          "position_error_m": 128.38186082967897,
+          "velocity_error_mps": 0.3326724926368048
+        },
+        {
+          "denied_min": 310.0,
+          "position_error_m": 71.18890697219031,
+          "velocity_error_mps": 0.2952509804871599
+        },
+        {
+          "denied_min": 320.0,
+          "position_error_m": 31.531544307406264,
+          "velocity_error_mps": 0.12518187769481606
+        },
+        {
+          "denied_min": 330.0,
+          "position_error_m": 24.327651078129197,
+          "velocity_error_mps": 0.09040964309546035
+        },
+        {
+          "denied_min": 340.0,
+          "position_error_m": 87.50366415197898,
+          "velocity_error_mps": 0.3221395145683743
+        },
+        {
+          "denied_min": 350.0,
+          "position_error_m": 53.30559105877101,
+          "velocity_error_mps": 0.1040470688542135
+        },
+        {
+          "denied_min": 360.0,
+          "position_error_m": 46.02117860799507,
+          "velocity_error_mps": 0.16751144084273342
+        },
+        {
+          "denied_min": 370.0,
+          "position_error_m": 109.22303251319501,
+          "velocity_error_mps": 0.09277694054016435
+        },
+        {
+          "denied_min": 380.0,
+          "position_error_m": 37.58233697881562,
+          "velocity_error_mps": 0.1183829803289143
+        },
+        {
+          "denied_min": 390.0,
+          "position_error_m": 19.410100352914156,
+          "velocity_error_mps": 0.04991237519337314
+        },
+        {
+          "denied_min": 400.0,
+          "position_error_m": 12.176338312961004,
+          "velocity_error_mps": 0.052464638220374955
+        },
+        {
+          "denied_min": 410.0,
+          "position_error_m": 62.89657411621107,
+          "velocity_error_mps": 0.026125235568180367
+        },
+        {
+          "denied_min": 420.0,
+          "position_error_m": 13.436710949267056,
+          "velocity_error_mps": 0.07228636660619443
+        },
+        {
+          "denied_min": 430.0,
+          "position_error_m": 24.075292128470892,
+          "velocity_error_mps": 0.0368702339489559
+        },
+        {
+          "denied_min": 440.0,
+          "position_error_m": 8.358243182058512,
+          "velocity_error_mps": 0.03259601529902519
+        },
+        {
+          "denied_min": 450.0,
+          "position_error_m": 10.368542762704656,
+          "velocity_error_mps": 0.012068379104534734
+        },
+        {
+          "denied_min": 460.0,
+          "position_error_m": 10.330626622357007,
+          "velocity_error_mps": 0.02275851120437586
+        }
+      ]
+    },
+    {
+      "scenario": "D45 100 km constant-heading passage",
+      "requested_satellites": 4,
+      "duration_h": 7.713888888888889,
+      "distance_km": 100.00276916,
+      "visible_min": 45,
+      "visible_mean": 48.79380341880342,
+      "visible_max": 54,
+      "used_min": 4,
+      "used_mean": 4.0,
+      "used_max": 4,
+      "accepted_updates": 3736,
+      "rejected_updates": 8,
+      "nuisance_state_count": 539,
+      "final_position_error_m": 21.99448339636351,
+      "final_velocity_error_mps": 0.034612864061161805,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.6441110992530225,
+          "velocity_error_mps": 0.1375706238459927
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 36.56078742185772,
+          "velocity_error_mps": 0.20849670126372988
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 45.567380615540124,
+          "velocity_error_mps": 0.4684631246806608
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 21.466574070377767,
+          "velocity_error_mps": 0.6016397941978536
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 21.037551841339805,
+          "velocity_error_mps": 0.20505906867315407
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 36.74565561965223,
+          "velocity_error_mps": 0.37384571457785876
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 41.564318505919864,
+          "velocity_error_mps": 0.3003906569185693
+        },
+        {
+          "denied_min": 70.0,
+          "position_error_m": 45.113797504021555,
+          "velocity_error_mps": 0.34310548127760127
+        },
+        {
+          "denied_min": 80.0,
+          "position_error_m": 33.40349711062259,
+          "velocity_error_mps": 0.2062773568487772
+        },
+        {
+          "denied_min": 90.0,
+          "position_error_m": 31.358230170335062,
+          "velocity_error_mps": 0.3984627126567917
+        },
+        {
+          "denied_min": 100.0,
+          "position_error_m": 30.228162898056492,
+          "velocity_error_mps": 0.271754189006986
+        },
+        {
+          "denied_min": 110.0,
+          "position_error_m": 97.5987816791853,
+          "velocity_error_mps": 0.5869084685842484
+        },
+        {
+          "denied_min": 120.0,
+          "position_error_m": 111.79233184710554,
+          "velocity_error_mps": 0.8872037916415533
+        },
+        {
+          "denied_min": 130.0,
+          "position_error_m": 21.03555402899612,
+          "velocity_error_mps": 0.13762063402687835
+        },
+        {
+          "denied_min": 140.0,
+          "position_error_m": 100.43852646367944,
+          "velocity_error_mps": 0.40669137569808916
+        },
+        {
+          "denied_min": 150.0,
+          "position_error_m": 27.905007045809587,
+          "velocity_error_mps": 0.3668662605406927
+        },
+        {
+          "denied_min": 160.0,
+          "position_error_m": 62.43795538731182,
+          "velocity_error_mps": 0.4907248062778357
+        },
+        {
+          "denied_min": 170.0,
+          "position_error_m": 44.38145240412534,
+          "velocity_error_mps": 0.5336241155639866
+        },
+        {
+          "denied_min": 180.0,
+          "position_error_m": 42.800647791768725,
+          "velocity_error_mps": 0.7282035796759867
+        },
+        {
+          "denied_min": 190.0,
+          "position_error_m": 19.77810983664221,
+          "velocity_error_mps": 0.17825987296819146
+        },
+        {
+          "denied_min": 200.0,
+          "position_error_m": 33.784709582575005,
+          "velocity_error_mps": 0.47367345709593467
+        },
+        {
+          "denied_min": 210.0,
+          "position_error_m": 39.16873689165743,
+          "velocity_error_mps": 0.3404544536433477
+        },
+        {
+          "denied_min": 220.0,
+          "position_error_m": 30.336823772516393,
+          "velocity_error_mps": 0.3264128103531114
+        },
+        {
+          "denied_min": 230.0,
+          "position_error_m": 39.38324844096894,
+          "velocity_error_mps": 0.34380402179150754
+        },
+        {
+          "denied_min": 240.0,
+          "position_error_m": 15.991440581397223,
+          "velocity_error_mps": 0.3454392082738742
+        },
+        {
+          "denied_min": 250.0,
+          "position_error_m": 46.243326342539575,
+          "velocity_error_mps": 0.6371525730703319
+        },
+        {
+          "denied_min": 260.0,
+          "position_error_m": 26.59834070626075,
+          "velocity_error_mps": 0.23203932577403263
+        },
+        {
+          "denied_min": 270.0,
+          "position_error_m": 21.643704740083365,
+          "velocity_error_mps": 0.33140901189734967
+        },
+        {
+          "denied_min": 280.0,
+          "position_error_m": 29.78267553838354,
+          "velocity_error_mps": 0.14511017061516177
+        },
+        {
+          "denied_min": 290.0,
+          "position_error_m": 29.919459996737313,
+          "velocity_error_mps": 0.15723429759394458
+        },
+        {
+          "denied_min": 300.0,
+          "position_error_m": 35.825567669469685,
+          "velocity_error_mps": 0.20755514663550634
+        },
+        {
+          "denied_min": 310.0,
+          "position_error_m": 21.101046569420838,
+          "velocity_error_mps": 0.45669478543986136
+        },
+        {
+          "denied_min": 320.0,
+          "position_error_m": 7.571093977303345,
+          "velocity_error_mps": 0.208396286834469
+        },
+        {
+          "denied_min": 330.0,
+          "position_error_m": 59.50485076447104,
+          "velocity_error_mps": 0.29055265572210526
+        },
+        {
+          "denied_min": 340.0,
+          "position_error_m": 47.850991511265924,
+          "velocity_error_mps": 0.4317747174071747
+        },
+        {
+          "denied_min": 350.0,
+          "position_error_m": 10.005800948861832,
+          "velocity_error_mps": 0.13307754752716583
+        },
+        {
+          "denied_min": 360.0,
+          "position_error_m": 46.132191855789934,
+          "velocity_error_mps": 0.259799638906931
+        },
+        {
+          "denied_min": 370.0,
+          "position_error_m": 25.011149861694857,
+          "velocity_error_mps": 0.16056580503968126
+        },
+        {
+          "denied_min": 380.0,
+          "position_error_m": 35.236718264515446,
+          "velocity_error_mps": 0.11876045524732881
+        },
+        {
+          "denied_min": 390.0,
+          "position_error_m": 30.097274294833756,
+          "velocity_error_mps": 0.0766439126716635
+        },
+        {
+          "denied_min": 400.0,
+          "position_error_m": 8.08320785986259,
+          "velocity_error_mps": 0.029785834711156426
+        },
+        {
+          "denied_min": 410.0,
+          "position_error_m": 36.74626258916024,
+          "velocity_error_mps": 0.11203289182180588
+        },
+        {
+          "denied_min": 420.0,
+          "position_error_m": 29.32482076437479,
+          "velocity_error_mps": 0.09725999094880668
+        },
+        {
+          "denied_min": 430.0,
+          "position_error_m": 7.6123585531100435,
+          "velocity_error_mps": 0.05045833540609857
+        },
+        {
+          "denied_min": 440.0,
+          "position_error_m": 17.674981814033984,
+          "velocity_error_mps": 0.04932213168670188
+        },
+        {
+          "denied_min": 450.0,
+          "position_error_m": 8.954239906181819,
+          "velocity_error_mps": 0.07713423895027671
+        },
+        {
+          "denied_min": 460.0,
+          "position_error_m": 19.73763919122203,
+          "velocity_error_mps": 0.035690096314442005
+        }
+      ]
+    },
+    {
+      "scenario": "D45 100 km constant-heading passage",
+      "requested_satellites": 8,
+      "duration_h": 7.713888888888889,
+      "distance_km": 100.00276916,
+      "visible_min": 45,
+      "visible_mean": 48.79380341880342,
+      "visible_max": 54,
+      "used_min": 8,
+      "used_mean": 8.0,
+      "used_max": 8,
+      "accepted_updates": 7472,
+      "rejected_updates": 16,
+      "nuisance_state_count": 614,
+      "final_position_error_m": 11.368805153925912,
+      "final_velocity_error_mps": 0.03633948296254768,
+      "error_class": "<100 m",
+      "convergence_curve": [
+        {
+          "denied_min": 0.0,
+          "position_error_m": 0.5477904834107636,
+          "velocity_error_mps": 0.04550077035579108
+        },
+        {
+          "denied_min": 10.0,
+          "position_error_m": 32.22440246546319,
+          "velocity_error_mps": 0.16924067305567134
+        },
+        {
+          "denied_min": 20.0,
+          "position_error_m": 24.047080653969864,
+          "velocity_error_mps": 0.1822693909221639
+        },
+        {
+          "denied_min": 30.0,
+          "position_error_m": 25.477587999844463,
+          "velocity_error_mps": 0.13792594857927543
+        },
+        {
+          "denied_min": 40.0,
+          "position_error_m": 12.978896098166203,
+          "velocity_error_mps": 0.026145238307337608
+        },
+        {
+          "denied_min": 50.0,
+          "position_error_m": 18.598732035551713,
+          "velocity_error_mps": 0.143374025879077
+        },
+        {
+          "denied_min": 60.0,
+          "position_error_m": 13.003769684378906,
+          "velocity_error_mps": 0.06942333473962538
+        },
+        {
+          "denied_min": 70.0,
+          "position_error_m": 26.771654180026175,
+          "velocity_error_mps": 0.20966122678114846
+        },
+        {
+          "denied_min": 80.0,
+          "position_error_m": 20.31687874936303,
+          "velocity_error_mps": 0.1117942322523013
+        },
+        {
+          "denied_min": 90.0,
+          "position_error_m": 16.756922904830304,
+          "velocity_error_mps": 0.06511720608635417
+        },
+        {
+          "denied_min": 100.0,
+          "position_error_m": 17.168845443677995,
+          "velocity_error_mps": 0.0890101203497497
+        },
+        {
+          "denied_min": 110.0,
+          "position_error_m": 8.369945475460025,
+          "velocity_error_mps": 0.08747257310886718
+        },
+        {
+          "denied_min": 120.0,
+          "position_error_m": 11.078649599172069,
+          "velocity_error_mps": 0.032658234184300784
+        },
+        {
+          "denied_min": 130.0,
+          "position_error_m": 20.197125850997026,
+          "velocity_error_mps": 0.10405282360503201
+        },
+        {
+          "denied_min": 140.0,
+          "position_error_m": 16.82264922625086,
+          "velocity_error_mps": 0.10871386832920606
+        },
+        {
+          "denied_min": 150.0,
+          "position_error_m": 7.996390381776162,
+          "velocity_error_mps": 0.036771569095759064
+        },
+        {
+          "denied_min": 160.0,
+          "position_error_m": 5.61980575441729,
+          "velocity_error_mps": 0.06897870102583267
+        },
+        {
+          "denied_min": 170.0,
+          "position_error_m": 15.886068122938008,
+          "velocity_error_mps": 0.07536189917048781
+        },
+        {
+          "denied_min": 180.0,
+          "position_error_m": 11.480969089492236,
+          "velocity_error_mps": 0.18243000940266346
+        },
+        {
+          "denied_min": 190.0,
+          "position_error_m": 22.469700356495668,
+          "velocity_error_mps": 0.10599130164470548
+        },
+        {
+          "denied_min": 200.0,
+          "position_error_m": 12.33073984118791,
+          "velocity_error_mps": 0.09955574686629134
+        },
+        {
+          "denied_min": 210.0,
+          "position_error_m": 11.38995680774362,
+          "velocity_error_mps": 0.11368782794886391
+        },
+        {
+          "denied_min": 220.0,
+          "position_error_m": 11.932167314541179,
+          "velocity_error_mps": 0.08934554084763591
+        },
+        {
+          "denied_min": 230.0,
+          "position_error_m": 5.564333920942731,
+          "velocity_error_mps": 0.17925716676574005
+        },
+        {
+          "denied_min": 240.0,
+          "position_error_m": 13.265213390835456,
+          "velocity_error_mps": 0.13904964032014272
+        },
+        {
+          "denied_min": 250.0,
+          "position_error_m": 5.2600877697491795,
+          "velocity_error_mps": 0.09380468115900813
+        },
+        {
+          "denied_min": 260.0,
+          "position_error_m": 8.105634499275745,
+          "velocity_error_mps": 0.06423381628429396
+        },
+        {
+          "denied_min": 270.0,
+          "position_error_m": 12.803525019854181,
+          "velocity_error_mps": 0.0998236804842872
+        },
+        {
+          "denied_min": 280.0,
+          "position_error_m": 5.3951129209144,
+          "velocity_error_mps": 0.10073180682126462
+        },
+        {
+          "denied_min": 290.0,
+          "position_error_m": 11.65448948804887,
+          "velocity_error_mps": 0.08680293776799854
+        },
+        {
+          "denied_min": 300.0,
+          "position_error_m": 16.46336449153246,
+          "velocity_error_mps": 0.1073079928936387
+        },
+        {
+          "denied_min": 310.0,
+          "position_error_m": 8.120178428647867,
+          "velocity_error_mps": 0.12593384509331612
+        },
+        {
+          "denied_min": 320.0,
+          "position_error_m": 7.503700760074922,
+          "velocity_error_mps": 0.12340211747189861
+        },
+        {
+          "denied_min": 330.0,
+          "position_error_m": 11.976566984957142,
+          "velocity_error_mps": 0.07628364328704734
+        },
+        {
+          "denied_min": 340.0,
+          "position_error_m": 21.707402583983473,
+          "velocity_error_mps": 0.17168396839761493
+        },
+        {
+          "denied_min": 350.0,
+          "position_error_m": 25.0912018170594,
+          "velocity_error_mps": 0.08248865474579603
+        },
+        {
+          "denied_min": 360.0,
+          "position_error_m": 8.953335517977465,
+          "velocity_error_mps": 0.08608253240732902
+        },
+        {
+          "denied_min": 370.0,
+          "position_error_m": 11.044255077542386,
+          "velocity_error_mps": 0.06589701856288073
+        },
+        {
+          "denied_min": 380.0,
+          "position_error_m": 4.949704610346432,
+          "velocity_error_mps": 0.04249660458123193
+        },
+        {
+          "denied_min": 390.0,
+          "position_error_m": 7.828132096208762,
+          "velocity_error_mps": 0.038410973834555336
+        },
+        {
+          "denied_min": 400.0,
+          "position_error_m": 14.941156442038766,
+          "velocity_error_mps": 0.07276147836875757
+        },
+        {
+          "denied_min": 410.0,
+          "position_error_m": 15.303515520752681,
+          "velocity_error_mps": 0.0850483020069852
+        },
+        {
+          "denied_min": 420.0,
+          "position_error_m": 17.184909493991128,
+          "velocity_error_mps": 0.06227426178618546
+        },
+        {
+          "denied_min": 430.0,
+          "position_error_m": 14.363196434092533,
+          "velocity_error_mps": 0.050211253075999
+        },
+        {
+          "denied_min": 440.0,
+          "position_error_m": 16.87647073510144,
+          "velocity_error_mps": 0.057840974316076404
+        },
+        {
+          "denied_min": 450.0,
+          "position_error_m": 3.983226863349555,
+          "velocity_error_mps": 0.04369911196012934
+        },
+        {
+          "denied_min": 460.0,
+          "position_error_m": 6.941281115905712,
+          "velocity_error_mps": 0.03042363465405061
+        }
+      ]
+    }
+  ],
+  "headline": "The real filter reached <=200 m with 1 requested satellites.",
+  "diagnosed_next_step": "Validate the synthetic fixture result against dated real multi-constellation OMM/SupGP records and captured tracker residuals."
+}

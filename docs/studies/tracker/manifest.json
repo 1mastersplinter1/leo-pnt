@@ -16,10 +16,10 @@
     "impairment_trials": 200
   },
   "wall_time_seconds": {
-    "detection_accuracy": 2.42820928,
-    "false_alarm_tail": 197.113248371,
-    "dynamics": 0.226596614,
-    "impairments": 1.3142917459999999,
-    "total": 201.082575308
+    "detection_accuracy": 2.272746931,
+    "false_alarm_tail": 198.363710442,
+    "dynamics": 0.239871969,
+    "impairments": 2.097321101,
+    "total": 202.973943823
   }
 }

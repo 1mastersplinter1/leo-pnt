@@ -11,6 +11,8 @@ pub mod estimator;
     clippy::naive_bytecount
 )]
 
+pub mod estimator;
+
 use std::f64::consts::TAU;
 use std::fs;
 use std::path::Path;
@@ -28,6 +30,7 @@ pub const BLOCK_SECONDS: f64 = LENGTH as f64 / SAMPLE_RATE_HZ;
 const BLOCK_NS: u64 = 31_250_000;
 const OFFSET_HZ: f64 = 487.5;
 const REFERENCE_SEED: u64 = 0x1234_5678;
+const INTERFERER_REFERENCE_SEED: u64 = REFERENCE_SEED ^ 0x5555;
 
 #[derive(Clone, Copy, Debug)]
 pub struct StudySize {
@@ -114,6 +117,8 @@ pub struct DetectionLevel {
     pub trials: u64,
     pub detections: u64,
     pub detection_probability: f64,
+    pub detection_probability_ci95_low: f64,
+    pub detection_probability_ci95_high: f64,
     pub error_mean_hz: Option<f64>,
     pub error_sigma_hz: Option<f64>,
     pub error_max_abs_hz: Option<f64>,
@@ -192,6 +197,7 @@ pub struct ImpairmentStudy {
     pub clock: Vec<ClockResult>,
     pub reacquisition: Vec<ReacquisitionResult>,
     pub two_signal: Vec<TwoSignalResult>,
+    pub multipath: Vec<MultipathResult>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -227,6 +233,19 @@ pub struct TwoSignalResult {
     pub secondary_captures: u64,
     pub other_locks: u64,
     pub no_detections: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MultipathResult {
+    pub echo_delay_samples: usize,
+    pub echo_to_direct_db: f64,
+    pub trials: u64,
+    pub detections: u64,
+    pub direct_delay_selections: u64,
+    pub echo_delay_selections: u64,
+    pub other_delay_selections: u64,
+    pub no_detections: u64,
+    pub mean_frequency_error_hz: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -274,16 +293,28 @@ fn tracker(length: usize, threshold: f64) -> CorrelationTracker {
 }
 
 fn synth(length: usize, offset: f64, ramp: f64, cn0: f64, seed: u64) -> Synthesizer {
+    synth_with_reference(length, offset, ramp, cn0, seed, REFERENCE_SEED, 37 % length)
+}
+
+fn synth_with_reference(
+    length: usize,
+    offset: f64,
+    ramp: f64,
+    cn0: f64,
+    noise_seed: u64,
+    reference_seed: u64,
+    delay_samples: usize,
+) -> Synthesizer {
     Synthesizer::new(
         SynthConfig {
             sample_rate_hz: SAMPLE_RATE_HZ,
             initial_offset_hz: offset,
             offset_ramp_hz_per_s: ramp,
-            delay_samples: 37 % length,
+            delay_samples: delay_samples % length,
             cn0_db_hz: cn0,
-            seed,
+            seed: noise_seed,
         },
-        reference(length),
+        BpskReference::pn(length, reference_seed),
     )
 }
 
@@ -322,6 +353,7 @@ fn detection_study(count: u64) -> (DetectionStudy, Vec<(f64, f64)>) {
             let mut qualities: Vec<f64> = trials.iter().map(|trial| trial.quality).collect();
             qualities.sort_by(f64::total_cmp);
             let detections = trials.iter().filter(|trial| trial.detected).count() as u64;
+            let (ci95_low, ci95_high) = wilson_interval_95(detections, count);
             let pairs = trials
                 .iter()
                 .filter_map(|trial| trial.error.map(|error| (trial.quality, error)))
@@ -332,6 +364,8 @@ fn detection_study(count: u64) -> (DetectionStudy, Vec<(f64, f64)>) {
                     trials: count,
                     detections,
                     detection_probability: detections as f64 / count as f64,
+                    detection_probability_ci95_low: ci95_low,
+                    detection_probability_ci95_high: ci95_high,
                     error_mean_hz: mean(&errors),
                     error_sigma_hz: sample_sigma(&errors),
                     error_max_abs_hz: errors.iter().map(|value| value.abs()).reduce(f64::max),
@@ -640,7 +674,15 @@ fn two_signal_study(trials: u64) -> Vec<TwoSignalResult> {
                     .into_par_iter()
                     .map(|seed| {
                         let mut primary = synth(LENGTH, OFFSET_HZ, 0.0, 70.0, seed);
-                        let mut secondary = synth(LENGTH, offset, 0.0, 70.0, seed ^ 0x5555);
+                        let mut secondary = synth_with_reference(
+                            LENGTH,
+                            offset,
+                            0.0,
+                            70.0,
+                            seed ^ 0x5555,
+                            INTERFERER_REFERENCE_SEED,
+                            37,
+                        );
                         let mut block = primary.next_block();
                         let scale = 10.0_f64.powf(relative_db / 20.0);
                         for (left, right) in block.iter_mut().zip(secondary.next_block()) {
@@ -670,6 +712,68 @@ fn two_signal_study(trials: u64) -> Vec<TwoSignalResult> {
                     secondary_captures: captures.iter().filter(|value| **value == 2).count() as u64,
                     other_locks: captures.iter().filter(|value| **value == 3).count() as u64,
                     no_detections: captures.iter().filter(|value| **value == 0).count() as u64,
+                }
+            })
+        })
+        .collect()
+}
+
+fn multipath_study(trials: u64) -> Vec<MultipathResult> {
+    [45, 69, 101]
+        .into_iter()
+        .flat_map(|echo_delay| {
+            [-10.0, 0.0, 10.0].into_iter().map(move |relative_db| {
+                let outcomes: Vec<Option<(usize, f64)>> = (1..=trials)
+                    .into_par_iter()
+                    .map(|seed| {
+                        let mut direct = synth(LENGTH, OFFSET_HZ, 0.0, 70.0, seed);
+                        let mut echo = synth_with_reference(
+                            LENGTH,
+                            OFFSET_HZ,
+                            0.0,
+                            70.0,
+                            seed ^ 0xa5a5,
+                            REFERENCE_SEED,
+                            echo_delay,
+                        );
+                        let mut block = direct.next_block();
+                        let scale = 10.0_f64.powf(relative_db / 20.0);
+                        for (left, right) in block.iter_mut().zip(echo.next_block()) {
+                            *left += right * scale;
+                        }
+                        match tracker(LENGTH, 32.0).process_block(&block, 0) {
+                            TrackOutcome::Detection(value) => {
+                                Some((value.delay_samples, value.correlation_peak_hz - OFFSET_HZ))
+                            }
+                            TrackOutcome::NoDetection(_) => None,
+                        }
+                    })
+                    .collect();
+                let frequency_errors: Vec<f64> =
+                    outcomes.iter().flatten().map(|(_, error)| *error).collect();
+                MultipathResult {
+                    echo_delay_samples: echo_delay,
+                    echo_to_direct_db: relative_db,
+                    trials,
+                    detections: frequency_errors.len() as u64,
+                    direct_delay_selections: outcomes
+                        .iter()
+                        .flatten()
+                        .filter(|(delay, _)| *delay == 37)
+                        .count() as u64,
+                    echo_delay_selections: outcomes
+                        .iter()
+                        .flatten()
+                        .filter(|(delay, _)| *delay == echo_delay)
+                        .count() as u64,
+                    other_delay_selections: outcomes
+                        .iter()
+                        .flatten()
+                        .filter(|(delay, _)| *delay != 37 && *delay != echo_delay)
+                        .count() as u64,
+                    no_detections: outcomes.iter().filter(|outcome| outcome.is_none()).count()
+                        as u64,
+                    mean_frequency_error_hz: mean(&frequency_errors),
                 }
             })
         })
@@ -746,6 +850,7 @@ pub fn run(size: StudySize) -> StudyResults {
         clock: clock_study(),
         reacquisition: reacquisition_study(),
         two_signal: two_signal_study(size.impairment_trials),
+        multipath: multipath_study(size.impairment_trials),
     };
     let impairments_seconds = start.elapsed().as_secs_f64();
     let quality_variance = quality_variance(&pairs);
@@ -814,6 +919,21 @@ fn write_json(path: impl AsRef<Path>, value: &impl Serialize) -> std::io::Result
 
 fn mean(values: &[f64]) -> Option<f64> {
     (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
+}
+
+fn wilson_interval_95(successes: u64, trials: u64) -> (f64, f64) {
+    const Z: f64 = 1.959_963_984_540_054;
+    if trials == 0 {
+        return (0.0, 1.0);
+    }
+    let n = trials as f64;
+    let probability = successes as f64 / n;
+    let z_squared = Z * Z;
+    let denominator = 1.0 + z_squared / n;
+    let center = (probability + z_squared / (2.0 * n)) / denominator;
+    let half_width =
+        Z * ((probability * (1.0 - probability) + z_squared / (4.0 * n)) / n).sqrt() / denominator;
+    (center - half_width, center + half_width)
 }
 
 fn sample_variance(values: &[f64]) -> Option<f64> {
@@ -909,5 +1029,14 @@ mod tests {
     fn fisher_model_matches_threshold_32_proposal() {
         let probability = fisher_block_exceedance(32.0, 256, 256);
         assert!((probability - 5.30e-9).abs() < 0.02e-9, "{probability}");
+    }
+
+    #[test]
+    fn distinct_code_interferer_does_not_create_centroid_locks() {
+        let results = two_signal_study(200);
+        assert!(
+            results.iter().all(|result| result.other_locks == 0),
+            "{results:#?}"
+        );
     }
 }

@@ -244,18 +244,18 @@
       "second_offset_hz": -1000.0,
       "second_to_primary_db": -10.0,
       "trials": 200,
-      "primary_captures": 0,
+      "primary_captures": 200,
       "secondary_captures": 0,
-      "other_locks": 200,
+      "other_locks": 0,
       "no_detections": 0
     },
     {
       "second_offset_hz": -1000.0,
       "second_to_primary_db": 0.0,
       "trials": 200,
-      "primary_captures": 0,
+      "primary_captures": 200,
       "secondary_captures": 0,
-      "other_locks": 200,
+      "other_locks": 0,
       "no_detections": 0
     },
     {
@@ -264,25 +264,25 @@
       "trials": 200,
       "primary_captures": 0,
       "secondary_captures": 0,
-      "other_locks": 200,
-      "no_detections": 0
+      "other_locks": 0,
+      "no_detections": 200
     },
     {
       "second_offset_hz": 0.0,
       "second_to_primary_db": -10.0,
       "trials": 200,
-      "primary_captures": 0,
+      "primary_captures": 200,
       "secondary_captures": 0,
-      "other_locks": 200,
+      "other_locks": 0,
       "no_detections": 0
     },
     {
       "second_offset_hz": 0.0,
       "second_to_primary_db": 0.0,
       "trials": 200,
-      "primary_captures": 0,
+      "primary_captures": 200,
       "secondary_captures": 0,
-      "other_locks": 200,
+      "other_locks": 0,
       "no_detections": 0
     },
     {
@@ -291,25 +291,25 @@
       "trials": 200,
       "primary_captures": 0,
       "secondary_captures": 0,
-      "other_locks": 200,
-      "no_detections": 0
+      "other_locks": 0,
+      "no_detections": 200
     },
     {
       "second_offset_hz": 1500.0,
       "second_to_primary_db": -10.0,
       "trials": 200,
-      "primary_captures": 0,
+      "primary_captures": 200,
       "secondary_captures": 0,
-      "other_locks": 200,
+      "other_locks": 0,
       "no_detections": 0
     },
     {
       "second_offset_hz": 1500.0,
       "second_to_primary_db": 0.0,
       "trials": 200,
-      "primary_captures": 0,
+      "primary_captures": 200,
       "secondary_captures": 0,
-      "other_locks": 200,
+      "other_locks": 0,
       "no_detections": 0
     },
     {
@@ -318,8 +318,109 @@
       "trials": 200,
       "primary_captures": 0,
       "secondary_captures": 0,
-      "other_locks": 200,
-      "no_detections": 0
+      "other_locks": 0,
+      "no_detections": 200
+    }
+  ],
+  "multipath": [
+    {
+      "echo_delay_samples": 45,
+      "echo_to_direct_db": -10.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 200,
+      "echo_delay_selections": 0,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": 0.03289376669945767
+    },
+    {
+      "echo_delay_samples": 45,
+      "echo_to_direct_db": 0.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 106,
+      "echo_delay_selections": 94,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": -0.183706132438968
+    },
+    {
+      "echo_delay_samples": 45,
+      "echo_to_direct_db": 10.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 0,
+      "echo_delay_selections": 200,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": -0.01593269862759229
+    },
+    {
+      "echo_delay_samples": 69,
+      "echo_to_direct_db": -10.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 200,
+      "echo_delay_selections": 0,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": 0.02736411754845648
+    },
+    {
+      "echo_delay_samples": 69,
+      "echo_to_direct_db": 0.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 103,
+      "echo_delay_selections": 97,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": -0.10875159907740738
+    },
+    {
+      "echo_delay_samples": 69,
+      "echo_to_direct_db": 10.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 0,
+      "echo_delay_selections": 200,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": 0.03193585200428288
+    },
+    {
+      "echo_delay_samples": 101,
+      "echo_to_direct_db": -10.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 200,
+      "echo_delay_selections": 0,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": -0.056595180089753686
+    },
+    {
+      "echo_delay_samples": 101,
+      "echo_to_direct_db": 0.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 112,
+      "echo_delay_selections": 88,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": -0.5226379059279688
+    },
+    {
+      "echo_delay_samples": 101,
+      "echo_to_direct_db": 10.0,
+      "trials": 200,
+      "detections": 200,
+      "direct_delay_selections": 0,
+      "echo_delay_selections": 200,
+      "other_delay_selections": 0,
+      "no_detections": 0,
+      "mean_frequency_error_hz": 0.004681229469279344
     }
   ]
 }

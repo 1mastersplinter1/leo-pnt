@@ -8,16 +8,18 @@ threshold Q = 32, and ±128 Hz tracking window. Full command:
 cargo run -p pnt-studies --release --bin tracker-study -- --out docs/studies/tracker
 ```
 
-The final run used Rayon, 500 deterministic seeds per C/N0 level, 1,000,000 noise-only
-blocks, and 200 trials per stochastic impairment point. Harness wall time was 201.083 s
-(false-alarm tail 197.113 s); `/usr/bin/time -p` reported 202.55 s real, 2671.85 s user,
-and 1.23 s system. Earlier complete schema-development runs took 207.97 and 215.77 s real.
+The final correction run used Rayon, 500 deterministic seeds per C/N0 level, 1,000,000
+noise-only blocks, and 200 trials per stochastic impairment point. Harness wall time was
+202.974 s (false-alarm tail 198.364 s). Earlier complete runs took 201.083, 207.97, and
+215.77 s.
 JSON files beside this report are the authoritative full-precision results.
 
 ## Headline findings
 
-- The threshold-32 detection knee is 32 dB-Hz: Pdet = 0.240/0.546/0.848 at
-  31/32/33 dB-Hz. Detection is not accuracy: accepted weak locks have hundreds of hertz
+- At the measured 8.5 Hz sub-bin position, the threshold-32 detection knee is 32 dB-Hz:
+  Pdet = 0.240/0.546/0.848 at 31/32/33 dB-Hz. This is a favorable -1.0 dB scalloping
+  point; the half-bin worst case is -3.9 dB, so the disclosed position-dependent knee is
+  32–35 dB-Hz. Detection is not accuracy: accepted weak locks have hundreds of hertz
   error. Error sigma falls below 4 Hz only around 52 dB-Hz and reaches 0.482 Hz at
   62 dB-Hz.
 - The archived 4000-block probe is reproduced (median 11.50, p99 15.77). At one million
@@ -33,8 +35,12 @@ JSON files beside this report are the authoritative full-precision results.
 - CW behavior is not uniformly fail-loud: at J/S=+10 dB, the outcome depends on CW
   placement, ranging from all NoDetection to 20.5% or 100% false locks. Clock error maps
   directly into Doppler bias (f_carrier × fractional error). Every tested 1–16 block
-  outage reacquired on the first restored block. With two simultaneous copies of the
-  reference, every tested separation/power point emitted a lock at neither true frequency.
+  outage reacquired on the first restored block. The original two-signal false-capture
+  headline was a harness construction artifact: both paths had the same PN code, delay,
+  and phase, leaving a clean two-tone after despreading whose Kay discriminator returned
+  the power-weighted frequency centroid. With a distinct PN seed, all tested outcomes are
+  direct-signal locks or NoDetection. The genuine same-code/different-delay multipath case
+  instead selects the stronger delay, splitting roughly evenly at equal power.
 - Quality is useful below saturation but is not a globally invertible variance proxy.
   For Q<180, a log-log fit gives `ln(var_Hz2) = 27.222 - 4.279 ln(Q)`, RMS log residual
   0.571. Above about Q=180, Q saturates near 191 while error variance continues improving.
@@ -43,27 +49,31 @@ JSON files beside this report are the authoritative full-precision results.
 
 Each point is 500 independently seeded one-block trials at an injected 487.5 Hz offset.
 Quality quantiles include both detected and rejected trials; error statistics cover emitted
-detections.
+detections. Pdet intervals are two-sided 95% Wilson binomial intervals.
 
-| C/N0 (dB-Hz) | Pdet | error mean (Hz) | error sigma (Hz) | max abs (Hz) | median Q |
-|---:|---:|---:|---:|---:|---:|
-| 30 | 0.072 | -92.11 | 411.39 | 1783.32 | 22.33 |
-| 31 | 0.240 | 23.16 | 336.39 | 1083.05 | 26.92 |
-| 32 | 0.546 | -29.93 | 272.90 | 956.11 | 32.89 |
-| 33 | 0.848 | 5.71 | 229.75 | 904.44 | 39.52 |
-| 34 | 0.988 | 4.32 | 195.44 | 660.73 | 47.85 |
-| 40 | 1.000 | 0.26 | 46.64 | 152.10 | 108.89 |
-| 46 | 1.000 | -0.44 | 11.93 | 32.54 | 160.91 |
-| 52 | 1.000 | 0.03 | 3.26 | 15.42 | 182.69 |
-| 58 | 1.000 | -0.03 | 0.955 | 2.99 | 189.22 |
-| 62 | 1.000 | -0.006 | 0.482 | 2.06 | 190.63 |
-| 70 | 1.000 | -0.004 | 0.155 | 0.52 | 191.49 |
-| 78 | 1.000 | -0.003 | 0.059 | 0.20 | 191.63 |
+| C/N0 (dB-Hz) | Pdet | 95% CI | error mean (Hz) | error sigma (Hz) | max abs (Hz) | median Q |
+|---:|---:|---:|---:|---:|---:|---:|
+| 30 | 0.072 | 0.052–0.098 | -92.11 | 411.39 | 1783.32 | 22.33 |
+| 31 | 0.240 | 0.205–0.279 | 23.16 | 336.39 | 1083.05 | 26.92 |
+| 32 | 0.546 | 0.502–0.589 | -29.93 | 272.90 | 956.11 | 32.89 |
+| 33 | 0.848 | 0.814–0.877 | 5.71 | 229.75 | 904.44 | 39.52 |
+| 34 | 0.988 | 0.974–0.994 | 4.32 | 195.44 | 660.73 | 47.85 |
+| 40 | 1.000 | 0.992–1.000 | 0.26 | 46.64 | 152.10 | 108.89 |
+| 46 | 1.000 | 0.992–1.000 | -0.44 | 11.93 | 32.54 | 160.91 |
+| 52 | 1.000 | 0.992–1.000 | 0.03 | 3.26 | 15.42 | 182.69 |
+| 58 | 1.000 | 0.992–1.000 | -0.03 | 0.955 | 2.99 | 189.22 |
+| 62 | 1.000 | 0.992–1.000 | -0.006 | 0.482 | 2.06 | 190.63 |
+| 70 | 1.000 | 0.992–1.000 | -0.004 | 0.155 | 0.52 | 191.49 |
+| 78 | 1.000 | 0.992–1.000 | -0.003 | 0.059 | 0.20 | 191.63 |
 
 The 62/70/78 sigma values reproduce the prior uncommitted review probe
 (0.481/0.155/0.059 Hz) to rounding. The sharp Pdet knee and the much slower accuracy
 transition show why threshold crossing alone is insufficient evidence for a covariance.
-See `detection-accuracy.json`.
+The injected tone occupies a favorable 8.5 Hz position inside a 32 Hz bin (-1.0 dB
+scalloping). A half-bin review probe (-3.9 dB scalloping) measured Pdet=0.232 at
+34 dB-Hz versus 0.988 here, shifting the practical knee by about 2–3 dB. The supported
+claim is therefore a 32–35 dB-Hz position-dependent range, not a universal 32 dB-Hz
+threshold. See `detection-accuracy.json`.
 
 ## 2. False-alarm tail and Fisher-g model
 
@@ -94,8 +104,8 @@ The reported prediction conservatively unions this over 256 frequency rows. Obse
 
 The model gets the tail scale right and remains conservative for this white-noise fixture;
 positive dependence between frequency rows reduces the effective trial count. It is not
-empirically tested at 5.3e-9: one million samples are about three orders of magnitude short
-even of a useful zero-event bound at that probability. Coloured/non-Gaussian real noise,
+empirically tested at 5.3e-9: a useful zero-event bound needs about 5.7e8 blocks, so one
+million samples are about 2.8 orders of magnitude short. Coloured/non-Gaussian real noise,
 interference, ADC effects, real sequences, and production search geometry remain
 **[UNVERIFIED]**. See `false-alarm-tail.json`.
 
@@ -159,10 +169,25 @@ actual rubidium calibration errors is **[UNVERIFIED]**.
 
 After 1, 2, 4, 8, and 16 noise-only outage blocks, every case reacquired on the first
 restored block. This is deterministic one-seed evidence, not a probability or a real burst
-schedule. In the two-copy study (offsets -1000/0/+1500 Hz and relative powers -10/0/+10 dB),
-all 1800 trials emitted a detection, but none was within 32 Hz of either injected frequency.
-This is systematic false capture, not fail-loud rejection. Other delays, phases, sequences,
-and near-far ratios are **[UNVERIFIED]**. See `impairments.json`.
+schedule.
+
+The original two-signal result was a **construction artifact**, not tracker evidence:
+`reference()` fixed both synthesizers to PN seed `0x12345678` and delay 37, with equal
+carrier phase. Despreading therefore removed the shared code and left a clean two-tone;
+the Kay frequency discriminator correctly returned its power-weighted centroid, which is
+neither injected frequency. The corrected co-channel harness uses distinct PN seed
+`0x12345678 XOR 0x5555`. Across offsets -1000/0/+1500 Hz and powers -10/0/+10 dB
+(200 trials each), all -10 and 0 dB cases locked the direct signal (1200/1200), while all
++10 dB cases returned NoDetection (600/600); there were zero secondary or other locks.
+
+The genuine same-code analog was measured separately as specular multipath: direct delay
+37, echo delays 45/69/101 samples, common frequency and phase, and echo/direct powers
+-10/0/+10 dB. Every one of 1800 trials detected with no other-delay selection. The direct
+path won 600/600 at -10 dB, the echo won 600/600 at +10 dB, and equal-power selection
+split 321 direct versus 279 echo. Mean frequency error across the nine points stayed
+between -0.523 and +0.033 Hz. This fixture demonstrates delay selection, not the old
+frequency-centroid artifact; fractional delays, phase distributions, fading, and real
+channel codes remain **[UNVERIFIED]**. See `impairments.json`.
 
 ## 5. Quality to variance
 
@@ -182,9 +207,12 @@ is **[UNVERIFIED]**.
 
 ## Reproducibility and limits
 
-All random streams use committed xorshift64* synthesis and parameter-derived seeds. The
-tracker implementation itself processes every trial. Only wall-time fields are
-nondeterministic. This is synthetic white-noise fixture evidence, not a production
+All random streams use committed xorshift64* synthesis and parameter-derived seeds.
+Consecutive xorshift64* seeds have a lag-1 correlation of 0.194 in the first draw, confined
+to draw 0; the measured block-statistic lag-1 correlation is 0.0025. This is a harness
+note, not evidence of a material result bias, and a splitmix64 seed hash would be reasonable
+future hardening. The tracker implementation itself processes every trial. Only wall-time
+fields are nondeterministic. This is synthetic white-noise fixture evidence, not a production
 threshold freeze. In particular, real signal sequences, capture C/N0 distributions,
 coloured noise tails, oscillator statistics, multi-signal delay/phase populations, and
 2.5–5 MHz production geometry remain **[UNVERIFIED]**.

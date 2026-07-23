@@ -91,3 +91,6 @@ because of the public API gap below.
   attach its public Doppler pipeline.
 - All numeric headline values beyond this deterministic synthetic demonstration.
 - Spherical sea-surface/local-frame approximation versus WGS-84 passage dynamics.
+
+
+Review addenda (2026-07-23, coordinator glue per dual review): (1) The D35 'hand-derived comparison values' item is satisfied at SIGN level only — with the full IMU/GNSS/tracker/Kalman stack in the loop, exact numeric hand-derivation is impractical; the sign invariant is the derivable quantity (both seats concur this is an acceptable, disclosed relaxation). (2) IMU envelopes are tagged Frame::Sensor while acceleration_mps2 carries ECEF-referenced components with no gravity/Earth-rate modelling — self-consistent with the current FilterStub consumer but semantically loose; a true strapdown consumer would require re-tagging and specific-force modelling [UNVERIFIED]. (3) The brief's tracker-in-loop-subset/direct-bulk split was implemented as tracker-in-loop for ALL Doppler observations (faster than expected at current scale); disclosed deviation, no correctness impact.

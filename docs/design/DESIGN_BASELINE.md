@@ -237,7 +237,7 @@ trials.
 
 D56 sets this usable passage-scale target after D55 showed that the former approximately
 100--200 m target was not reliably deliverable. Controlled U-MS1.1 N=8 replay evidence reports
-**116 m p50 and 554 m p95**, meeting both amended synthetic-evidence gates. Real-signal
+**N=8 mean 116 m (p50 <= mean under right skew) and p95 554 m**, meeting both amended synthetic-evidence gates. Real-signal
 validation remains required before production freeze; this evidence-MET statement does not
 turn controlled synthetic evidence into a certified or real-world performance claim.
 

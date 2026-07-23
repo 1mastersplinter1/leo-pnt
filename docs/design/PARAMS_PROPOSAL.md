@@ -96,7 +96,7 @@ integrity would no longer *imply* the campaign statistic, violating the `SAFETY_
 worst-case ceiling.
 
 **Validation plan.** Reproduce the controlled U-MS1.1 multi-satellite N=8 replay
-(116 m p50 / 554 m p95), then extend it with independent-truth withheld replay and
+(N=8 mean 116 m (p50 <= mean under right skew) / p95 554 m), then extend it with independent-truth withheld replay and
 NEES/coverage scoring: confirm epochs passing `HPL ≤ PL` contain horizontal error within the
 amended 500 m p50 / 750 m p95 passage acceptance at the frozen confidence. Stratify by
 geometry, sea state, manoeuvre/converged leg, and time since last absolute fix. The replay

@@ -10,7 +10,7 @@ Scope: documentation only
 
 D56 supersedes the former approximately 100--200 m denied horizontal-position target with
 **<= 500 m p50 AND <= 750 m p95 over a >=100 km constant-heading-dominated passage**.
-Controlled U-MS1.1 N=8 replay evidence reports **116 m p50 / 554 m p95**, so the amended
+Controlled U-MS1.1 N=8 replay evidence reports **N=8 mean 116 m (p50 <= mean under right skew) / p95 554 m**, so the amended
 denied synthetic-evidence target is MET. Aided horizontal position remains **<= 25 m** to
 preserve failure-mode-2 discrimination (whether GNSS actually helps). Denied velocity
 (<= 0.04 m/s per axis) and heading (<= 5 degrees) are unchanged because D56/U-MS1.1 supplies

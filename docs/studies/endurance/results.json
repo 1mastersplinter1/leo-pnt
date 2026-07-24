@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "caveat": "SYNTHETIC ENDURANCE EXPERIMENT [UNVERIFIED]. Errors are production Executive + real FilterStub EKF state versus generator truth. No result is clamped, formula-generated, or target-fitted.",
+  "controls": {
+    "seed_count": 8,
+    "seed_values": [
+      3776782374,
+      3776782375,
+      3776782376,
+      3776782377,
+      3776782378,
+      3776782379,
+      3776782380,
+      3776782381
+    ],
+    "simultaneous_los": 8,
+    "doppler_interval_s": 30,
+    "chi_square_threshold": 9.0,
+    "gate_enabled": true,
+    "geometry": "At every Doppler epoch, the lowest-ID eight satellites above the 5-degree mask are used. Cohort handovers are counted; the same deterministic selection is used for every lever tier.",
+    "dynamics": "constant commanded heading at 7 kn with wave/slam and speed-scaled IMU; no coordinated turn"
+  },
+  "leg_duration_curve": [
+    {
+      "lever": "leg-duration",
+      "leg_duration_min": 10,
+      "clock_fractional_stability": 1e-9,
+      "clock_drift_mps": 0.29979245800000004,
+      "horizontal_error_mean_m": 180340.58936771113,
+      "horizontal_error_p50_m": 175579.8881992654,
+      "horizontal_error_p95_m": 222205.95626951184,
+      "horizontal_error_min_m": 154782.55816380447,
+      "horizontal_error_max_m": 222205.95626951184,
+      "accepted_updates_mean": 252.25,
+      "rejected_updates_mean": 83.75,
+      "handovers_mean": 1.0,
+      "seed_horizontal_errors_m": [
+        212124.37465046256,
+        157011.7691062383,
+        175098.17357551618,
+        168071.55727509962,
+        222205.95626951184,
+        154782.55816380447,
+        177850.43770179054,
+        175579.8881992654
+      ],
+      "error_class": "100 km-Earth radius"
+    },
+    {
+      "lever": "leg-duration",
+      "leg_duration_min": 20,
+      "clock_fractional_stability": 1e-9,
+      "clock_drift_mps": 0.29979245800000004,
+      "horizontal_error_mean_m": 158913.753982002,
+      "horizontal_error_p50_m": 154084.58946289227,
+      "horizontal_error_p95_m": 198493.00574247394,
+      "horizontal_error_min_m": 136676.85792019052,
+      "horizontal_error_max_m": 198493.00574247394,
+      "accepted_updates_mean": 487.5,
+      "rejected_updates_mean": 168.5,
+      "handovers_mean": 1.0,
+      "seed_horizontal_errors_m": [
+        184870.34383089832,
+        140225.1645011484,
+        154084.58946289227,
+        147613.41158153303,
+        198493.00574247394,
+        136676.85792019052,
+        155961.00143284636,
+        153385.6573840334
+      ],
+      "error_class": "100 km-Earth radius"
+    },
+    {
+      "lever": "leg-duration",
+      "leg_duration_min": 30,
+      "clock_fractional_stability": 1e-9,
+      "clock_drift_mps": 0.29979245800000004,
+      "horizontal_error_mean_m": 129087.07063104355,
+      "horizontal_error_p50_m": 126011.6423136089,
+      "horizontal_error_p95_m": 156740.40302314356,
+      "horizontal_error_min_m": 114083.825369717,
+      "horizontal_error_max_m": 156740.40302314356,
+      "accepted_updates_mean": 719.5,
+      "rejected_updates_mean": 256.5,
+      "handovers_mean": 1.0,
+      "seed_horizontal_errors_m": [
+        147119.2601249775,
+        114083.825369717,
+        124864.4564318594,
+        119240.31156640754,
+        156740.40302314356,
+        114201.7628289604,
+        126011.6423136089,
+        130434.90338967401
+      ],
+      "error_class": "100 km-Earth radius"
+    },
+    {
+      "lever": "leg-duration",
+      "leg_duration_min": 45,
+      "clock_fractional_stability": 1e-9,
+      "clock_drift_mps": 0.29979245800000004,
+      "horizontal_error_mean_m": 69870.24111540584,
+      "horizontal_error_p50_m": 66262.02599221002,
+      "horizontal_error_p95_m": 89463.72260852785,
+      "horizontal_error_min_m": 60875.00813308494,
+      "horizontal_error_max_m": 89463.72260852785,
+      "accepted_updates_mean": 1070.75,
+      "rejected_updates_mean": 385.25,
+      "handovers_mean": 2.25,
+      "seed_horizontal_errors_m": [
+        78138.33367890253,
+        63086.22389342012,
+        65060.65849064482,
+        64359.82779981642,
+        89463.72260852785,
+        60875.00813308494,
+        66262.02599221002,
+        71716.12832663998
+      ],
+      "error_class": "10-100 km"
+    },
+    {
+      "lever": "leg-duration",
+      "leg_duration_min": 60,
+      "clock_fractional_stability": 1e-9,
+      "clock_drift_mps": 0.29979245800000004,
+      "horizontal_error_mean_m": 12680.38008089167,
+      "horizontal_error_p50_m": 11683.637583809075,
+      "horizontal_error_p95_m": 20594.773918610674,
+      "horizontal_error_min_m": 9294.841866825516,
+      "horizontal_error_max_m": 20594.773918610674,
+      "accepted_updates_mean": 1416.375,
+      "rejected_updates_mean": 519.625,
+      "handovers_mean": 3.0,
+      "seed_horizontal_errors_m": [
+        20594.773918610674,
+        10104.072043386235,
+        14934.548859914865,
+        11683.637583809075,
+        9430.361805500617,
+        11651.844607566667,
+        13748.959961519695,
+        9294.841866825516
+      ],
+      "error_class": "10-100 km"
+    }
+  ],
+  "clock_discipline_curve": [
+    {
+      "lever": "clock-discipline",
+      "leg_duration_min": 30,
+      "clock_fractional_stability": 1e-11,
+      "clock_drift_mps": 0.0029979245799999998,
+      "horizontal_error_mean_m": 129085.17284923515,
+      "horizontal_error_p50_m": 126009.68337513978,
+      "horizontal_error_p95_m": 156739.09952500596,
+      "horizontal_error_min_m": 114081.87155623682,
+      "horizontal_error_max_m": 156739.09952500596,
+      "accepted_updates_mean": 719.5,
+      "rejected_updates_mean": 256.5,
+      "handovers_mean": 1.0,
+      "seed_horizontal_errors_m": [
+        147117.27572269627,
+        114081.87155623682,
+        124862.45401686625,
+        119238.29439927227,
+        156739.09952500596,
+        114199.75280992265,
+        126009.68337513978,
+        130432.95138874117
+      ],
+      "error_class": "100 km-Earth radius"
+    },
+    {
+      "lever": "clock-discipline",
+      "leg_duration_min": 30,
+      "clock_fractional_stability": 1e-9,
+      "clock_drift_mps": 0.29979245800000004,
+      "horizontal_error_mean_m": 129087.07063104355,
+      "horizontal_error_p50_m": 126011.6423136089,
+      "horizontal_error_p95_m": 156740.40302314356,
+      "horizontal_error_min_m": 114083.825369717,
+      "horizontal_error_max_m": 156740.40302314356,
+      "accepted_updates_mean": 719.5,
+      "rejected_updates_mean": 256.5,
+      "handovers_mean": 1.0,
+      "seed_horizontal_errors_m": [
+        147119.2601249775,
+        114083.825369717,
+        124864.4564318594,
+        119240.31156640754,
+        156740.40302314356,
+        114201.7628289604,
+        126011.6423136089,
+        130434.90338967401
+      ],
+      "error_class": "100 km-Earth radius"
+    },
+    {
+      "lever": "clock-discipline",
+      "leg_duration_min": 30,
+      "clock_fractional_stability": 1e-7,
+      "clock_drift_mps": 29.979245799999998,
+      "horizontal_error_mean_m": 127758.15904104747,
+      "horizontal_error_p50_m": 125064.73472847987,
+      "horizontal_error_p95_m": 147317.73114143382,
+      "horizontal_error_min_m": 114279.25212283019,
+      "horizontal_error_max_m": 147317.73114143382,
+      "accepted_updates_mean": 797.625,
+      "rejected_updates_mean": 178.375,
+      "handovers_mean": 1.0,
+      "seed_horizontal_errors_m": [
+        147317.73114143382,
+        114279.25212283019,
+        125064.73472847987,
+        119442.068782929,
+        146068.66969452752,
+        114402.80666408208,
+        124859.86520983734,
+        130630.14398426007
+      ],
+      "error_class": "100 km-Earth radius"
+    }
+  ],
+  "conclusions": [
+    "D55/D57 longer-leg check: p95 changes from 222206.0 m at 10 min to 20594.8 m at 60 min (signed improvement 201611.2 m).",
+    "500 m robustness: 0/5 leg tiers meet p50 <=500 m; 0/5 meet p95 <=500 m (the adopted D56 worst-case threshold is 750 m).",
+    "Rb-vs-OCXO [UNVERIFIED labels]: at 30 min, p95 is 156739.1 m at 1e-11 versus 156740.4 m at 1e-9; signed Rb benefit 1.3 m."
+  ],
+  "unverified": [
+    "Synthetic 1920-satellite three-MEO-shell TLE grid and lowest-ID visibility selection.",
+    "10/20/30/45/60 minute constant-heading leg choices and 30-second Doppler cadence.",
+    "Injected receiver clock fractional stabilities: 1e-11 (Rb label), 1e-9 (good OCXO label), and 1e-7 (poor label); constant drift is a stand-in, not an oscillator stochastic model.",
+    "Per-SV fixed transmit biases, deterministic measurement noise/outlier process, maritime IMU, wave/slam, and speed assumptions."
+  ]
+}

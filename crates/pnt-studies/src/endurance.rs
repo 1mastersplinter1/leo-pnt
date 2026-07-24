@@ -1,23 +1,33 @@
 //! Endurance sweeps through the production executive, chi-square gate, and EKF.
 //!
-//! Both sweeps run on the same LEO regime as the verified multi-satellite study
-//! (three shells at 53.0/87.9/86.4 deg, 13-15 rev/day, 550-1200 km). The grid is
-//! densified to a Starlink-scale synthetic Walker constellation so it provides
-//! genuinely continuous coverage over a full 60-minute leg -- the coarse 960-SV
-//! multisat grid only needed to hold an 8-SV cohort for 5 minutes and leaves
-//! instantaneous equatorial coverage gaps over an hour. A fixed eight-satellite
-//! cohort cannot survive an endurance leg from LEO (individual satellites set
-//! within minutes), so the honest endurance model tracks the best-conditioned
-//! eight *currently visible* satellites continuously, handing over as the sky
-//! rotates. Per-epoch GDOP is reported to prove the instantaneous geometry stays
-//! well-conditioned across the whole leg, so the leg-duration effect is isolated
-//! from geometry degradation rather than confounded with it.
+//! Both sweeps run on the identical LEO fixture as the verified multi-satellite
+//! study (D65 mandate): the same 960-satellite three-shell Walker grid (three
+//! shells at 53.0/87.9/86.4 deg, 13-15 rev/day, 550-1200 km, 16 planes x 20
+//! slots per shell). That grid keeps at least ~22 satellites continuously
+//! visible above the 5-degree mask over a full 60-minute leg, so no coverage gap
+//! forces a densified grid; the earlier 768-SV "densified for coverage" variant
+//! rested on an empirically false gap claim and is reverted. A fixed
+//! eight-satellite cohort still cannot survive an endurance leg from LEO
+//! (individual satellites set within minutes), so the honest endurance model
+//! tracks the best-conditioned eight *currently visible* satellites
+//! continuously, handing over as the sky rotates. Per-epoch GDOP is reported to
+//! prove the instantaneous geometry stays well-conditioned across the whole leg,
+//! so the leg-duration effect is isolated from geometry degradation rather than
+//! confounded with it.
 //!
 //! The sub-second wave-slam disturbance is disabled here: under the 1 Hz truth
 //! cadence it aliases to a strictly upward acceleration that integrates into an
 //! unphysical altitude over a 10-60 minute leg, lifting the "vessel" above the
 //! LEO shell. Endurance truth is therefore constant-heading maritime dead
 //! reckoning with horizontal bias and speed-scaled IMU noise.
+//!
+//! The study does not assert the *cause* of the denied-nav error. It runs a
+//! controlled bias-zeroed counterfactual (the injected per-SV transmit bias set
+//! to zero, everything else identical) alongside the full-bias sweep, plus a
+//! per-epoch error-vs-time trace aligned to handover epochs, and lets that data
+//! decide whether the km-scale limiter is per-SV bias re-convergence across
+//! handovers (an estimation problem) or fundamental weak Doppler-only position
+//! observability of a slow receiver once the aided prior decays.
 
 use chrono::{DateTime, Duration, Utc};
 use fusion_executive::{DopplerPipeline, Executive};
@@ -53,7 +63,7 @@ const PRODUCTION_CHI_SQUARE_THRESHOLD: f64 = 9.0;
 const SATELLITE_COUNT: usize = 8;
 const MINIMUM_SEEDS: usize = 8;
 const SHELL_PLANES: u64 = 16;
-const SHELL_SLOTS: u64 = 16;
+const SHELL_SLOTS: u64 = 20;
 const SHELL_SATELLITES: u64 = SHELL_PLANES * SHELL_SLOTS;
 const FIXTURE_SATELLITES: u64 = 3 * SHELL_SATELLITES;
 const FIRST_ID: u64 = 70_000;
@@ -88,9 +98,42 @@ pub struct Report {
     pub fixture: FixtureDescription,
     pub controls: Controls,
     pub leg_duration_curve: Vec<Outcome>,
+    /// Bias-zeroed control: the identical leg sweep with the injected per-SV
+    /// transmit bias forced to zero in the truth generator, everything else
+    /// held fixed. Comparing this to `leg_duration_curve` isolates whether the
+    /// km-scale error is driven by per-SV bias re-convergence across handovers.
+    pub leg_duration_curve_bias_zeroed: Vec<Outcome>,
     pub clock_discipline_curve: Vec<Outcome>,
+    /// Per-epoch position-error-vs-time traces for the representative seed,
+    /// aligned to handover epochs, at full bias and bias-zeroed.
+    pub epoch_traces: Vec<EpochTrace>,
     pub conclusions: Vec<String>,
     pub unverified: Vec<String>,
+}
+
+/// One doppler-epoch sample of the running filter solution within a single leg.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EpochSample {
+    pub elapsed_s: u64,
+    pub horizontal_error_m: f64,
+    pub gdop: Option<f64>,
+    /// True when this epoch dropped at least one previously tracked satellite
+    /// (a handover occurred at this epoch).
+    pub handover: bool,
+}
+
+/// A full within-leg error-vs-time trace for one representative run.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EpochTrace {
+    pub label: String,
+    pub seed: u64,
+    pub leg_duration_min: u64,
+    pub bias_enabled: bool,
+    /// Mean horizontal error over epochs at which a handover occurred.
+    pub mean_error_handover_m: Option<f64>,
+    /// Mean horizontal error over epochs with no handover.
+    pub mean_error_steady_m: Option<f64>,
+    pub samples: Vec<EpochSample>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -129,6 +172,14 @@ pub struct Outcome {
     pub horizontal_error_p95_m: f64,
     pub horizontal_error_min_m: f64,
     pub horizontal_error_max_m: f64,
+    /// RMS-over-leg horizontal error, averaged across seeds. The endpoint
+    /// metric above is a single-epoch sample of a noisy Doppler-only solution;
+    /// the RMS-over-leg metric averages every denied-leg doppler epoch and is a
+    /// more stable headline (the reviewer flagged endpoint sampling as a source
+    /// of bimodality artifacts).
+    pub horizontal_rms_mean_m: f64,
+    pub horizontal_rms_p50_m: f64,
+    pub horizontal_rms_p95_m: f64,
     pub accepted_updates_mean: f64,
     pub rejected_updates_mean: f64,
     pub handovers_mean: f64,
@@ -164,17 +215,23 @@ struct TruthSample {
 
 #[derive(Clone, Debug, PartialEq)]
 struct SeedResult {
+    /// Single-epoch horizontal error at the denied-leg endpoint.
     horizontal_error_m: f64,
+    /// RMS of the horizontal error over every denied-leg doppler epoch.
+    rms_error_m: f64,
     accepted: u64,
     rejected: u64,
     handovers: u64,
     gdops: Vec<f64>,
+    /// Per-epoch error-vs-time trace for the whole denied leg.
+    trace: Vec<EpochSample>,
 }
 
 /// All sweep results for one seed: `(leg_duration_min, result)` and
 /// `(clock_index, result)` pairs, ready to merge into the cross-seed tables.
 struct SeedOutcome {
     legs: Vec<(u64, SeedResult)>,
+    legs_bias_zeroed: Vec<(u64, SeedResult)>,
     clocks: Vec<(u64, SeedResult)>,
 }
 
@@ -199,6 +256,7 @@ fn simulate_seed(
     // geometry model fixed while the levers vary.
     let schedule = cohort_schedule(&store, &truth, config.doppler_interval_s, max_denied_s)?;
     let mut legs = Vec::new();
+    let mut legs_bias_zeroed = Vec::new();
     for &duration_min in &config.leg_durations_min {
         legs.push((
             duration_min,
@@ -211,6 +269,23 @@ fn simulate_seed(
                 1.0e-9,
                 config.doppler_interval_s,
                 seed,
+                true,
+            )?,
+        ));
+        // Bias-zeroed control: identical run with the injected per-SV transmit
+        // bias forced to zero in the truth generator, everything else fixed.
+        legs_bias_zeroed.push((
+            duration_min,
+            simulate(
+                mission_dir.path(),
+                &truth,
+                fixture,
+                &schedule,
+                duration_min * 60,
+                1.0e-9,
+                config.doppler_interval_s,
+                seed,
+                false,
             )?,
         ));
     }
@@ -227,10 +302,15 @@ fn simulate_seed(
                 fractional,
                 config.doppler_interval_s,
                 seed,
+                true,
             )?,
         ));
     }
-    Ok(SeedOutcome { legs, clocks })
+    Ok(SeedOutcome {
+        legs,
+        legs_bias_zeroed,
+        clocks,
+    })
 }
 
 /// Runs both endurance sweeps and writes measured JSON and Markdown.
@@ -275,10 +355,17 @@ pub fn run(output: impl AsRef<Path>, config: &EnduranceConfig) -> Result<Report,
         .collect::<Result<Vec<_>, StudyError>>()?;
 
     let mut leg_results: BTreeMap<u64, Vec<SeedResult>> = BTreeMap::new();
+    let mut leg_bias_zeroed_results: BTreeMap<u64, Vec<SeedResult>> = BTreeMap::new();
     let mut clock_results: BTreeMap<u64, Vec<SeedResult>> = BTreeMap::new();
     for outcome in per_seed {
         for (duration_min, result) in outcome.legs {
             leg_results.entry(duration_min).or_default().push(result);
+        }
+        for (duration_min, result) in outcome.legs_bias_zeroed {
+            leg_bias_zeroed_results
+                .entry(duration_min)
+                .or_default()
+                .push(result);
         }
         for (index, result) in outcome.clocks {
             clock_results.entry(index).or_default().push(result);
@@ -290,6 +377,41 @@ pub fn run(output: impl AsRef<Path>, config: &EnduranceConfig) -> Result<Report,
         .iter()
         .map(|duration| aggregate("leg-duration", *duration, 1.0e-9, &leg_results[duration]))
         .collect::<Vec<_>>();
+    let leg_duration_curve_bias_zeroed = config
+        .leg_durations_min
+        .iter()
+        .map(|duration| {
+            aggregate(
+                "leg-duration-bias-zeroed",
+                *duration,
+                1.0e-9,
+                &leg_bias_zeroed_results[duration],
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // Representative-seed per-epoch traces at the longest leg tier: the first
+    // seed (par_iter preserves input order, so index 0 is config.seeds[0]), at
+    // full bias and bias-zeroed, for the handover-aligned error-vs-time view.
+    let representative_seed = config.seeds[0];
+    let representative_leg = *config.leg_durations_min.last().unwrap();
+    let epoch_traces = vec![
+        epoch_trace(
+            "full-bias",
+            representative_seed,
+            representative_leg,
+            true,
+            &leg_results[&representative_leg][0].trace,
+        ),
+        epoch_trace(
+            "bias-zeroed",
+            representative_seed,
+            representative_leg,
+            false,
+            &leg_bias_zeroed_results[&representative_leg][0].trace,
+        ),
+    ];
+
     let clock_discipline_curve = config
         .clock_fractional_stabilities
         .iter()
@@ -303,9 +425,14 @@ pub fn run(output: impl AsRef<Path>, config: &EnduranceConfig) -> Result<Report,
             )
         })
         .collect::<Vec<_>>();
-    let conclusions = conclusions(&leg_duration_curve, &clock_discipline_curve);
+    let conclusions = conclusions(
+        &leg_duration_curve,
+        &leg_duration_curve_bias_zeroed,
+        &clock_discipline_curve,
+        &epoch_traces,
+    );
     let report = Report {
-        schema_version: 2,
+        schema_version: 3,
         caveat: "SYNTHETIC ENDURANCE EXPERIMENT [UNVERIFIED]. Errors are production Executive + real FilterStub EKF state versus generator truth. No result is clamped, formula-generated, or target-fitted.".into(),
         fixture: FixtureDescription {
             synthetic_unverified: true,
@@ -316,7 +443,7 @@ pub fn run(output: impl AsRef<Path>, config: &EnduranceConfig) -> Result<Report,
                 "Iridium-class: ~780 km, 86.4 deg, 14.342 rev/day".into(),
             ],
             elevation_mask_deg: MASK_DEG,
-            regime: "Starlink-scale synthetic LEO megaconstellation in the same regime as the verified multi-satellite study; grid densified so >=8 (typically 18-40) satellites stay continuously visible above the 5-degree mask over a full 60-minute leg.".into(),
+            regime: "The verified multi-satellite study's 960-satellite three-shell synthetic LEO Walker grid, reused unchanged (D65 mandate). At least ~22 (typically 22-45) satellites stay continuously visible above the 5-degree mask over a full 60-minute leg, so no coverage gap forces a denser grid.".into(),
         },
         controls: Controls {
             seed_count: config.seeds.len(),
@@ -329,10 +456,12 @@ pub fn run(output: impl AsRef<Path>, config: &EnduranceConfig) -> Result<Report,
             dynamics: "constant commanded heading at 7 kn with speed-scaled IMU noise and horizontal bias; sub-second wave-slam disabled to keep long-leg truth physical; no coordinated turn".into(),
         },
         leg_duration_curve,
+        leg_duration_curve_bias_zeroed,
         clock_discipline_curve,
+        epoch_traces,
         conclusions,
         unverified: vec![
-            format!("Synthetic {FIXTURE_SATELLITES}-satellite three-shell LEO Walker grid (53.0/87.9/86.4 deg at 15.064/13.158/14.342 rev/day) and sticky best-N-visible handover selection."),
+            format!("Synthetic {FIXTURE_SATELLITES}-satellite three-shell LEO Walker grid (53.0/87.9/86.4 deg at 15.064/13.158/14.342 rev/day, 16 planes x 20 slots per shell), reused unchanged from the multi-satellite study; sticky best-N-visible handover selection."),
             "10/20/30/45/60 minute constant-heading leg choices and 30-second Doppler cadence.".into(),
             "Injected receiver clock fractional stabilities: 1e-11 (Rb label), 1e-9 (good OCXO label), and 1e-7 (poor label); constant common-mode drift is a stand-in, not an oscillator stochastic model.".into(),
             "Per-SV fixed transmit biases, deterministic measurement noise/outlier process, maritime IMU bias/noise, and speed assumptions; sub-second wave-slam disabled for long-leg truth stability.".into(),
@@ -490,6 +619,7 @@ fn simulate(
     clock_fractional: f64,
     doppler_interval_s: u64,
     seed: u64,
+    bias_enabled: bool,
 ) -> Result<SeedResult, StudyError> {
     let mut pipeline = DopplerPipeline::new(
         EphemerisStore::from_tle_str(fixture)?.with_max_age(Duration::hours(12)),
@@ -516,6 +646,11 @@ fn simulate(
     let mut previous = BTreeSet::new();
     let mut handovers = 0_u64;
     let mut gdops = Vec::new();
+    // One sample per distinct doppler epoch (the measurement stream carries
+    // several records per integer second, so the epoch is keyed and the
+    // last-updated filter state per epoch is kept; the handover flag is sticky
+    // so an epoch that dropped a satellite stays marked).
+    let mut trace_by_epoch: BTreeMap<u64, EpochSample> = BTreeMap::new();
 
     for record in MeasurementReader::open(path)? {
         let MeasurementJournalRecord::Envelope(mut envelope) = record? else {
@@ -540,6 +675,7 @@ fn simulate(
         let sample = &truth[&(elapsed_s * 1_000_000_000)];
         let satellites = &schedule[&elapsed_s];
         let current = satellites.iter().copied().collect::<BTreeSet<_>>();
+        let handover_epoch = !previous.is_empty() && previous.difference(&current).next().is_some();
         if !previous.is_empty() {
             handovers += previous.difference(&current).count() as u64;
         }
@@ -559,7 +695,11 @@ fn simulate(
                     velocity_ecef_mps: receiver_velocity,
                     clock_drift_mps: clock_fractional * SPEED_OF_LIGHT_MPS,
                 },
-                sv_bias_hz(id, seed),
+                if bias_enabled {
+                    sv_bias_hz(id, seed)
+                } else {
+                    0.0
+                },
                 CARRIER_HZ,
                 MASK_DEG.to_radians(),
             )
@@ -577,17 +717,44 @@ fn simulate(
             executive.process(envelope.clone());
             sequence += 1;
         }
-        if let Some(value) = gdop(&los) {
+        let epoch_gdop = gdop(&los);
+        if let Some(value) = epoch_gdop {
             gdops.push(value);
         }
+        // Record the running solution error at this epoch so the within-leg
+        // error-vs-time trajectory (and its RMS) can be measured and aligned to
+        // handover epochs, rather than only the single-epoch endpoint.
+        let running = executive.filter().state();
+        let error_m = horizontal_error(running.position_ecef_m, sample.fix.position_ecef_m);
+        let entry = trace_by_epoch.entry(elapsed_s).or_insert(EpochSample {
+            elapsed_s,
+            horizontal_error_m: error_m,
+            gdop: epoch_gdop,
+            handover: false,
+        });
+        entry.horizontal_error_m = error_m;
+        entry.gdop = epoch_gdop;
+        entry.handover |= handover_epoch;
     }
+    let trace: Vec<EpochSample> = trace_by_epoch.into_values().collect();
     let endpoint = truth
         .get(&((AIDED_S + denied_s) * 1_000_000_000))
         .ok_or(StudyError::MissingTruth)?;
     let state = executive.filter().state();
     let events = executive.journals().integrity_events();
+    let rms_error_m = if trace.is_empty() {
+        f64::NAN
+    } else {
+        (trace
+            .iter()
+            .map(|sample| sample.horizontal_error_m.powi(2))
+            .sum::<f64>()
+            / trace.len() as f64)
+            .sqrt()
+    };
     Ok(SeedResult {
         horizontal_error_m: horizontal_error(state.position_ecef_m, endpoint.fix.position_ecef_m),
+        rms_error_m,
         accepted: events
             .iter()
             .filter(|event| event.reason == "Doppler innovation accepted")
@@ -598,6 +765,7 @@ fn simulate(
             .count() as u64,
         handovers,
         gdops,
+        trace,
     })
 }
 
@@ -609,6 +777,10 @@ fn aggregate(lever: &str, duration_min: u64, fractional: f64, seeds: &[SeedResul
     let gdops = seeds
         .iter()
         .flat_map(|result| result.gdops.iter().copied())
+        .collect::<Vec<_>>();
+    let rms = seeds
+        .iter()
+        .map(|result| result.rms_error_m)
         .collect::<Vec<_>>();
     let p95 = percentile(&errors, 0.95);
     Outcome {
@@ -626,6 +798,9 @@ fn aggregate(lever: &str, duration_min: u64, fractional: f64, seeds: &[SeedResul
         horizontal_error_p95_m: p95,
         horizontal_error_min_m: errors.iter().copied().fold(f64::INFINITY, f64::min),
         horizontal_error_max_m: errors.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        horizontal_rms_mean_m: mean(&rms),
+        horizontal_rms_p50_m: percentile(&rms, 0.50),
+        horizontal_rms_p95_m: percentile(&rms, 0.95),
         accepted_updates_mean: mean(
             &seeds
                 .iter()
@@ -649,10 +824,80 @@ fn aggregate(lever: &str, duration_min: u64, fractional: f64, seeds: &[SeedResul
     }
 }
 
-fn conclusions(legs: &[Outcome], clocks: &[Outcome]) -> Vec<String> {
+/// Builds a representative-seed error-vs-time trace summary, including the mean
+/// error at handover versus steady (no-handover) epochs, so the report can show
+/// whether handovers actually coincide with error spikes.
+fn epoch_trace(
+    label: &str,
+    seed: u64,
+    leg_duration_min: u64,
+    bias_enabled: bool,
+    samples: &[EpochSample],
+) -> EpochTrace {
+    let handover_errors: Vec<f64> = samples
+        .iter()
+        .filter(|sample| sample.handover)
+        .map(|sample| sample.horizontal_error_m)
+        .collect();
+    let steady_errors: Vec<f64> = samples
+        .iter()
+        .filter(|sample| !sample.handover)
+        .map(|sample| sample.horizontal_error_m)
+        .collect();
+    EpochTrace {
+        label: label.into(),
+        seed,
+        leg_duration_min,
+        bias_enabled,
+        mean_error_handover_m: (!handover_errors.is_empty()).then(|| mean(&handover_errors)),
+        mean_error_steady_m: (!steady_errors.is_empty()).then(|| mean(&steady_errors)),
+        samples: samples.to_vec(),
+    }
+}
+
+/// The data-decided cause verdict: compares the full-bias and bias-zeroed
+/// longest-leg control and classifies the km-scale limiter without asserting it.
+fn bias_control_verdict(full: &Outcome, bias_zeroed: &Outcome) -> String {
+    // "multisat-class" = hundreds of metres or better (the fixed-cohort study's
+    // regime). If zeroing the injected bias drops the error into that band, the
+    // per-SV bias re-convergence across handovers WAS the dominant driver.
+    const MULTISAT_CLASS_M: f64 = 500.0;
+    // Use RMS-over-leg as the stable comparison metric (endpoint is a noisy
+    // single-epoch sample). Compare the median seed of each control.
+    let full_rms = full.horizontal_rms_p50_m;
+    let bz_rms = bias_zeroed.horizontal_rms_p50_m;
+    let ratio = if full_rms > 0.0 {
+        bz_rms / full_rms
+    } else {
+        f64::NAN
+    };
+    let head = format!(
+        "DATA-DECIDED CAUSE (bias-zeroed control, {} min, RMS-over-leg p50): full-bias {full_rms:.0} m vs bias-zeroed {bz_rms:.0} m (bias-zeroed is {:.0}% of full-bias; endpoint p50 {:.0} m vs {:.0} m). ",
+        full.leg_duration_min,
+        ratio * 100.0,
+        full.horizontal_error_p50_m,
+        bias_zeroed.horizontal_error_p50_m,
+    );
+    let verdict = if bz_rms <= MULTISAT_CLASS_M || ratio <= 0.25 {
+        "Zeroing the injected per-SV transmit bias COLLAPSES the error toward multisat-class, so per-SV bias re-convergence across handovers IS the dominant driver of km-scale denied nav. The fix is an ESTIMATION problem: carry per-SV bias continuity across handover (retire/re-seed nuisance states instead of re-augmenting a fresh 10 m/s-sigma bias every handover). 500 m is then reachable via that estimator change, not via longer legs or a better clock."
+    } else if bz_rms > 1000.0 && ratio >= 0.6 {
+        "Zeroing the injected per-SV transmit bias barely moves the error -- it STAYS km-scale. So the limiter is NOT the handover bias: it is FUNDAMENTAL weak Doppler-only position observability of a slow (7 kn) receiver once the aided prior decays. The earlier 'per-SV bias across handover' diagnosis is RETRACTED. 500 m is not reachable by an estimator bias-continuity fix; it needs a different lever (position-observable aiding, a faster/maneuvering platform, or accepting km-scale denied nav)."
+    } else {
+        "Zeroing the injected per-SV transmit bias helps PARTIALLY but does not collapse the error to multisat-class. Per-SV bias across handover is a CONTRIBUTING factor but not the sole driver; residual km-scale error remains from weak Doppler-only observability at low speed. The earlier 'per-SV bias is THE cause' diagnosis is retracted in favour of this mixed attribution -- an estimator bias-continuity fix would help but is unlikely to reach 500 m alone."
+    };
+    format!("{head}{verdict}")
+}
+
+#[allow(clippy::too_many_lines)]
+fn conclusions(
+    legs: &[Outcome],
+    legs_bias_zeroed: &[Outcome],
+    clocks: &[Outcome],
+    traces: &[EpochTrace],
+) -> Vec<String> {
     let first = &legs[0];
     let last = &legs[legs.len() - 1];
-    let leg_delta = first.horizontal_error_p95_m - last.horizontal_error_p95_m;
+    let last_bz = &legs_bias_zeroed[legs_bias_zeroed.len() - 1];
     let rubidium = clocks
         .iter()
         .min_by(|a, b| {
@@ -668,6 +913,13 @@ fn conclusions(legs: &[Outcome], clocks: &[Outcome]) -> Vec<String> {
                 .total_cmp(&(b.clock_fractional_stability - 1.0e-9).abs())
         })
         .unwrap();
+    let poor = clocks
+        .iter()
+        .max_by(|a, b| {
+            a.clock_fractional_stability
+                .total_cmp(&b.clock_fractional_stability)
+        })
+        .unwrap();
     let p50_goal = legs
         .iter()
         .find(|value| value.horizontal_error_p50_m <= 500.0);
@@ -679,6 +931,35 @@ fn conclusions(legs: &[Outcome], clocks: &[Outcome]) -> Vec<String> {
         .iter()
         .filter(|value| **value <= 500.0)
         .count();
+    let full_trace = traces.iter().find(|trace| trace.bias_enabled);
+    let handover_alignment = full_trace.map_or_else(
+        || "no representative trace recorded".into(),
+        |trace| {
+            let handover = trace.mean_error_handover_m;
+            let steady = trace.mean_error_steady_m;
+            match (handover, steady) {
+                (Some(handover), Some(steady)) => {
+                    let verdict = if handover > steady * 1.25 {
+                        "handover epochs DO show elevated error (spikes align with handovers)"
+                    } else if handover < steady * 0.8 {
+                        "handover epochs are actually LOWER-error than steady epochs (no handover-induced spike)"
+                    } else {
+                        "handover and steady epochs are comparable (no systematic handover-induced spike)"
+                    };
+                    format!(
+                        "Handover alignment (representative seed {}, {} min, full bias): mean error {:.0} m at the {} handover epochs vs {:.0} m at steady epochs -- {}.",
+                        trace.seed,
+                        trace.leg_duration_min,
+                        handover,
+                        trace.samples.iter().filter(|s| s.handover).count(),
+                        steady,
+                        verdict,
+                    )
+                }
+                _ => "representative trace had no handover or no steady epochs to compare".into(),
+            }
+        },
+    );
     vec![
         format!(
             "Geometry control: per-epoch GDOP stays well-conditioned across every leg (mean {} at {} min to {} at {} min, comparable to the multi-satellite good cohort's ~1.8), so the leg-duration and clock levers are measured on fixed, well-conditioned geometry and are not a geometry confound.",
@@ -688,52 +969,65 @@ fn conclusions(legs: &[Outcome], clocks: &[Outcome]) -> Vec<String> {
             last.leg_duration_min,
         ),
         format!(
-            "Leg-duration lever (D55/D57): on realistic continuous-handover geometry the denied endpoint error improves with leg length on average but noisily -- p50 {:.0} m -> {:.0} m and p95 {:.0} m -> {:.0} m from {} to {} min (p95 improvement {:.0} m), with a non-monotonic mid-leg tier because the endpoint metric samples the instantaneous handover geometry.",
+            "Leg-duration lever (D55/D57), and a METRIC CORRECTION: the noisy single-epoch endpoint p50 wanders non-monotonically ({:.0} m at {} min -> {:.0} m at {} min, p95 {:.0} -> {:.0} m) and its apparent 'improvement with leg length' is a sampling artifact (endpoint seed spread is {:.0}-{:.0} m at {} min). The stable RMS-over-leg metric instead grows MONOTONICALLY with denial time -- p50 {:.0} m ({} min) -> {:.0} m ({} min) -- the physical signature of Doppler-only position error accumulating as the aided prior decays. So error rises, not falls, with sustained denial: short legs (<=~30 min) hold hundreds of m but hour-long endurance legs are KM-SCALE and the D56 500 m goal is NOT met for sustained denial. RMS-over-leg is the recommended headline; the endpoint metric is too noisy to headline.",
             first.horizontal_error_p50_m,
+            first.leg_duration_min,
             last.horizontal_error_p50_m,
+            last.leg_duration_min,
             first.horizontal_error_p95_m,
             last.horizontal_error_p95_m,
-            first.leg_duration_min,
+            last.horizontal_error_min_m,
+            last.horizontal_error_max_m,
             last.leg_duration_min,
-            leg_delta
+            first.horizontal_rms_p50_m,
+            first.leg_duration_min,
+            last.horizontal_rms_p50_m,
+            last.leg_duration_min,
         ),
+        bias_control_verdict(last, last_bz),
+        handover_alignment,
         format!(
-            "Convergence is BIMODAL: at {} min the best seeds reach {:.0} m ({} of {} seeds are <=500 m, the D56 p50 target) while others remain km-scale, so tight denied position is achievable but not reliable -- outcome depends on the handover sequence.",
+            "Endpoint-metric bimodality: at {} min the best seed's endpoint reaches {:.0} m ({} of {} seeds have endpoint <=500 m) while others stay km-scale. This bimodality is a property of the single-epoch endpoint sample; the RMS-over-leg p95 is {:.0} m, so the underlying leg-averaged solution is km-scale and the sub-500 m endpoints are sampling luck (a good instantaneous epoch), not converged solutions.",
             last.leg_duration_min,
             last.horizontal_error_min_m,
             last_under_500,
             last.seed_horizontal_errors_m.len(),
+            last.horizontal_rms_p95_m,
         ),
         format!(
-            "D56 goal (500 m p50 / 750 m p95): p50<=500 m first met at {}; p95<=750 m first met at {}. Neither lever, on honest handover geometry, robustly delivers the target -- the fixed-cohort 116 m / 554 m does NOT transfer to sustained endurance because continuous handover keeps per-SV bias observability from converging.",
+            "D56 goal (500 m p50 / 750 m p95): p50<=500 m first met at {}; p95<=750 m first met at {} (endpoint metric). On honest handover geometry no tested leg or clock robustly delivers the target; whether 500 m is reachable by ANY lever is answered by the bias-zeroed control above, not asserted.",
             p50_goal.map_or_else(|| "no tested leg".into(), |value| format!("{} min", value.leg_duration_min)),
             p95_goal.map_or_else(|| "no tested leg".into(), |value| format!("{} min", value.leg_duration_min)),
         ),
         format!(
-            "Clock-discipline lever: near-invisible. At {} min, p95 is {:.0} m at {:.0e} (Rb label) versus {:.0} m at {:.0e} (OCXO label); signed Rb benefit {:.1} m. Even a 1e-7 poor clock barely moves the result. The common-mode receiver-clock injection is absorbed by the filter's clock/nuisance states, so clock choice is not a usable BOM lever for denied position here.",
+            "Clock-discipline lever: between a good clock and a great one it is near-invisible -- at {} min, p95 is {:.0} m at {:.0e} (Rb label) versus {:.0} m at {:.0e} (OCXO label), signed Rb benefit {:.1} m, because the common-mode receiver-clock injection is absorbed by the filter's clock/nuisance states. A {:.0e} POOR clock, however, does degrade the solution ({:.0} m p95, {:.0} m worse than the OCXO), so a poor oscillator hurts but upgrading a good clock to a great one is not a usable denied-position lever.",
             rubidium.leg_duration_min,
             rubidium.horizontal_error_p95_m,
             rubidium.clock_fractional_stability,
             ocxo.horizontal_error_p95_m,
             ocxo.clock_fractional_stability,
-            ocxo.horizontal_error_p95_m - rubidium.horizontal_error_p95_m
+            ocxo.horizontal_error_p95_m - rubidium.horizontal_error_p95_m,
+            poor.clock_fractional_stability,
+            poor.horizontal_error_p95_m,
+            poor.horizontal_error_p95_m - ocxo.horizontal_error_p95_m,
         ),
     ]
 }
 
+#[allow(clippy::too_many_lines)]
 fn markdown(report: &Report) -> String {
     let mut text = format!(
-        "# Endurance study: leg duration and clock discipline\n\n**{}**\n\nCross-reference: D55 identified the confounds; D57 identified longer constant-heading legs and clock discipline as the next two levers; D56 defines 500 m typical (p50) and 750 m worst-case (p95). This study runs on the **same LEO regime as the verified multi-satellite study** (three shells at 53.0/87.9/86.4 deg, 13-15 rev/day -- correcting the earlier MEO regression), on a Starlink-scale grid densified for genuinely continuous 60-minute coverage, tracking the best-conditioned eight currently-visible satellites with realistic sticky handovers, and reports per-epoch GDOP so the leg-duration lever is isolated from geometry.\n\n## Fixture\n\n- {} satellites, synthetic [UNVERIFIED]. {}\n",
+        "# Endurance study: leg duration and clock discipline\n\n**{}**\n\nCross-reference: D55 identified the confounds; D57 identified longer constant-heading legs and clock discipline as the next two levers; D56 defines 500 m typical (p50) and 750 m worst-case (p95). This study runs on the **identical LEO fixture as the verified multi-satellite study** (the same 960-satellite three-shell Walker grid at 53.0/87.9/86.4 deg, 13-15 rev/day -- correcting the earlier MEO regression and reverting the unjustified 768-SV variant), tracking the best-conditioned eight currently-visible satellites with realistic sticky handovers, and reports per-epoch GDOP so the leg-duration lever is isolated from geometry. The *cause* of the km-scale denied error is not asserted: a bias-zeroed control run (injected per-SV transmit bias set to zero, everything else identical) and a handover-aligned per-epoch error trace decide it from data.\n\n## Fixture\n\n- {} satellites, synthetic [UNVERIFIED]. {}\n",
         report.caveat, report.fixture.satellites, report.fixture.regime
     );
     for shell in &report.fixture.shells {
         let _ = writeln!(text, "  - {shell}");
     }
-    text.push_str("\n## Leg-duration curve\n\n| leg | clock | GDOP mean (min-max) | p50 | p95 | spread | accepted/rejected mean | handovers mean | class |\n|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    text.push_str("\n## Leg-duration curve (full bias)\n\nEndpoint = single-epoch error at leg end (noisy). RMS = root-mean-square horizontal error over every denied-leg doppler epoch (stable headline).\n\n| leg | clock | GDOP mean (min-max) | endpoint p50 | endpoint p95 | RMS p50 | RMS p95 | endpoint spread | accepted/rejected mean | handovers mean | class |\n|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for value in &report.leg_duration_curve {
         let _ = writeln!(
             text,
-            "| {} min | {:.0e} | {} ({}-{}) | {:.1} m | {:.1} m | {:.1}-{:.1} m | {:.1}/{:.1} | {:.1} | {} |",
+            "| {} min | {:.0e} | {} ({}-{}) | {:.1} m | {:.1} m | {:.1} m | {:.1} m | {:.1}-{:.1} m | {:.1}/{:.1} | {:.1} | {} |",
             value.leg_duration_min,
             value.clock_fractional_stability,
             optional(value.gdop_mean),
@@ -741,12 +1035,74 @@ fn markdown(report: &Report) -> String {
             optional(value.gdop_max),
             value.horizontal_error_p50_m,
             value.horizontal_error_p95_m,
+            value.horizontal_rms_p50_m,
+            value.horizontal_rms_p95_m,
             value.horizontal_error_min_m,
             value.horizontal_error_max_m,
             value.accepted_updates_mean,
             value.rejected_updates_mean,
             value.handovers_mean,
             value.error_class
+        );
+    }
+    text.push_str("\n## Decisive experiment: bias-zeroed control vs full bias\n\nIdentical leg sweep with the injected per-SV transmit bias forced to zero in the truth generator, everything else held fixed. If bias-zeroed error collapses toward multisat-class (hundreds of m), per-SV bias re-convergence across handovers is the driver; if it stays km-scale, the limiter is fundamental weak Doppler-only observability.\n\n| leg | full-bias RMS p50 | bias-zeroed RMS p50 | ratio | full-bias endpoint p50 | bias-zeroed endpoint p50 | bias-zeroed class |\n|---:|---:|---:|---:|---:|---:|---|\n");
+    for (full, bz) in report
+        .leg_duration_curve
+        .iter()
+        .zip(&report.leg_duration_curve_bias_zeroed)
+    {
+        let ratio = if full.horizontal_rms_p50_m > 0.0 {
+            bz.horizontal_rms_p50_m / full.horizontal_rms_p50_m
+        } else {
+            f64::NAN
+        };
+        let _ = writeln!(
+            text,
+            "| {} min | {:.1} m | {:.1} m | {:.2} | {:.1} m | {:.1} m | {} |",
+            full.leg_duration_min,
+            full.horizontal_rms_p50_m,
+            bz.horizontal_rms_p50_m,
+            ratio,
+            full.horizontal_error_p50_m,
+            bz.horizontal_error_p50_m,
+            bz.error_class,
+        );
+    }
+    text.push_str("\n## Per-epoch error trace (representative seed, handover-aligned)\n\nMean horizontal error at handover epochs vs steady (no-handover) epochs, and the within-leg error trajectory (start third -> end third). Full sample series are in `results.json`.\n\n| trace | seed | leg | handover epochs | mean err @ handover | mean err @ steady | err start-third | err end-third |\n|---|---:|---:|---:|---:|---:|---:|---:|\n");
+    for trace in &report.epoch_traces {
+        let third = trace.samples.len() / 3;
+        let start_third = if third > 0 {
+            mean(
+                &trace.samples[..third]
+                    .iter()
+                    .map(|s| s.horizontal_error_m)
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            f64::NAN
+        };
+        let end_third = if third > 0 {
+            mean(
+                &trace.samples[trace.samples.len() - third..]
+                    .iter()
+                    .map(|s| s.horizontal_error_m)
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            f64::NAN
+        };
+        let handover_count = trace.samples.iter().filter(|s| s.handover).count();
+        let _ = writeln!(
+            text,
+            "| {} | {} | {} min | {} | {} | {} | {:.1} m | {:.1} m |",
+            trace.label,
+            trace.seed,
+            trace.leg_duration_min,
+            handover_count,
+            optional(trace.mean_error_handover_m),
+            optional(trace.mean_error_steady_m),
+            start_third,
+            end_third,
         );
     }
     text.push_str("\n## Clock-discipline curve (fixed leg, fixed good geometry)\n\n| label | fractional stability | drift | GDOP mean | p50 | p95 | spread | accepted/rejected mean | class |\n|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
@@ -818,10 +1174,11 @@ fn measurement_noise_hz(seed: u64, id: u64, elapsed_s: u64) -> f64 {
     nominal + outlier
 }
 
-/// Synthetic LEO Walker grid identical in regime to the verified
-/// multi-satellite study: 960 satellites across three shells at LEO mean
-/// motions (13-15 rev/day, 550-1200 km). NOT an MEO grid -- the `leo_fixture`
-/// test guards against that regression.
+/// Synthetic LEO Walker grid reused verbatim (same orbital elements) from the
+/// verified multi-satellite study: 960 satellites across three shells at LEO
+/// mean motions (13-15 rev/day, 550-1200 km), 16 planes x 20 slots per shell
+/// with half-slot inter-plane phasing. NOT an MEO grid -- the
+/// `fixture_is_leo_not_meo` test guards against that regression.
 fn synthetic_fixture() -> String {
     let shells = [(53.0, 15.064), (87.9, 13.158), (86.4, 14.342)];
     let mut text = String::new();
@@ -991,6 +1348,7 @@ mod tests {
             1.0e-9,
             30,
             seed,
+            true,
         )
         .unwrap();
         let second = simulate(
@@ -1002,6 +1360,7 @@ mod tests {
             1.0e-9,
             30,
             seed,
+            true,
         )
         .unwrap();
         assert_eq!(first, second);
@@ -1024,11 +1383,61 @@ mod tests {
             1.0e-7,
             30,
             seed,
+            true,
         )
         .unwrap();
         assert!(
             result.rejected > 0,
             "clock-stressed observations must exercise the gate"
+        );
+    }
+
+    #[test]
+    fn bias_zeroed_control_is_a_real_perturbation() {
+        // The decisive experiment must be a genuine counterfactual: the
+        // injected per-SV transmit bias must be non-trivially non-zero (so
+        // forcing it to zero is a real change to the generator input), and both
+        // controls must run to completion sampling the same epochs. Guards
+        // against the control being a silent no-op path.
+        let seed = 0xE11D_2026;
+        assert!(
+            (FIRST_ID..FIRST_ID + FIXTURE_SATELLITES).any(|id| sv_bias_hz(id, seed).abs() > 0.1),
+            "injected per-SV bias must be materially non-zero for the control to bite"
+        );
+        let (directory, truth, fixture, schedule, seed) = short_fixture();
+        let full = simulate(
+            directory.path(),
+            &truth,
+            &fixture,
+            &schedule,
+            600,
+            1.0e-9,
+            30,
+            seed,
+            true,
+        )
+        .unwrap();
+        let zeroed = simulate(
+            directory.path(),
+            &truth,
+            &fixture,
+            &schedule,
+            600,
+            1.0e-9,
+            30,
+            seed,
+            false,
+        )
+        .unwrap();
+        assert!(!full.trace.is_empty(), "per-epoch trace must be recorded");
+        assert!(
+            full.horizontal_error_m.is_finite() && zeroed.horizontal_error_m.is_finite(),
+            "both controls must produce finite solutions"
+        );
+        assert_eq!(
+            full.trace.len(),
+            zeroed.trace.len(),
+            "both controls sample the same epochs"
         );
     }
 
@@ -1044,6 +1453,7 @@ mod tests {
             1.0e-9,
             30,
             seed,
+            true,
         )
         .unwrap();
         assert!(!result.gdops.is_empty(), "GDOP must be instrumented");

@@ -1,6 +1,6 @@
 {
-  "schema_version": 3,
-  "caveat": "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak. The receiver is placed at a fixed mid-latitude via a single rigid coordinate rotation (see module docs) so a real Starlink shell has adequate simultaneous coverage; this is a placement choice made from visibility geometry alone, before any accuracy result was computed.",
+  "schema_version": 4,
+  "caveat": "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak. The receiver is placed at a fixed mid-latitude via a single rigid coordinate rotation (see module docs) so a real Starlink shell has adequate simultaneous coverage; this is a placement choice made from visibility geometry alone, before any accuracy result was computed. This is a SHORT (5-minute) leg from a sub-meter GPS-aided prior: an N=0 INS-only zero-satellite baseline is included below because, over this leg, dead-reckoning coast alone clears the 500 m goal -- see diagnosis for why this fixture+leg cannot test real multi-satellite Doppler position observability.",
   "fixture": {
     "real_published_unverified": true,
     "usable_tles": 150,
@@ -32,10 +32,37 @@
     "receiver_clock_fractional_ppb": 0.10006922855944561,
     "per_sv_transmit_bias_hz": "deterministic [UNVERIFIED] signed 0.35-1.05 Hz, fixed per SV and seed",
     "dynamics": "pnt-mission generator: 3 deg/s coordinated-turn command, wave/slam, and speed-scaled IMU at 7 kn [UNVERIFIED]",
-    "geometry_isolation": "A single persistent real-TLE cohort of 7 satellites is selected once per mission from the 150-satellite merged fixture. N tiers use nested prefixes, all satellites remain above 5 deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes.",
+    "geometry_isolation": "A single persistent real-TLE cohort of 7 satellites is selected once per mission from the 150-satellite merged fixture. N tiers use nested prefixes (plus an N=0 INS-only baseline with zero satellites and no Doppler updates at all), all satellites remain above 5 deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes.",
     "production_chi_square_gate": 9.0
   },
   "outcomes": [
+    {
+      "geometry": "zero-satellite INS-only dead-reckoning coast (no Doppler updates; baseline control)",
+      "simultaneous_los": 0,
+      "satellite_ids": [],
+      "duration_min": 5.0,
+      "gdop_mean": null,
+      "gdop_p95": null,
+      "endpoint_position_error_mean_m": 53.35426286269078,
+      "endpoint_position_error_p95_m": 99.45069688103722,
+      "endpoint_position_error_min_m": 31.84372381428749,
+      "endpoint_position_error_max_m": 99.45069688103722,
+      "endpoint_velocity_error_mean_mps": 0.18015731232442742,
+      "accepted_updates_mean": 0.0,
+      "rejected_updates_mean": 0.0,
+      "nuisance_state_count_mean": 0.0,
+      "seed_position_errors_m": [
+        99.45069688103722,
+        38.703135386585174,
+        57.372193409347375,
+        42.72438658913426,
+        31.84372381428749,
+        35.97183554848566,
+        62.244385074076476,
+        58.52374619857253
+      ],
+      "error_class": "<100 m"
+    },
     {
       "geometry": "fixed single LOS; no handover",
       "simultaneous_los": 1,
@@ -163,6 +190,6 @@
       "error_class": "<100 m"
     }
   ],
-  "headline": "N=8 was searched for (receiver latitude 25-60 deg and the full 48h TLE validity window, checked against the vessel's actual generated trajectory rather than an idealised fixed point) and is not physically available from this real fixture for the full five-minute persistent no-handover leg; N=7 is the confirmed maximum, reported here instead of forcing an unreachable tier. Controlled N=7 manoeuvring result on REAL Starlink geometry: mean 35.8 m, p95 56.4 m, range 16.2-56.4 m across 8 seeds (<100 m).",
-  "diagnosis": "N=7 on REAL Starlink geometry reaches the D56 usable denied target (settled reference: p50 <=500 m / p95 <=750 m over >=100 km-class legs); here mean 35.8 m / p95 56.4 m over a 5-minute leg. GDOP p95 is 13.86. Caveat: real GDOP p95 (13.86) is substantially WORSE than the synthetic study's ~1.8, yet the real endpoint error is smaller than the synthetic 554 m; a range-domain GDOP snapshot does not evidently predict this Doppler-EKF's realized accuracy over a short aided-then-denied leg, and this decoupling is itself [UNVERIFIED] -- it is reported, not explained away. This is a real-geometry realism check on the synthetic multisat N=8 result (D57: mean 116 m / p95 554 m, GDOP ~1.8), not a replacement for it -- vessel dynamics, clock, and measurement noise remain synthetic [UNVERIFIED]."
+  "headline": "N=8 was searched for (receiver latitude 25-60 deg and the full 48h TLE validity window, checked against the vessel's actual generated trajectory rather than an idealised fixed point) and is not physically available from this real fixture for the full five-minute persistent no-handover leg; N=7 is the confirmed maximum, reported here instead of forcing an unreachable tier. Controlled N=7 manoeuvring result on REAL Starlink geometry: mean 35.8 m, p95 56.4 m, range 16.2-56.4 m across 8 seeds (<100 m). This is DEAD-RECKONING COAST from a sub-meter GPS-aided prior over a short 5-minute leg, not multi-satellite Doppler position observability -- an N=0 INS-only baseline with zero satellites also clears the goal; this fixture+leg cannot test real multi-satellite geometry observability (see diagnosis, and docs/studies/endurance/STUDY.md for the real long-leg observability answer).",
+  "diagnosis": "This is DEAD-RECKONING COAST from a sub-meter GPS-aided prior over a short (5-minute) leg, not multi-satellite Doppler position observability, and this fixture+leg CANNOT test that question either way. An N=0 INS-only control (zero satellites, pure inertial dead-reckoning coast from the same sub-meter aided prior, no Doppler updates at all over the denied leg) reaches mean 53.4 m / p95 99.5 m (<100 m) over the identical leg -- also clearing the same D56 500 m p50 / 750 m p95 usable-denied target with zero denied-leg position observations. N=1 (position-unobservable, infinite GDOP) reaches mean 52.5 m / p95 88.2 m -- close to the N=0 baseline, not to a geometry-driven floor. Position error grows over the denied leg rather than converging, and pass/fail against the D56 500 m p50 / 750 m p95 usable-denied target is independent of geometry here: N=7 (GDOP mean/p95 8.75/13.86) reaches mean 35.8 m / p95 56.4 m, and every tier -- including the position-unobservable N=1 and the zero-satellite N=0 baseline -- clears the target. The real-SupGP fixture validation (real operator-supplied/published Starlink tracks parsing and propagating correctly against published shell inclinations, grown from the original 40-element mixed-constellation fixture to this study's 150-satellite merged fixture) is this study's actual sound contribution; it does not answer whether real multi-satellite Doppler geometry meets the denied-position goal. That question is answered instead by the long-leg endurance study (D68/D69, docs/studies/endurance/STUDY.md): over long denied legs position IS weakly observable (filter sigma converges and stays bounded, roughly 50-160 m), but the filter is INCONSISTENT/OVERCONFIDENT (true error runs several-fold -- up to 7-70x per D68's original instrumentation, ~3x steady-state in the endurance study's own measured run -- above the reported sigma; an estimation-consistency defect, not a physics floor), and the 500 m goal is NOT met over those long legs. Read this short-leg real-geometry result as neither meeting nor failing the real observability question -- it demonstrates only that this fixture+leg is structurally coast-dominated and cannot test it."
 }

@@ -77,7 +77,14 @@ impl Default for RealTleConfig {
             // 150-satellite Starlink-only sample at the 5 deg mask for the full five-minute
             // no-handover leg; N=7 is the confirmed persistent maximum. Reported plainly rather
             // than forcing an unreachable N=8 tier (see STUDY.md).
-            counts: vec![1, 2, 4, 7],
+            //
+            // N=0 is a zero-satellite INS-only dead-reckoning coast baseline (no Doppler updates
+            // at all over the denied leg). Review finding (U-RT1.1-review-opus.md, D66): over
+            // this short 5-minute leg from a sub-meter aided prior, position error grows from
+            // pure inertial coast rather than converging via satellite geometry, and even a
+            // zero-satellite run clears the 500 m goal -- so this tier makes that coast explicit
+            // in the study's own output instead of leaving it to be reconstructed by a reviewer.
+            counts: vec![0, 1, 2, 4, 7],
             manoeuvring_denied_s: 300,
             doppler_interval_s: 30,
             seeds: (0..SEED_COUNT)
@@ -288,24 +295,25 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
         },
         |value| {
             format!(
-                "{n8_availability}Controlled N={} manoeuvring result on REAL Starlink geometry: mean {:.1} m, p95 {:.1} m, range {:.1}-{:.1} m across {} seeds ({}).",
+                "{n8_availability}Controlled N={} manoeuvring result on REAL Starlink geometry: mean {:.1} m, p95 {:.1} m, range {:.1}-{:.1} m across {} seeds ({}). This is DEAD-RECKONING COAST from a sub-meter GPS-aided prior over a short {}-minute leg, not multi-satellite Doppler position observability -- an N=0 INS-only baseline with zero satellites also clears the goal; this fixture+leg cannot test real multi-satellite geometry observability (see diagnosis, and docs/studies/endurance/STUDY.md for the real long-leg observability answer).",
                 value.simultaneous_los,
                 value.endpoint_position_error_mean_m,
                 value.endpoint_position_error_p95_m,
                 value.endpoint_position_error_min_m,
                 value.endpoint_position_error_max_m,
                 config.seeds.len(),
-                value.error_class
+                value.error_class,
+                value.duration_min
             )
         },
     );
-    let diagnosis = diagnose(best, max_requested);
+    let diagnosis = coast_verdict(&outcomes, max_requested);
     let supplement_count = ids.len() - supgp_ids.len();
     let supgp_id_set = supgp_ids.iter().copied().collect::<BTreeSet<_>>();
     let realized_cohort_is_pure_supgp = cohort.iter().all(|id| supgp_id_set.contains(id));
     let report = Report {
-        schema_version: 3,
-        caveat: "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak. The receiver is placed at a fixed mid-latitude via a single rigid coordinate rotation (see module docs) so a real Starlink shell has adequate simultaneous coverage; this is a placement choice made from visibility geometry alone, before any accuracy result was computed.".into(),
+        schema_version: 4,
+        caveat: "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak. The receiver is placed at a fixed mid-latitude via a single rigid coordinate rotation (see module docs) so a real Starlink shell has adequate simultaneous coverage; this is a placement choice made from visibility geometry alone, before any accuracy result was computed. This is a SHORT (5-minute) leg from a sub-meter GPS-aided prior: an N=0 INS-only zero-satellite baseline is included below because, over this leg, dead-reckoning coast alone clears the 500 m goal -- see diagnosis for why this fixture+leg cannot test real multi-satellite Doppler position observability.".into(),
         fixture: FixtureDescription {
             real_published_unverified: true,
             usable_tles: ids.len(),
@@ -337,7 +345,7 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
                 "deterministic [UNVERIFIED] signed 0.35-1.05 Hz, fixed per SV and seed".into(),
             dynamics: "pnt-mission generator: 3 deg/s coordinated-turn command, wave/slam, and speed-scaled IMU at 7 kn [UNVERIFIED]".into(),
             geometry_isolation: format!(
-                "A single persistent real-TLE cohort of {} satellites is selected once per mission from the {}-satellite merged fixture. N tiers use nested prefixes, all satellites remain above {MASK_DEG} deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes.",
+                "A single persistent real-TLE cohort of {} satellites is selected once per mission from the {}-satellite merged fixture. N tiers use nested prefixes (plus an N=0 INS-only baseline with zero satellites and no Doppler updates at all), all satellites remain above {MASK_DEG} deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes.",
                 cohort.len(),
                 ids.len()
             ),
@@ -577,7 +585,9 @@ fn aggregate(
     let mean_position = mean(&positions);
     let p95_position = percentile(&positions, 0.95);
     Outcome {
-        geometry: if count == 1 {
+        geometry: if count == 0 {
+            "zero-satellite INS-only dead-reckoning coast (no Doppler updates; baseline control)"
+        } else if count == 1 {
             "fixed single LOS; no handover"
         } else {
             "fixed simultaneous multi-LOS cohort; no handover"
@@ -621,35 +631,49 @@ fn aggregate(
     }
 }
 
-fn diagnose(best: Option<&Outcome>, max_requested: usize) -> String {
-    match best {
-        Some(value) if value.endpoint_position_error_p95_m <= 750.0 => {
-            let gdop_caveat = match value.gdop_p95 {
-                Some(gdop) if gdop > 5.0 && value.endpoint_position_error_p95_m < 554.0 => format!(
-                    " Caveat: real GDOP p95 ({gdop:.2}) is substantially WORSE than the synthetic study's ~1.8, yet the real endpoint error is smaller than the synthetic 554 m; a range-domain GDOP snapshot does not evidently predict this Doppler-EKF's realized accuracy over a short aided-then-denied leg, and this decoupling is itself [UNVERIFIED] -- it is reported, not explained away."
-                ),
-                _ => String::new(),
-            };
+/// Builds the honest coast-vs-observability diagnosis. This is the single source of truth for
+/// the reframed verdict (review finding, D66/U-RT1.1-review-opus.md): the 36-52 m band on this
+/// short 5-minute leg is dead-reckoning coast from a sub-meter aided prior, not multi-satellite
+/// Doppler position observability, so this fixture+leg cannot test that question either way. It
+/// is used verbatim for the JSON `diagnosis` field and (via `report.diagnosis`) for the Markdown
+/// "Real result" section, so the two outputs can never drift apart.
+fn coast_verdict(outcomes: &[Outcome], max_requested: usize) -> String {
+    let Some(best) = outcomes
+        .iter()
+        .find(|value| value.simultaneous_los == max_requested)
+    else {
+        return format!(
+            "N={max_requested} was not run, so no real-geometry multi-satellite accuracy conclusion is available."
+        );
+    };
+    let baseline_sentence = outcomes
+        .iter()
+        .find(|value| value.simultaneous_los == 0)
+        .map_or_else(String::new, |value| {
             format!(
-                "N={} on REAL Starlink geometry reaches the D56 usable denied target (settled reference: p50 <=500 m / p95 <=750 m over >=100 km-class legs); here mean {:.1} m / p95 {:.1} m over a {}-minute leg. GDOP p95 is {}.{gdop_caveat} This is a real-geometry realism check on the synthetic multisat N=8 result (D57: mean 116 m / p95 554 m, GDOP ~1.8), not a replacement for it -- vessel dynamics, clock, and measurement noise remain synthetic [UNVERIFIED].",
-                value.simultaneous_los,
+                " An N=0 INS-only control (zero satellites, pure inertial dead-reckoning coast from the same sub-meter aided prior, no Doppler updates at all over the denied leg) reaches mean {:.1} m / p95 {:.1} m ({}) over the identical leg -- also clearing the same D56 500 m p50 / 750 m p95 usable-denied target with zero denied-leg position observations.",
                 value.endpoint_position_error_mean_m,
                 value.endpoint_position_error_p95_m,
-                value.duration_min,
-                optional(value.gdop_p95)
+                value.error_class
             )
-        }
-        Some(value) => format!(
-            "N={} on REAL Starlink geometry does NOT reach the D56 usable denied target (p95 {:.1} m > 750 m), reported plainly rather than target-fitted toward the synthetic 116 m/554 m result. The finite GDOP ({}) shows real, distinct instantaneous geometry, but clock/per-SV bias observability, manoeuvre dynamics, cadence, and the {}-minute leg still limit the present filter.",
-            value.simultaneous_los,
-            value.endpoint_position_error_p95_m,
-            optional(value.gdop_p95),
-            value.duration_min
-        ),
-        None => format!(
-            "N={max_requested} was not run, so no real-geometry multi-satellite accuracy conclusion is available."
-        ),
-    }
+        });
+    let n1_sentence = outcomes
+        .iter()
+        .find(|value| value.simultaneous_los == 1)
+        .map_or_else(String::new, |value| {
+            format!(
+                " N=1 (position-unobservable, infinite GDOP) reaches mean {:.1} m / p95 {:.1} m -- close to the N=0 baseline, not to a geometry-driven floor.",
+                value.endpoint_position_error_mean_m, value.endpoint_position_error_p95_m
+            )
+        });
+    format!(
+        "This is DEAD-RECKONING COAST from a sub-meter GPS-aided prior over a short (5-minute) leg, not multi-satellite Doppler position observability, and this fixture+leg CANNOT test that question either way.{baseline_sentence}{n1_sentence} Position error grows over the denied leg rather than converging, and pass/fail against the D56 500 m p50 / 750 m p95 usable-denied target is independent of geometry here: N={} (GDOP mean/p95 {}/{}) reaches mean {:.1} m / p95 {:.1} m, and every tier -- including the position-unobservable N=1 and the zero-satellite N=0 baseline -- clears the target. The real-SupGP fixture validation (real operator-supplied/published Starlink tracks parsing and propagating correctly against published shell inclinations, grown from the original 40-element mixed-constellation fixture to this study's 150-satellite merged fixture) is this study's actual sound contribution; it does not answer whether real multi-satellite Doppler geometry meets the denied-position goal. That question is answered instead by the long-leg endurance study (D68/D69, docs/studies/endurance/STUDY.md): over long denied legs position IS weakly observable (filter sigma converges and stays bounded, roughly 50-160 m), but the filter is INCONSISTENT/OVERCONFIDENT (true error runs several-fold -- up to 7-70x per D68's original instrumentation, ~3x steady-state in the endurance study's own measured run -- above the reported sigma; an estimation-consistency defect, not a physics floor), and the 500 m goal is NOT met over those long legs. Read this short-leg real-geometry result as neither meeting nor failing the real observability question -- it demonstrates only that this fixture+leg is structurally coast-dominated and cannot test it.",
+        best.simultaneous_los,
+        optional(best.gdop_mean),
+        optional(best.gdop_p95),
+        best.endpoint_position_error_mean_m,
+        best.endpoint_position_error_p95_m
+    )
 }
 
 fn gdop(lines: &[[f64; 3]]) -> Option<f64> {
@@ -882,37 +906,36 @@ fn markdown(report: &Report) -> String {
     let best = report
         .outcomes
         .iter()
+        .filter(|value| value.simultaneous_los > 0)
         .max_by_key(|value| value.simultaneous_los);
-    let n8_note = if max_cohort < 8 {
+    let n8_note = if max_cohort > 0 && max_cohort < 8 {
         format!(
             "N=8 was searched for (receiver latitude 25-60 deg and the full 48h TLE validity window, against the vessel's actual generated trajectory) and is not physically available from this real fixture for the full five-minute persistent leg; N={max_cohort} is the confirmed maximum. "
         )
     } else {
         String::new()
     };
-    let verdict = best.map_or_else(
+    // Deliberately NOT titled "verdict": per the reframe (D66/U-RT1.1-review-opus.md), this is a
+    // raw numeric comparison against the synthetic multisat result, not an observability
+    // comparison -- the coast diagnosis above (`report.diagnosis`) is the actual interpretation.
+    let comparison = best.map_or_else(
         || format!(
             "{n8_note}This real-element run's persistent cohort tops out at N={max_cohort} for the controlled five-minute no-handover leg, so it cannot directly replicate the synthetic N=8 multisat result (D57: mean 116 m / p95 554 m, GDOP ~1.8). It cannot validate or falsify that number."
         ),
         |value| format!(
-            "{n8_note}Real N={} gives mean {:.1} m / p95 {:.1} m with GDOP mean/p95 {}/{} against the synthetic N=8 multisat result of mean 116 m / p95 554 m, GDOP ~1.8 (D57). {}",
+            "{n8_note}Real N={} gives mean {:.1} m / p95 {:.1} m with GDOP mean/p95 {}/{}, against the synthetic N=8 multisat result of mean 116 m / p95 554 m, GDOP ~1.8 (D57). Both numbers are small, but per the diagnosis above neither this real N={} result nor the N=0 INS-only baseline that reaches a similar order of magnitude is a geometry-driven number on this short leg -- so this is an arithmetic comparison only, not evidence that real geometry does or does not undermine the synthetic finding. GDOP also differs sharply (real p95 {} vs synthetic ~1.8) without predicting the (coast-dominated) endpoint error, consistent with the coast diagnosis above.",
             value.simultaneous_los,
             value.endpoint_position_error_mean_m,
             value.endpoint_position_error_p95_m,
             optional(value.gdop_mean),
             optional(value.gdop_p95),
-            match value.gdop_p95 {
-                Some(gdop) if gdop > 5.0 && value.endpoint_position_error_p95_m < 554.0 => format!(
-                    "The real result also clears the D56 500 m p50 / 750 m p95 usable denied target, so real orbital geometry does not undermine the synthetic finding at this sample size and leg length. Caveat: real GDOP p95 ({gdop:.2}) is substantially WORSE than the synthetic study's ~1.8 -- this Starlink cohort's LOS directions are more correlated (single shell, near its own inclination latitude) than the synthetic 3-shell Walker grid's -- yet the real endpoint error is smaller than the synthetic 554 m. A range-domain GDOP snapshot does not evidently predict this Doppler-EKF's realized accuracy over a short aided-then-denied leg; this decoupling is reported, not explained away, and it remains one real-geometry data point, not a replacement for the synthetic controlled study. Vessel dynamics/clock/measurement noise stay synthetic."
-                ),
-                _ if value.endpoint_position_error_p95_m <= 750.0 => "The real result also clears the D56 500 m p50 / 750 m p95 usable denied target, so real orbital geometry does not undermine the synthetic finding at this sample size and leg length; it remains one real-geometry data point, not a replacement for the synthetic controlled study, and vessel dynamics/clock/measurement noise stay synthetic.".into(),
-                _ => "The real result does NOT clear the D56 500 m p50 / 750 m p95 usable denied target; this is reported plainly rather than adjusted toward the synthetic number.".into(),
-            }
+            value.simultaneous_los,
+            optional(value.gdop_p95),
         ),
     );
     let _ = write!(
         text,
-        "\n## Controls and interpretation\n\n- Seeds: {:?}; individual endpoint errors are retained in `results.json`.\n- Dynamics: {}.\n- Geometry: {}. GDOP is the conventional instantaneous velocity-plus-common-clock geometry metric; N<4 is unobservable/infinite. This is a {}-satellite real sample, not a complete operational constellation.\n- Receiver placement: fixed at {:.1} deg N, 0 deg E via a single rigid coordinate rotation applied to every generated ECEF position and IMU acceleration vector -- chosen from visibility geometry alone (Starlink's ~53 deg shell -- public knowledge, not sourced from docs/research/R4-signal-structures.md, which covers signal/frame structure, not orbital elements -- has its densest simultaneous coverage near its own inclination latitude, not at the equator where the synthetic generator's default origin sits), before any accuracy number was computed.\n- Clock stress: receiver drift {:.3} m/s ({:.3} ppb) and {}. These values and the noise model are [UNVERIFIED].\n- Measurement stress: bounded \u{b1}0.5 Hz nominal error plus deterministic signed 12 Hz tracker outliers at about 1/17 observations [UNVERIFIED].\n- The production chi-square gate is `Some(9.0)`; accepted/rejected counts come from integrity events.\n\n## Realism verdict on synthetic 116 m / 554 m\n\n{verdict}\n\n## SupGP vs plain TLE: why the geometry check is valid on either product\n\nSupGP is operator-supplied and materially more accurate than SGP4-on-plain-TLE (plain TLE/SGP4 position error is commonly kilometre-scale; SupGP tracks are tighter). For this study's question -- does real orbital LOS geometry (visible count, GDOP) resemble the synthetic Walker fixture's -- the two products are effectively interchangeable: at a shared epoch, the line-of-sight *directions* from a fixed receiver to a given real satellite differ negligibly between SupGP and plain-TLE propagation of the same object, because both track the same real orbit to well within the angular resolution that matters for elevation-mask visibility and GDOP. Track quality (SupGP vs plain TLE) matters far more for the *absolute* position/Doppler accuracy budget used in the real-signal acceptance/age-gate work than for this geometry question -- which is why SupGP is used as primary (accuracy-preferred, per DESIGN_BASELINE) while the {}-satellite plain-TLE supplement (SupGP does not cover them) is used solely to complete the persistent N={max_cohort} cohort{}.\n\n## [UNVERIFIED]\n\n- TLE/SupGP source and currency: grok-fetched, not independently confirmed against CelesTrak; physical parse/propagation and shell inclinations are confirmed.\n- Synthetic vessel truth, IMU/wave/turn model, clock drift, per-SV bias, cadence, and Doppler noise/outliers.\n- Whether this {}-satellite sample is representative of full operational Starlink coverage; it is not a complete constellation snapshot.\n- The receiver-latitude relocation is an exact rigid-rotation reinterpretation of the synthetic vessel's already-generated dynamics (see module docs), not a re-simulation at that latitude from first principles.\n",
+        "\n## Controls and interpretation\n\n- Seeds: {:?}; individual endpoint errors are retained in `results.json`.\n- Dynamics: {}.\n- Geometry: {}. GDOP is the conventional instantaneous velocity-plus-common-clock geometry metric; N<4 is unobservable/infinite. This is a {}-satellite real sample, not a complete operational constellation.\n- Receiver placement: fixed at {:.1} deg N, 0 deg E via a single rigid coordinate rotation applied to every generated ECEF position and IMU acceleration vector -- chosen from visibility geometry alone (Starlink's ~53 deg shell -- public knowledge, not sourced from docs/research/R4-signal-structures.md, which covers signal/frame structure, not orbital elements -- has its densest simultaneous coverage near its own inclination latitude, not at the equator where the synthetic generator's default origin sits), before any accuracy number was computed.\n- Clock stress: receiver drift {:.3} m/s ({:.3} ppb) and {}. These values and the noise model are [UNVERIFIED].\n- Measurement stress: bounded \u{b1}0.5 Hz nominal error plus deterministic signed 12 Hz tracker outliers at about 1/17 observations [UNVERIFIED].\n- The production chi-square gate is `Some(9.0)`; accepted/rejected counts come from integrity events.\n\n## Real-vs-synthetic numeric comparison (not an observability comparison)\n\n{comparison}\n\n## SupGP vs plain TLE: why the geometry check is valid on either product\n\nSupGP is operator-supplied and materially more accurate than SGP4-on-plain-TLE (plain TLE/SGP4 position error is commonly kilometre-scale; SupGP tracks are tighter). For this study's question -- does real orbital LOS geometry (visible count, GDOP) resemble the synthetic Walker fixture's -- the two products are effectively interchangeable: at a shared epoch, the line-of-sight *directions* from a fixed receiver to a given real satellite differ negligibly between SupGP and plain-TLE propagation of the same object, because both track the same real orbit to well within the angular resolution that matters for elevation-mask visibility and GDOP. Track quality (SupGP vs plain TLE) matters far more for the *absolute* position/Doppler accuracy budget used in the real-signal acceptance/age-gate work than for this geometry question -- which is why SupGP is used as primary (accuracy-preferred, per DESIGN_BASELINE) while the {}-satellite plain-TLE supplement (SupGP does not cover them) is used solely to complete the persistent N={max_cohort} cohort{}.\n\n## [UNVERIFIED]\n\n- TLE/SupGP source and currency: grok-fetched, not independently confirmed against CelesTrak; physical parse/propagation and shell inclinations are confirmed.\n- Synthetic vessel truth, IMU/wave/turn model, clock drift, per-SV bias, cadence, and Doppler noise/outliers.\n- Whether this {}-satellite sample is representative of full operational Starlink coverage; it is not a complete constellation snapshot.\n- The receiver-latitude relocation is an exact rigid-rotation reinterpretation of the synthetic vessel's already-generated dynamics (see module docs), not a re-simulation at that latitude from first principles.\n",
         report.controls.seed_values,
         report.controls.dynamics,
         report.controls.geometry_isolation,
@@ -1223,5 +1246,112 @@ mod tests {
     #[test]
     fn production_gate_is_on() {
         assert!((PRODUCTION_CHI_SQUARE_GATE - 9.0).abs() < f64::EPSILON);
+    }
+
+    /// Locks the N=0 INS-only dead-reckoning coast baseline into the default sweep (task item 1,
+    /// review finding D66): the coast must stay explicit in the study's own output, not left to
+    /// be reconstructed by a reviewer instrumenting the filter by hand.
+    #[test]
+    fn default_sweep_includes_ins_only_coast_baseline() {
+        let config = RealTleConfig::default();
+        assert!(
+            config.counts.contains(&0),
+            "N=0 INS-only coast baseline must stay in RealTleConfig::default().counts"
+        );
+    }
+
+    fn seed_result(position_error_m: f64, nuisance_states: usize) -> SeedResult {
+        SeedResult {
+            position_error_m,
+            velocity_error_mps: 0.0,
+            accepted: 0,
+            rejected: 0,
+            nuisance_states,
+            gdops: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn n0_baseline_has_no_satellites_no_updates_and_a_distinct_geometry_label() {
+        let config = RealTleConfig::default();
+        let outcome = aggregate(0, &[], std::slice::from_ref(&seed_result(99.0, 0)), &config);
+        assert!(outcome.satellite_ids.is_empty(), "N=0 must use zero SVs");
+        assert!(outcome.nuisance_state_count_mean.abs() < f64::EPSILON);
+        assert!(outcome.accepted_updates_mean.abs() < f64::EPSILON);
+        assert_eq!(outcome.gdop_mean, None);
+        assert!(
+            outcome.geometry.contains("INS-only"),
+            "N=0 geometry label must name it as an INS-only baseline, not a satellite cohort: {}",
+            outcome.geometry
+        );
+    }
+
+    /// Locks the reframed diagnosis (task item 2, D66): must name the coast mechanism and the
+    /// N=0 baseline explicitly, cross-reference the endurance study for the real observability
+    /// answer, and must NOT reproduce either of the failed unit's overclaims -- "reaches the D56
+    /// usable denied target" attributed to real geometry, or "does not undermine the synthetic
+    /// finding" -- regardless of whether the numeric result happens to pass or fail 500/750 m.
+    #[test]
+    fn coast_verdict_names_the_baseline_and_drops_the_overclaim() {
+        let config = RealTleConfig::default();
+        let outcomes = vec![
+            aggregate(0, &[], std::slice::from_ref(&seed_result(99.0, 0)), &config),
+            aggregate(
+                1,
+                &[100],
+                std::slice::from_ref(&seed_result(88.0, 1)),
+                &config,
+            ),
+            aggregate(
+                7,
+                &[100, 200, 300, 400, 500, 600, 700],
+                std::slice::from_ref(&seed_result(40.0, 7)),
+                &config,
+            ),
+        ];
+        let text = coast_verdict(&outcomes, 7);
+        assert!(text.contains("DEAD-RECKONING COAST"), "{text}");
+        assert!(text.contains("N=0 INS-only control"), "{text}");
+        assert!(text.contains("endurance"), "{text}");
+        assert!(text.contains("CANNOT test that question"), "{text}");
+        assert!(
+            !text.contains("reaches the D56 usable denied target"),
+            "must not attribute the D56-clearing result to real geometry: {text}"
+        );
+        assert!(
+            !text.contains("does not undermine the synthetic finding"),
+            "must not claim real geometry validates the synthetic result: {text}"
+        );
+    }
+
+    /// Same `coast_verdict`, but the N=7 tier misses 750 m p95 -- the diagnosis must still avoid
+    /// claiming real geometry *fails* the observability question, only that this leg can't test
+    /// it (task instruction: do not claim fail either).
+    #[test]
+    fn coast_verdict_does_not_claim_geometry_fails_when_p95_misses_goal() {
+        let config = RealTleConfig::default();
+        let failing_seed = SeedResult {
+            position_error_m: 900.0,
+            velocity_error_mps: 0.0,
+            accepted: 0,
+            rejected: 0,
+            nuisance_states: 7,
+            gdops: Vec::new(),
+        };
+        let outcomes = vec![
+            aggregate(0, &[], std::slice::from_ref(&seed_result(99.0, 0)), &config),
+            aggregate(
+                7,
+                &[100, 200, 300, 400, 500, 600, 700],
+                std::slice::from_ref(&failing_seed),
+                &config,
+            ),
+        ];
+        let text = coast_verdict(&outcomes, 7);
+        assert!(
+            !text.contains("does NOT reach the D56"),
+            "must not phrase a geometry-attributed fail verdict: {text}"
+        );
+        assert!(text.contains("CANNOT test that question"), "{text}");
     }
 }

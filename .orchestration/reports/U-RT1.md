@@ -167,3 +167,99 @@ persistent cohort.
 - `cargo test --workspace`, `cargo clippy --all-targets -- -D warnings`, and
   `cargo fmt --all -- --check` all pass. Committed on `unit/U-RT1`, not merged to main, no
   attribution trailers.
+
+---
+
+# U-RT1.2 reframe — the N=7 headline was DR coast, not observability (review FAIL fixed)
+
+**Disposition: U-RT1.1 FAILED adversarial review** (`.orchestration/reports/U-RT1.1-review-opus.md`,
+DECISIONS.md D66). The machinery (real EKF, production gate on, honest N=7-not-8 finding,
+review-fixes F1/F2/F3) was verified correct and is unchanged. The problem was entirely in the
+**conclusion**: "N=7 reaches the D56 usable denied target on real Starlink geometry... does not
+undermine the synthetic finding" (the two claims struck from this section below) attributed a
+target-meeting result to real multi-satellite geometry/observability. The reviewer instrumented
+the filter directly and showed the 36–52 m band is dead-reckoning coast from the sub-meter aided
+prior: error grows monotonically over the 5-minute denied leg rather than converging, a
+position-unobservable N=1 run reaches 88 m, and a zero-satellite INS-only control reaches 99 m —
+**all** of which clear the 500 m goal regardless of GDOP.
+
+## Fix: N=0 INS-only baseline made explicit in the study's own output
+
+`RealTleConfig::default().counts` now sweeps `[0, 1, 2, 4, 7]` instead of `[1, 2, 4, 7]`. N=0 runs
+the identical pipeline with zero satellites selected (`&selected[..0]`), so it is a pure inertial
+dead-reckoning coast from the same aided GPS prior, with zero Doppler updates over the denied leg
+— reproduced here with the production Executive/FilterStub across all 8 seeds (not just the
+reviewer's single instrumented trace):
+
+| N | fixed SVs | GDOP mean/p95 | endpoint position mean/p95 | accepted mean | class |
+|---:|---|---:|---:|---:|---|
+| 0 (INS-only baseline) | [] | unobservable/infinite | 53.4 / 99.5 m | 0.0 | <100 m |
+| 1 | [44741] | unobservable/infinite | 52.5 / 88.2 m | 55.0 | <100 m |
+| 2 | [44741, 45366] | unobservable/infinite | 51.9 / 92.4 m | 110.0 | <100 m |
+| 4 | [44741, 45366, 45368, 45377] | 46.66 / 199.60 | 39.4 / 58.6 m | 220.0 | <100 m |
+| 7 | [44741, 45366, 45368, 45377, 45387, 45405, 45580] | 8.75 / 13.86 | 35.8 / 56.4 m | 385.0 | <100 m |
+
+The N=0 row confirms the review's finding at full 8-seed scale: `accepted_updates_mean` is
+exactly 0.0 (no Doppler updates at all reached the estimator), yet endpoint error (mean 53.4 m /
+p95 99.5 m) is in the same class and same order of magnitude as N=7 (mean 35.8 m / p95 56.4 m).
+Pass/fail against the D56 500 m p50 / 750 m p95 target is identical across every tier — including
+the position-unobservable N=1 and the zero-satellite N=0 baseline. Satellites modestly arrest the
+coast (roughly halving the endpoint from N=0 to N=7) but do not determine pass/fail.
+
+## Reframed headline/diagnosis/verdict (STUDY.md, results.json, diagnose logic)
+
+`diagnose()` was replaced by `coast_verdict()` (single source of truth for both the JSON
+`diagnosis` field and the Markdown verdict, so the two outputs cannot drift apart). The new text:
+
+- States plainly that the 36–52 m band (and the 53–99 m N=0 baseline) is dead-reckoning coast
+  from a sub-meter GPS-good prior over a short 5-minute leg, **not** multi-satellite Doppler
+  position observability, and that this fixture+leg **cannot test that question either way** —
+  it neither claims real geometry meets the goal nor that it fails.
+- Names the N=0 INS-only control and the N=1 position-unobservable result explicitly as evidence
+  that pass/fail here is geometry-independent.
+- States that the real-SupGP fixture validation — real operator-supplied/published Starlink
+  tracks parsing and propagating correctly against published shell inclinations, grown from the
+  original 40-element mixed-constellation fixture to this study's 150-satellite merged fixture
+  (120 SupGP + 30 plain-TLE supplement) — is this study's actual sound contribution, and that it
+  does not answer the real-geometry observability question.
+- Cross-references the long-leg endurance study (D68/D69, `docs/studies/endurance/STUDY.md`) as
+  the study that does answer it: position is weakly observable over long denied legs (filter
+  sigma converges and stays bounded, roughly 50–160 m), but the filter is
+  inconsistent/overconfident (true error runs several-fold — up to 7–70x per D68's original
+  instrumentation, ~3x steady-state in the endurance study's own measured run — above the
+  reported sigma; an estimation-consistency defect, not a physics floor), and the 500 m goal is
+  **not** met over those long legs.
+
+The old "## Realism verdict on synthetic 116 m / 554 m" Markdown section (which concluded "real
+orbital geometry does not undermine the synthetic finding") is replaced by
+"## Real-vs-synthetic numeric comparison (not an observability comparison)": it still reports the
+real N=7 vs. synthetic N=8 numbers (D57: mean 116 m / p95 554 m) for reference, but states
+explicitly that this is an arithmetic comparison only, not observability evidence, since neither
+number is geometry-driven on this short leg.
+
+`schema_version` bumped 3 → 4 (report semantics changed materially: new N=0 outcome tier, and the
+`diagnosis` field no longer claims the D56 target is met by real geometry).
+
+## New tests
+
+- `default_sweep_includes_ins_only_coast_baseline` — locks N=0 into `RealTleConfig::default()`.
+- `n0_baseline_has_no_satellites_no_updates_and_a_distinct_geometry_label` — locks empty
+  `satellite_ids`, zero `accepted_updates_mean`/`nuisance_state_count_mean`, and a geometry label
+  that names it as an INS-only baseline, not a satellite cohort.
+- `coast_verdict_names_the_baseline_and_drops_the_overclaim` — locks that the diagnosis text
+  names the coast mechanism, the N=0 control, and the endurance cross-reference, and asserts the
+  two struck overclaim phrases ("reaches the D56 usable denied target" attributed to real
+  geometry; "does not undermine the synthetic finding") are absent.
+- `coast_verdict_does_not_claim_geometry_fails_when_p95_misses_goal` — locks that even a
+  synthetic failing N=7 outcome does not flip the diagnosis into a geometry-attributed "fails"
+  claim; the honest position is "this leg cannot test it" either way.
+
+All prior review-fix tests (F1 R4 mis-attribution, F2 `fixture_size_and_n7_cohort_are_locked`, F3
+IDs-from-fixture) and the determinism/production-gate tests are unchanged and pass. The regenerated
+`results.json`/`STUDY.md` are byte-identical across repeated runs (determinism re-confirmed).
+
+## Gates (U-RT1.2)
+
+- All U-RT1/U-RT1.1 gate tests retained, plus the four new tests above (10 `realtle` tests total).
+- `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt --all -- --check` all
+  pass. Committed on `unit/U-RT1`, not merged to main, no attribution trailers.

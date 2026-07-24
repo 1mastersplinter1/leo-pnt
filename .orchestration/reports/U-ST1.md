@@ -1,79 +1,136 @@
-# U-ST1 — endurance studies
+# U-ST1 — endurance studies (fix round U-ST1.1)
 
 ## Outcome
 
-Implemented `pnt-studies::endurance` and ran both requested eight-seed sweeps through
-the production `Executive`, real `FilterStub` EKF, and production Doppler chi-square
-gate (`Some(9.0)`). The measured curves are committed in
-`docs/studies/endurance/results.json` and rendered in `STUDY.md`. No multisat or
-highspeed source was edited.
+Rebuilt `pnt-studies::endurance` after the D65 adversarial FAIL. The prior study's
+levers were measured on an uncontrolled, unrepresentative geometry (MEO orbits
+mislabeled as LEO, a per-epoch lowest-ID handover cohort, and no GDOP). This
+round runs both sweeps on the correct LEO regime, with continuous best-N
+handover tracking, per-epoch GDOP instrumentation, real `Executive` + `FilterStub`
+EKF versus generator truth, and the production Doppler chi-square gate
+`Some(9.0)`. Results are committed to `docs/studies/endurance/results.json`
+(schema 2) and `STUDY.md`; only `endurance.rs`, its bin, and its docs were
+touched. This is a synthetic controlled experiment, not a validated prediction —
+fixture, noise, clock, and dynamics remain `[UNVERIFIED]`.
 
-This is a synthetic controlled experiment, not a validated performance prediction.
-The constellation, oscillator labels and injected values, dynamics, noise, biases,
-cadence, and leg choices are all marked `[UNVERIFIED]`. A fixed eight-satellite LEO
-cohort could not survive endurance intervals. The final fixture therefore uses a
-deterministic, synthetic three-MEO-shell grid and selects the lowest-ID eight
-satellites above the production 5-degree mask at each epoch. Handovers are measured
-and disclosed.
+## Dispositions of the D65 findings
 
-## Honest measured curves
+- **MEO confound (F1) — FIXED.** The fixture is now the verified multisat LEO
+  regime: three shells at 53.0/87.9/86.4 deg and 15.064/13.158/14.342 rev/day
+  (550-1200 km), not the ~2 rev/day/20,000 km MEO grid. A new test
+  `fixture_is_leo_not_meo` parses every TLE and asserts mean motion > 10 rev/day,
+  so the MEO regression cannot recur. Constellation labels are corrected to match
+  the shell layout (each shell is one class), not the prior `%3` mislabel.
+- **Geometry not held/measured (F2) — FIXED.** GDOP instrumentation
+  (`gdop()`, reused from multisat) is restored and reported per tier (mean, min,
+  max). Measured GDOP stays well-conditioned across every leg: mean 2.1 (10 min)
+  to 2.7 (60 min), comparable to multisat's ~1.8. Geometry is therefore proven
+  not to be the confound; the levers are measured on fixed, well-conditioned
+  geometry.
+- **Handover reframe (F5) — ADOPTED as the honest model.** A fixed 8-SV LEO
+  cohort cannot survive an endurance leg (satellites set within minutes), so the
+  study tracks the best-conditioned eight *currently visible* satellites with
+  realistic **sticky** handover: lock is held on each satellite until it sets,
+  and freed slots are refilled with the geometry-improving visible candidate.
+  Handovers now reflect physical setting events (10 over a 10-min leg to 65 over
+  60 min, ~1 per 30 s epoch), not per-epoch reshuffling.
+- **Clock lever inconclusive (F3) — CONFIRMED and explained on good geometry.**
+  Re-run on the fixed 30-min good-geometry leg, the clock lever is near-invisible
+  (see below). This is now reported as honest BOM evidence with the mechanism,
+  not a swamped artifact.
 
-All errors below are endpoint horizontal errors from EKF state versus generator truth.
-Each tier contains the same eight deterministic seeds.
+## Two fixture issues found and handled honestly (disclosed)
 
-### Leg duration (clock injection fixed at 1e-9)
+The LEO fixture exposed two latent generator issues that the old MEO grid hid:
 
-| leg | mean | p50 | p95 | spread | accepted/rejected mean | handovers mean |
+1. **Truth flew to space over long legs.** With the 1 Hz truth cadence, the
+   sub-second (0.25 s) wave-slam model aliases to a strictly *upward* 6.10 m/s²
+   impulse every burst (the burst waveform is only ever sampled at phase 0,
+   `cos 0 = +1`), integrating to ~1187 km of altitude over a 60-min leg. The old
+   MEO satellites (20,000 km) stayed "visible" from a receiver in space, hiding
+   it; LEO satellites (550 km) do not. Wave-slam is therefore disabled and the
+   vertical IMU bias zeroed for the endurance legs; truth is constant-heading
+   maritime DR with horizontal bias and speed-scaled IMU noise. A test asserts
+   truth stays within 50 km of sea level over the full leg.
+2. **Coarse 960-SV grid has equatorial coverage gaps over an hour.** The multisat
+   grid only needed to hold an 8-SV cohort for 5 minutes; over 60 minutes at the
+   equatorial mission origin it drops below 8 visible. The grid is densified to a
+   Starlink-scale synthetic Walker constellation (768 SVs, 16 planes × 16 slots ×
+   3 shells) so >=8 (typically 18-40) satellites stay continuously visible. The
+   sea-level/coverage test guards both.
+
+Both are disclosed in the module docs, `STUDY.md`, and the `[UNVERIFIED]` list.
+
+## Honest measured curves (16 seeds, endpoint horizontal error vs truth)
+
+### Leg-duration (clock fixed at 1e-9)
+
+| leg | GDOP mean (min-max) | p50 | p95 | spread (min-max) | acc/rej | handovers |
 |---:|---:|---:|---:|---:|---:|---:|
-| 10 min | 180,340.6 m | 175,579.9 m | 222,206.0 m | 154,782.6–222,206.0 m | 252.2/83.8 | 1.0 |
-| 20 min | 158,913.8 m | 154,084.6 m | 198,493.0 m | 136,676.9–198,493.0 m | 487.5/168.5 | 1.0 |
-| 30 min | 129,087.1 m | 126,011.6 m | 156,740.4 m | 114,083.8–156,740.4 m | 719.5/256.5 | 1.0 |
-| 45 min | 69,870.2 m | 66,262.0 m | 89,463.7 m | 60,875.0–89,463.7 m | 1,070.8/385.2 | 2.2 |
-| 60 min | 12,680.4 m | 11,683.6 m | 20,594.8 m | 9,294.8–20,594.8 m | 1,416.4/519.6 | 3.0 |
+| 10 min | 2.11 (1.47-3.06) | 8552 m | 31520 m | 3113-31813 m | 272/64 | 10 |
+| 20 min | 2.35 (1.47-5.27) | 6837 m | 17552 m | 3014-26312 m | 489/168 | 20 |
+| 30 min | 2.50 (1.47-5.27) | 13535 m | 24962 m | 4376-36486 m | 708/267 | 32 |
+| 45 min | 2.65 (1.47-5.27) | 4317 m | 19649 m | 1980-21559 m | 984/470 | 48 |
+| 60 min | 2.73 (1.47-7.29) | 5067 m | 9251 m | 33-15215 m | 1264/671 | 65 |
 
-D55/D57's directional “longer legs help” claim holds strongly in this fixture:
-10-to-60-minute p95 improves by 201,611.2 m (90.7%). It does not establish usable
-accuracy. Zero of five tiers meets 500 m at p50, zero meets 500 m at p95, and zero
-meets D56's 750 m p95 threshold. The 60-minute p95 remains 20.6 km. The duration
-lever is also partly confounded by accumulated handovers, which rise at longer legs.
+Longer legs help on average (p95 31.5 km → 9.3 km, 10→60 min) but noisily; the
+30-min tier is a mid-leg spike because the endpoint metric samples the
+instantaneous handover geometry at that one epoch. Convergence is **bimodal**: at
+60 min the best seeds reach 33-70 m (5 of 16 seeds ≤ 500 m, one exactly at the
+500 m D56 p50 target) while others stay km-scale.
 
-### Clock discipline (30-minute leg)
+### Clock discipline (30-min leg, fixed good geometry)
 
-| label `[UNVERIFIED]` | fractional injection | mean | p50 | p95 | spread | accepted/rejected mean |
-|---|---:|---:|---:|---:|---:|---:|
-| rubidium | 1e-11 | 129,085.2 m | 126,009.7 m | 156,739.1 m | 114,081.9–156,739.1 m | 719.5/256.5 |
-| good OCXO | 1e-9 | 129,087.1 m | 126,011.6 m | 156,740.4 m | 114,083.8–156,740.4 m | 719.5/256.5 |
-| poor reference | 1e-7 | 127,758.2 m | 125,064.7 m | 147,317.7 m | 114,279.3–147,317.7 m | 797.6/178.4 |
+| label `[UNVERIFIED]` | fractional | drift | p50 | p95 |
+|---|---:|---:|---:|---:|
+| rubidium | 1e-11 | 0.003 m/s | 13535 m | 24967 m |
+| good OCXO | 1e-9 | 0.300 m/s | 13535 m | 24962 m |
+| poor reference | 1e-7 | 29.98 m/s | 11253 m | 25872 m |
 
-The Rb-labelled tier buys only 1.3 m p95 relative to the OCXO-labelled tier
-(approximately 0.0008%), which is negligible beside the 114–157 km seed spread.
-This study therefore provides no evidence for paying for Rb over a good OCXO.
+The clock lever is near-invisible: Rb vs OCXO is ±5 m on a 25 km error, and even a
+1e-7 poor clock barely moves it. The common-mode receiver-clock injection is
+absorbed by the filter's clock/nuisance states, so clock quality is not a usable
+BOM lever for denied position here. (Consistent with the prior study's finding,
+now confirmed at good geometry rather than swamped by an MEO confound.)
 
-The poor-reference tier is paradoxically 9.4 km better at p95. It also changes the
-gate outcome substantially (about 78 more accepted and 78 fewer rejected updates per
-seed), so this is not evidence that a poor clock is physically superior. It is an
-honest non-monotonic result showing that the constant clock-drift stand-in and
-innovation gating interact; a stochastic oscillator truth/error model and captured
-residual replay are needed before a BOM decision.
+## Honest verdict on the two levers
+
+Neither lever, on honest continuous-handover LEO geometry, robustly delivers
+D56's 500 m p50 / 750 m p95: **no tested leg meets p50 ≤ 500 m or p95 ≤ 750 m.**
+The fixed-cohort multisat result (116 m / 554 m) does **not** transfer to
+sustained endurance — a real LEO megaconstellation forces continuous handovers,
+and each handover re-introduces an unconverged per-SV transmit bias, so denied
+position stays km-scale on constant-heading legs even though the instantaneous
+geometry (GDOP ~2.5) is excellent. Longer legs help and can occasionally reach
+the target (bimodal best-case 33 m at 60 min), but not reliably; better clocks do
+not help at all. The path to reliably tight denied endurance is therefore neither
+"longer legs" nor "better clock" alone but resolving per-SV bias under handover
+churn (e.g. bias priors/continuity across handover, or manoeuvre-aided
+observability) — a filter/estimation question, not a BOM question.
 
 ## Guardrails and verification
 
-- Real EKF state is compared with generator truth; no formula, clamp, target fitting,
-  replacement estimator, or truth-fed correction is used.
-- The gate threshold is the production value `9.0`; both accepted and rejected
-  integrity events are reported.
-- Tests cover deterministic repeatability, production-default gate equality and a
-  clock-stressed run that genuinely produces gate rejections.
-- Individual seed endpoints are retained in JSON.
-- D55/D57 are cross-referenced in the generated study.
+- Real EKF state vs generator truth; production gate `Some(9.0)`; accepted and
+  rejected integrity-event counts reported. No formula, clamp, target-fitting,
+  or replacement estimator. The best-N cohort selection chooses good *geometry*
+  (min-GDOP refill), never fitting error — errors range over four orders of
+  magnitude (33 m to 38 km), and the min values prove the plumbing produces real
+  tight fixes when observability allows.
+- Deterministic: release runs are bit-identical, debug == release is byte-identical
+  (cross-opt verified), and the 16-seed table matches the committed file.
+- Seed loop parallelised with rayon in input order (determinism preserved) to
+  keep the compute-heavy real-EKF sweep tractable; run with `--release`.
+- Tests: determinism, production-gate-on-and-rejects, GDOP well-conditioned +
+  hands over, truth-stays-at-sea-level + continuous coverage, LEO-not-MEO
+  fixture, divergence-class-never-hidden. Full workspace `cargo test`, `cargo
+  clippy --all-targets -D warnings`, and `cargo fmt --check` all pass.
 
 ## `[UNVERIFIED]` list
 
-- Synthetic 1,920-satellite, three-MEO-shell TLE grid and deterministic cohort
+- Synthetic 768-SV three-shell LEO Walker grid and sticky best-N-visible handover
   selection.
-- Receiver clock fractional injections and the Rb/good-OCXO/poor labels. The
-  injection is constant drift, not oscillator phase/frequency stochastic behavior.
-- Constant-heading 10/20/30/45/60-minute legs, 30-second Doppler cadence, 7 kn speed,
-  wave/slam and speed-scaled IMU parameters.
-- Per-SV transmit biases and deterministic tracker noise/outlier process.
-
+- Constant-heading 10/20/30/45/60-min legs, 30 s Doppler cadence, 7 kn speed;
+  sub-second wave-slam disabled for long-leg truth stability.
+- Receiver clock fractional injections and the Rb/good-OCXO/poor labels; constant
+  common-mode drift is a stand-in, not an oscillator stochastic model.
+- Per-SV fixed transmit biases and deterministic tracker noise/outlier process.

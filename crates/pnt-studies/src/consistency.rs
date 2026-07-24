@@ -92,8 +92,8 @@ const AGGREGATE_INDICES: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 8];
 
 /// Standard-normal 2.5%/97.5% quantiles for two-sided 95% chi-square consistency
 /// bounds (Wilson-Hilferty).
-const Z_LOWER: f64 = -1.959_963_985;
-const Z_UPPER: f64 = 1.959_963_985;
+pub(crate) const Z_LOWER: f64 = -1.959_963_985;
+pub(crate) const Z_UPPER: f64 = 1.959_963_985;
 
 #[derive(Clone, Debug)]
 pub struct ConsistencyConfig {
@@ -331,14 +331,7 @@ pub fn run(
         config.seeds.len() >= MINIMUM_SEEDS,
         "at least eight seeds required"
     );
-    let fixture = synthetic_fixture();
-    let denied_s = config.denied_min * 60;
-
-    let per_seed = config
-        .seeds
-        .par_iter()
-        .map(|&seed| simulate_seed(&fixture, config, denied_s, seed))
-        .collect::<Result<Vec<_>, StudyError>>()?;
+    let per_seed = collect_seed_traces_internal(config)?;
 
     let singular_subblock_count = per_seed.iter().map(|trace| trace.singular).sum();
 
@@ -441,6 +434,34 @@ pub fn run(
     fs::write(output.as_ref().join("results.json"), json)?;
     fs::write(output.as_ref().join("STUDY.md"), markdown(&report))?;
     Ok(report)
+}
+
+/// Runs the same per-seed `par_iter` simulation `run` uses and returns the raw
+/// per-seed per-epoch [`NeesSample`] traces (outer index = seed, inner = epoch),
+/// so downstream analyses (e.g. the empirical covariance-correction study) reuse
+/// ONE simulation implementation rather than re-driving the EKF themselves.
+///
+/// # Errors
+///
+/// Returns a mission, journal, ephemeris, prediction, or I/O error.
+pub fn collect_seed_traces(config: &ConsistencyConfig) -> Result<Vec<Vec<NeesSample>>, StudyError> {
+    Ok(collect_seed_traces_internal(config)?
+        .into_iter()
+        .map(|trace| trace.samples)
+        .collect())
+}
+
+/// Shared simulation driver behind both [`run`] and [`collect_seed_traces`]; the
+/// single `par_iter` `simulate_seed` loop lives here so there is no duplicated
+/// simulation path.
+fn collect_seed_traces_internal(config: &ConsistencyConfig) -> Result<Vec<SeedTrace>, StudyError> {
+    let fixture = synthetic_fixture();
+    let denied_s = config.denied_min * 60;
+    config
+        .seeds
+        .par_iter()
+        .map(|&seed| simulate_seed(&fixture, config, denied_s, seed))
+        .collect()
 }
 
 fn simulate_seed(
@@ -1364,7 +1385,7 @@ fn short_verdict(verdict: &str) -> &str {
 
 /// Wilson-Hilferty chi-square quantile: the value `x` with `P(chi2_k <= x) =
 /// Phi(z)`. Approximate; used only for the consistency band, labelled as such.
-fn chi_square_quantile(k: f64, z: f64) -> f64 {
+pub(crate) fn chi_square_quantile(k: f64, z: f64) -> f64 {
     let term = 1.0 - 2.0 / (9.0 * k) + z * (2.0 / (9.0 * k)).sqrt();
     k * term * term * term
 }

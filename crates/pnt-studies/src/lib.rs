@@ -8,6 +8,7 @@
 )]
 
 pub mod consistency;
+pub mod correction;
 pub mod endurance;
 pub mod estimator;
 pub mod highspeed;

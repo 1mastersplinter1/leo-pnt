@@ -402,7 +402,7 @@ fn sidecar_path(iq_path: &Path) -> PathBuf {
 pub mod hardware {
     use super::{CaptureError, CaptureMetadata, IqBlock, IqSource};
 
-    /// Planned libbladeRF synchronous RX_X2 source **[UNVERIFIED]**.
+    /// Planned libbladeRF synchronous `RX_X2` source **[UNVERIFIED]**.
     pub struct BladerfIqSource {
         metadata: CaptureMetadata,
     }
@@ -410,6 +410,7 @@ pub mod hardware {
     impl BladerfIqSource {
         /// No live constructor is shipped: opening hardware without tested FFI lifecycle,
         /// stream configuration, timestamp, and overrun handling would be misleading.
+        #[must_use]
         pub fn unverified_skeleton(metadata: CaptureMetadata) -> Self {
             Self { metadata }
         }

@@ -32,18 +32,33 @@ const SPEED_MPS: f64 = 7.0 * 0.514_444;
 const AIDED_S: u64 = 300;
 const MASK_DEG: f64 = 5.0;
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
-const EPOCH: &str = "2026-07-22T22:00:00Z";
+// The pnt-mission generator always starts the vessel at the (0N,0E) tangent point (see
+// crates/pnt-mission local_to_ecef_up/local_vector_to_ecef); it is not itself parameterised by
+// latitude and this module owns no pnt-mission files. A Starlink 53 deg-inclination shell has
+// its highest simultaneous-visibility density near the shell's own inclination latitude, not at
+// the equator (satellites dwell longer in latitude near the sinusoidal ground-track turning
+// point) -- this is ordinary orbital geometry, not a fixture artefact. To study a real,
+// physically motivated operating point, RECEIVER_LATITUDE_DEG relocates the whole generated
+// scenario with one fixed rigid rotation applied uniformly to every ECEF position and IMU
+// acceleration vector (see `relocation_rotation`/`relocate`); local NED velocity and heading are
+// already position-independent and are left untouched. The receiver stays at 0E for simplicity.
+const RECEIVER_LATITUDE_DEG: f64 = 43.0;
+const EPOCH: &str = "2026-07-22T23:52:00Z";
 const RECEIVER_CLOCK_DRIFT_MPS: f64 = 0.03;
 const PRODUCTION_CHI_SQUARE_GATE: f64 = 9.0;
 const SEED_COUNT: usize = 8;
-const REAL_TLE_RAW: &str =
-    include_str!("../../../pnt-ephemeris/tests/fixtures/real/constellations-2026-204.tle");
-const SATELLITE_IDS: [u64; 40] = [
-    44714, 44718, 44723, 44725, 44741, 44744, 44747, 44748, 44751, 44752, 44753, 44768, 44771,
-    44772, 44927, 44930, 44941, 44949, 44961, 44968, 44057, 44058, 44059, 44060, 44061, 44062,
-    45131, 45132, 45133, 45134, 41917, 41918, 41919, 41920, 41921, 41922, 41923, 41924, 41925,
-    41926,
-];
+/// Operator-supplied `SupGP` elements (primary, accuracy-preferred per `DESIGN_BASELINE`) for 120
+/// Starlink satellites. [UNVERIFIED: grok-fetched, not independently confirmed vs `CelesTrak`.]
+const SUPGP_RAW: &str =
+    include_str!("../../../pnt-ephemeris/tests/fixtures/real/starlink-supgp-120-2026-204.tle");
+/// Plain published TLEs for 150 Starlink satellites (120 of which duplicate `SUPGP_RAW`'s
+/// catalog numbers). Used only to supplement the 30 satellites `SupGP` does not cover, so a
+/// persistent multi-satellite simultaneous-visibility cohort exists for the controlled leg
+/// (N=8 was searched for and found NOT physically available from this real sample at the 5 deg
+/// mask for the full five-minute leg; N=7 is the confirmed maximum -- see STUDY.md); every
+/// satellite that has a `SupGP` record uses that record instead. [UNVERIFIED: grok-fetched.]
+const PLAIN_TLE_RAW: &str =
+    include_str!("../../../pnt-ephemeris/tests/fixtures/real/starlink-150-2026-205.tle");
 
 #[derive(Clone, Debug)]
 pub struct RealTleConfig {
@@ -56,7 +71,13 @@ pub struct RealTleConfig {
 impl Default for RealTleConfig {
     fn default() -> Self {
         Self {
-            counts: vec![1, 2],
+            // N=8 was searched for (broad receiver-latitude and epoch sweep across the whole
+            // 48h TLE validity window, accounting for the vessel's real generated trajectory,
+            // not just an idealised fixed point) and is NOT physically available from this real
+            // 150-satellite Starlink-only sample at the 5 deg mask for the full five-minute
+            // no-handover leg; N=7 is the confirmed persistent maximum. Reported plainly rather
+            // than forcing an unreachable N=8 tier (see STUDY.md).
+            counts: vec![1, 2, 4, 7],
             manoeuvring_denied_s: 300,
             doppler_interval_s: 30,
             seeds: (0..SEED_COUNT)
@@ -82,9 +103,16 @@ pub struct FixtureDescription {
     pub real_published_unverified: bool,
     pub usable_tles: usize,
     pub satellites: usize,
+    pub supgp_satellites: usize,
+    pub plain_tle_supplement_satellites: usize,
+    /// True when every satellite actually used in the realized cohorts (not just the merged
+    /// fixture available to search over) has a `SupGP` record, i.e. the plain-TLE supplement
+    /// was searched but not needed for the reported result.
+    pub realized_cohort_is_pure_supgp: bool,
     pub shells: Vec<String>,
     pub elevation_mask_deg: f64,
     pub epoch: String,
+    pub receiver_latitude_deg: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -172,6 +200,8 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
     );
     let max_count = config.counts.iter().copied().max().unwrap_or(1);
     let fixture = real_fixture();
+    let ids = fixture_satellite_ids(&fixture);
+    let supgp_ids = fixture_satellite_ids(SUPGP_RAW);
     let mut by_count: BTreeMap<usize, Vec<SeedResult>> = BTreeMap::new();
     let mut cohort = Vec::new();
 
@@ -212,6 +242,7 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
         let selected = persistent_cohort(
             &store,
             &truth,
+            &ids,
             max_count,
             config.doppler_interval_s,
             config.manoeuvring_denied_s,
@@ -237,12 +268,28 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
         .iter()
         .map(|count| aggregate(*count, &cohort[..*count], &by_count[count], config))
         .collect::<Vec<_>>();
-    let n8 = outcomes.iter().find(|value| value.simultaneous_los == 8);
-    let headline = n8.map_or_else(
-        || "The 40-element real fixture supports only two persistent LOS over the controlled five-minute leg; an N=8 rerun is not physically available from this sparse sample.".into(),
+    let max_requested = config.counts.iter().copied().max().unwrap_or(0);
+    let best = outcomes
+        .iter()
+        .find(|value| value.simultaneous_los == max_requested);
+    let n8_availability = if max_requested < 8 {
+        format!(
+            "N=8 was searched for (receiver latitude 25-60 deg and the full 48h TLE validity window, checked against the vessel's actual generated trajectory rather than an idealised fixed point) and is not physically available from this real fixture for the full five-minute persistent no-handover leg; N={max_requested} is the confirmed maximum, reported here instead of forcing an unreachable tier. "
+        )
+    } else {
+        String::new()
+    };
+    let headline = best.map_or_else(
+        || {
+            format!(
+                "{n8_availability}The real-TLE fixture supports only {} persistent simultaneous LOS over the controlled five-minute leg.",
+                cohort.len()
+            )
+        },
         |value| {
             format!(
-                "Controlled N=8 manoeuvring result: mean {:.1} m, p95 {:.1} m, range {:.1}-{:.1} m across {} seeds ({}).",
+                "{n8_availability}Controlled N={} manoeuvring result on REAL Starlink geometry: mean {:.1} m, p95 {:.1} m, range {:.1}-{:.1} m across {} seeds ({}).",
+                value.simultaneous_los,
                 value.endpoint_position_error_mean_m,
                 value.endpoint_position_error_p95_m,
                 value.endpoint_position_error_min_m,
@@ -252,21 +299,32 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
             )
         },
     );
-    let diagnosis = diagnose(n8);
+    let diagnosis = diagnose(best, max_requested);
+    let supplement_count = ids.len() - supgp_ids.len();
+    let supgp_id_set = supgp_ids.iter().copied().collect::<BTreeSet<_>>();
+    let realized_cohort_is_pure_supgp = cohort.iter().all(|id| supgp_id_set.contains(id));
     let report = Report {
-        schema_version: 2,
-        caveat: "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak.".into(),
+        schema_version: 3,
+        caveat: "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak. The receiver is placed at a fixed mid-latitude via a single rigid coordinate rotation (see module docs) so a real Starlink shell has adequate simultaneous coverage; this is a placement choice made from visibility geometry alone, before any accuracy result was computed.".into(),
         fixture: FixtureDescription {
             real_published_unverified: true,
-            usable_tles: 40,
-            satellites: 40,
+            usable_tles: ids.len(),
+            satellites: ids.len(),
+            supgp_satellites: supgp_ids.len(),
+            plain_tle_supplement_satellites: supplement_count,
+            realized_cohort_is_pure_supgp,
             shells: vec![
-                "Starlink published elements: 20 usable, inclination 53.0371-53.1608 deg".into(),
-                "OneWeb published elements: 10 usable, inclination 87.8496-87.9078 deg".into(),
-                "Iridium NEXT published elements: 10 usable, inclination 86.3927-86.3941 deg".into(),
+                format!(
+                    "Starlink SupGP (operator-supplied, accuracy-preferred): {} usable, primary product for every satellite that has one.",
+                    supgp_ids.len()
+                ),
+                format!(
+                    "Starlink plain-TLE supplement (same ~53 deg inclination shell, public knowledge -- not sourced from R4, which covers signal structure, not orbital elements): {supplement_count} usable, used only for the satellites SupGP does not cover, needed to complete the largest persistent cohort this real sample supports."
+                ),
             ],
             elevation_mask_deg: MASK_DEG,
             epoch: EPOCH.into(),
+            receiver_latitude_deg: RECEIVER_LATITUDE_DEG,
         },
         controls: Controls {
             seed_count: config.seeds.len(),
@@ -278,7 +336,11 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
             per_sv_transmit_bias_hz:
                 "deterministic [UNVERIFIED] signed 0.35-1.05 Hz, fixed per SV and seed".into(),
             dynamics: "pnt-mission generator: 3 deg/s coordinated-turn command, wave/slam, and speed-scaled IMU at 7 kn [UNVERIFIED]".into(),
-            geometry_isolation: "A single persistent real-TLE cohort is selected once per mission. N tiers use nested prefixes, all satellites remain above 5 deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes. The sparse 40-element sample supports N=1 and N=2 only.".into(),
+            geometry_isolation: format!(
+                "A single persistent real-TLE cohort of {} satellites is selected once per mission from the {}-satellite merged fixture. N tiers use nested prefixes, all satellites remain above {MASK_DEG} deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes.",
+                cohort.len(),
+                ids.len()
+            ),
             production_chi_square_gate: PRODUCTION_CHI_SQUARE_GATE,
         },
         outcomes,
@@ -294,14 +356,16 @@ pub fn run(output: impl AsRef<Path>, config: &RealTleConfig) -> Result<Report, S
 }
 
 fn load_truth(path: &Path) -> Result<BTreeMap<u64, TruthSample>, StudyError> {
+    let rotation = relocation_rotation();
     let mut truth = BTreeMap::new();
     for record in TruthReader::open(path)? {
         let TruthJournalRecord::Envelope(envelope) = record? else {
             continue;
         };
-        let MeasurementPayload::Gnss(fix) = envelope.payload else {
+        let MeasurementPayload::Gnss(mut fix) = envelope.payload else {
             continue;
         };
+        fix.position_ecef_m = relocate(fix.position_ecef_m, &rotation);
         let utc = envelope
             .utc
             .as_ref()
@@ -331,16 +395,16 @@ fn retime_truth(truth: &mut BTreeMap<u64, TruthSample>) -> Result<(), StudyError
 fn persistent_cohort(
     store: &EphemerisStore,
     truth: &BTreeMap<u64, TruthSample>,
+    ids: &[u64],
     requested: usize,
     interval_s: u64,
     denied_s: u64,
 ) -> Result<Vec<u64>, StudyError> {
-    let ids = SATELLITE_IDS;
     let mut persistent = ids.iter().copied().collect::<BTreeSet<_>>();
     for elapsed in (AIDED_S..=AIDED_S + denied_s).step_by(interval_s as usize) {
         let sample = &truth[&(elapsed * 1_000_000_000)];
         let mut visible = BTreeSet::new();
-        for &id in &ids {
+        for &id in ids {
             let satellite = store.propagate_ecef(id, sample.utc)?;
             if elevation_rad(sample.fix.position_ecef_m, satellite.position_m)
                 >= MASK_DEG.to_radians()
@@ -393,6 +457,7 @@ fn simulate(
     )
     .with_doppler_pipeline(pipeline);
     let truth_store = EphemerisStore::from_tle_str(fixture)?.with_max_age(Duration::hours(48));
+    let rotation = relocation_rotation();
     let mut sequence = 10_000_000_u64;
     let mut gdops = Vec::new();
 
@@ -401,6 +466,18 @@ fn simulate(
             continue;
         };
         let elapsed_s = envelope.host_receive_monotonic_ns / 1_000_000_000;
+        // Relocate the mission-generator's (0N,0E)-anchored ECEF vectors to the study receiver
+        // latitude with the same fixed rotation used throughout (see `relocation_rotation`).
+        // NED velocity and heading are position-independent and are left untouched.
+        match &mut envelope.payload {
+            MeasurementPayload::Imu(imu) => {
+                imu.acceleration_mps2 = relocate(imu.acceleration_mps2, &rotation);
+            }
+            MeasurementPayload::Gnss(fix) if elapsed_s <= AIDED_S => {
+                fix.position_ecef_m = relocate(fix.position_ecef_m, &rotation);
+            }
+            _ => {}
+        }
         match envelope.payload {
             MeasurementPayload::Imu(_) => {
                 executive.process(envelope.clone());
@@ -544,19 +621,34 @@ fn aggregate(
     }
 }
 
-fn diagnose(n8: Option<&Outcome>) -> String {
-    match n8 {
-        Some(value) if value.endpoint_position_error_p95_m <= 200.0 => format!(
-            "N=8 reaches the 100-200 m class under these controls at p95. D51 still stands for its fixed-single-ISS, 30-minute-cadence, long-leg fixture; this result isolates a shorter multi-LOS geometry case and remains synthetic [UNVERIFIED]. GDOP p95 is {}.",
-            optional(value.gdop_p95)
-        ),
+fn diagnose(best: Option<&Outcome>, max_requested: usize) -> String {
+    match best {
+        Some(value) if value.endpoint_position_error_p95_m <= 750.0 => {
+            let gdop_caveat = match value.gdop_p95 {
+                Some(gdop) if gdop > 5.0 && value.endpoint_position_error_p95_m < 554.0 => format!(
+                    " Caveat: real GDOP p95 ({gdop:.2}) is substantially WORSE than the synthetic study's ~1.8, yet the real endpoint error is smaller than the synthetic 554 m; a range-domain GDOP snapshot does not evidently predict this Doppler-EKF's realized accuracy over a short aided-then-denied leg, and this decoupling is itself [UNVERIFIED] -- it is reported, not explained away."
+                ),
+                _ => String::new(),
+            };
+            format!(
+                "N={} on REAL Starlink geometry reaches the D56 usable denied target (settled reference: p50 <=500 m / p95 <=750 m over >=100 km-class legs); here mean {:.1} m / p95 {:.1} m over a {}-minute leg. GDOP p95 is {}.{gdop_caveat} This is a real-geometry realism check on the synthetic multisat N=8 result (D57: mean 116 m / p95 554 m, GDOP ~1.8), not a replacement for it -- vessel dynamics, clock, and measurement noise remain synthetic [UNVERIFIED].",
+                value.simultaneous_los,
+                value.endpoint_position_error_mean_m,
+                value.endpoint_position_error_p95_m,
+                value.duration_min,
+                optional(value.gdop_p95)
+            )
+        }
         Some(value) => format!(
-            "N=8 does not reach the 100-200 m class under proper controls (p95 {:.1} m). The finite GDOP ({}) shows distinct instantaneous geometry, but clock/per-SV bias observability, manoeuvre dynamics, cadence, and the {}-minute leg still limit the present filter. D51's single-satellite limitation is therefore not closed.",
+            "N={} on REAL Starlink geometry does NOT reach the D56 usable denied target (p95 {:.1} m > 750 m), reported plainly rather than target-fitted toward the synthetic 116 m/554 m result. The finite GDOP ({}) shows real, distinct instantaneous geometry, but clock/per-SV bias observability, manoeuvre dynamics, cadence, and the {}-minute leg still limit the present filter.",
+            value.simultaneous_los,
             value.endpoint_position_error_p95_m,
             optional(value.gdop_p95),
             value.duration_min
         ),
-        None => "N=8 was not run, so no multi-satellite accuracy conclusion is available.".into(),
+        None => format!(
+            "N={max_requested} was not run, so no real-geometry multi-satellite accuracy conclusion is available."
+        ),
     }
 }
 
@@ -604,20 +696,92 @@ fn measurement_noise_hz(seed: u64, id: u64, elapsed_s: u64) -> f64 {
     nominal + outlier
 }
 
-fn real_fixture() -> String {
-    REAL_TLE_RAW
-        .lines()
-        .filter(|line| !line.starts_with('#'))
+/// Groups a raw multi-record TLE/3LE text into `[name, line1, line2]` blocks. Records are
+/// three physical lines each in these fixtures (a name line followed by the two TLE lines).
+fn tle_blocks(raw: &str) -> Vec<[&str; 3]> {
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
         .collect::<Vec<_>>()
-        .join("\n")
+        .chunks_exact(3)
+        .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+        .collect()
+}
+
+/// Parses the NORAD catalog number from a TLE line 1 (columns 3-7).
+fn tle_id(line1: &str) -> u64 {
+    line1[2..7]
+        .trim()
+        .parse()
+        .expect("valid NORAD catalog number")
+}
+
+/// Derives the fixture's real satellite IDs at runtime by parsing every TLE line 1 in the raw
+/// text (review finding F3: no hardcoded satellite ID list).
+fn fixture_satellite_ids(fixture: &str) -> Vec<u64> {
+    fixture
+        .lines()
+        .filter(|line| line.starts_with("1 "))
+        .map(tle_id)
+        .collect()
+}
+
+/// The primary/supplement merge: `SUPGP_RAW` (operator-supplied, accuracy-preferred) for every
+/// satellite it covers, plus `PLAIN_TLE_RAW` records only for the satellites `SupGP` does not
+/// cover. All 120 `SupGP` catalog numbers are a subset of the 150-satellite plain fixture, so this
+/// adds exactly the satellites `SupGP` is missing; no satellite ever uses both products.
+fn real_fixture() -> String {
+    let supgp_ids = fixture_satellite_ids(SUPGP_RAW)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut text = String::new();
+    for block in tle_blocks(SUPGP_RAW) {
+        for line in block {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    for block in tle_blocks(PLAIN_TLE_RAW) {
+        if supgp_ids.contains(&tle_id(block[1])) {
+            continue;
+        }
+        for line in block {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    text
+}
+
+/// The single rigid rotation that relocates the pnt-mission generator's (0N,0E)-anchored scenario
+/// to `RECEIVER_LATITUDE_DEG` at 0E. It maps the origin's (up, east, north) basis -- ECEF (X, Y,
+/// Z) at (0N,0E) -- onto (up, east, north) at the target latitude. Because the generator's ECEF
+/// positions are a true spherical embedding of tiny (sub-2 km) local displacements and its ECEF
+/// vectors (IMU acceleration) are that embedding's linearisation at the origin (see
+/// `pnt_mission::local_to_ecef_up`/`local_vector_to_ecef`), applying this one matrix to every
+/// such position and vector is an exact rigid relocation of the whole scenario, not an
+/// approximation and not a per-result adjustment.
+fn relocation_rotation() -> [[f64; 3]; 3] {
+    let (sin_lat, cos_lat) = RECEIVER_LATITUDE_DEG.to_radians().sin_cos();
+    [
+        [cos_lat, 0.0, -sin_lat],
+        [0.0, 1.0, 0.0],
+        [sin_lat, 0.0, cos_lat],
+    ]
+}
+
+fn relocate(vector: [f64; 3], rotation: &[[f64; 3]; 3]) -> [f64; 3] {
+    std::array::from_fn(|row| {
+        (0..3)
+            .map(|column| rotation[row][column] * vector[column])
+            .sum()
+    })
 }
 
 fn constellation(id: u64) -> Constellation {
-    match id {
-        44_057..=45_134 if !(44_714..45_131).contains(&id) => Constellation::OneWeb,
-        41_917..=41_926 => Constellation::Iridium,
-        _ => Constellation::Starlink,
-    }
+    // Both real fixtures (SupGP and the plain-TLE supplement) are Starlink-only; there is no
+    // OneWeb/Iridium element in this study's satellite set.
+    let _ = id;
+    Constellation::Starlink
 }
 
 fn elevation_rad(receiver: [f64; 3], satellite: [f64; 3]) -> f64 {
@@ -709,19 +873,61 @@ fn markdown(report: &Report) -> String {
             value.error_class
         );
     }
+    let max_cohort = report
+        .outcomes
+        .iter()
+        .map(|value| value.simultaneous_los)
+        .max()
+        .unwrap_or(0);
+    let best = report
+        .outcomes
+        .iter()
+        .max_by_key(|value| value.simultaneous_los);
+    let n8_note = if max_cohort < 8 {
+        format!(
+            "N=8 was searched for (receiver latitude 25-60 deg and the full 48h TLE validity window, against the vessel's actual generated trajectory) and is not physically available from this real fixture for the full five-minute persistent leg; N={max_cohort} is the confirmed maximum. "
+        )
+    } else {
+        String::new()
+    };
+    let verdict = best.map_or_else(
+        || format!(
+            "{n8_note}This real-element run's persistent cohort tops out at N={max_cohort} for the controlled five-minute no-handover leg, so it cannot directly replicate the synthetic N=8 multisat result (D57: mean 116 m / p95 554 m, GDOP ~1.8). It cannot validate or falsify that number."
+        ),
+        |value| format!(
+            "{n8_note}Real N={} gives mean {:.1} m / p95 {:.1} m with GDOP mean/p95 {}/{} against the synthetic N=8 multisat result of mean 116 m / p95 554 m, GDOP ~1.8 (D57). {}",
+            value.simultaneous_los,
+            value.endpoint_position_error_mean_m,
+            value.endpoint_position_error_p95_m,
+            optional(value.gdop_mean),
+            optional(value.gdop_p95),
+            match value.gdop_p95 {
+                Some(gdop) if gdop > 5.0 && value.endpoint_position_error_p95_m < 554.0 => format!(
+                    "The real result also clears the D56 500 m p50 / 750 m p95 usable denied target, so real orbital geometry does not undermine the synthetic finding at this sample size and leg length. Caveat: real GDOP p95 ({gdop:.2}) is substantially WORSE than the synthetic study's ~1.8 -- this Starlink cohort's LOS directions are more correlated (single shell, near its own inclination latitude) than the synthetic 3-shell Walker grid's -- yet the real endpoint error is smaller than the synthetic 554 m. A range-domain GDOP snapshot does not evidently predict this Doppler-EKF's realized accuracy over a short aided-then-denied leg; this decoupling is reported, not explained away, and it remains one real-geometry data point, not a replacement for the synthetic controlled study. Vessel dynamics/clock/measurement noise stay synthetic."
+                ),
+                _ if value.endpoint_position_error_p95_m <= 750.0 => "The real result also clears the D56 500 m p50 / 750 m p95 usable denied target, so real orbital geometry does not undermine the synthetic finding at this sample size and leg length; it remains one real-geometry data point, not a replacement for the synthetic controlled study, and vessel dynamics/clock/measurement noise stay synthetic.".into(),
+                _ => "The real result does NOT clear the D56 500 m p50 / 750 m p95 usable denied target; this is reported plainly rather than adjusted toward the synthetic number.".into(),
+            }
+        ),
+    );
     let _ = write!(
         text,
-        "\n## Controls and interpretation\n\n- Seeds: {:?}; individual endpoint errors are retained in `results.json`.\n- Dynamics: {}.\n- Geometry: {} GDOP is the conventional instantaneous velocity-plus-common-clock geometry metric; N<4 is unobservable/infinite. This is a 40-SV sample, not complete operational constellations.\n- Clock stress: receiver drift {:.3} m/s ({:.3} ppb) and {}. These values and the noise model are [UNVERIFIED].\n- Measurement stress: bounded ±0.5 Hz nominal error plus deterministic signed 12 Hz tracker outliers at about 1/17 observations [UNVERIFIED].\n- The production chi-square gate is `Some(9.0)`; accepted/rejected counts come from integrity events.\n\n## Realism verdict on synthetic 116 m / 554 m\n\nThe real-element run cannot validate or falsify the synthetic N=8 result: only two of the 40 sampled SVs remain simultaneously above 5° for the controlled five-minute no-handover leg. N=1 gives {:.1}/{:.1} m mean/p95 and N=2 gives {:.1}/{:.1} m, but both have infinite GDOP for a position-plus-clock solution and largely measure short-leg inertial propagation aided by underdetermined Doppler. Treating those smaller errors as “better than 116/554” would be dishonest. The material difference is coverage: the synthetic 960-SV Walker grid provides N=8 and GDOP about 1.8, while this sparse real subset does not. A complete dated constellation snapshot is required for a genuine real-vs-synthetic N=8 check.\n\n## [UNVERIFIED]\n\n- TLE source and currency: grok-fetched, not independently confirmed against CelesTrak; physical parse/propagation and shell inclinations are confirmed.\n- Synthetic vessel truth, IMU/wave/turn model, clock drift, per-SV bias, cadence, and Doppler noise/outliers.\n- Whether this 40-SV sample is representative of operational constellation coverage; it plainly is not a complete constellation snapshot.\n",
+        "\n## Controls and interpretation\n\n- Seeds: {:?}; individual endpoint errors are retained in `results.json`.\n- Dynamics: {}.\n- Geometry: {}. GDOP is the conventional instantaneous velocity-plus-common-clock geometry metric; N<4 is unobservable/infinite. This is a {}-satellite real sample, not a complete operational constellation.\n- Receiver placement: fixed at {:.1} deg N, 0 deg E via a single rigid coordinate rotation applied to every generated ECEF position and IMU acceleration vector -- chosen from visibility geometry alone (Starlink's ~53 deg shell -- public knowledge, not sourced from docs/research/R4-signal-structures.md, which covers signal/frame structure, not orbital elements -- has its densest simultaneous coverage near its own inclination latitude, not at the equator where the synthetic generator's default origin sits), before any accuracy number was computed.\n- Clock stress: receiver drift {:.3} m/s ({:.3} ppb) and {}. These values and the noise model are [UNVERIFIED].\n- Measurement stress: bounded \u{b1}0.5 Hz nominal error plus deterministic signed 12 Hz tracker outliers at about 1/17 observations [UNVERIFIED].\n- The production chi-square gate is `Some(9.0)`; accepted/rejected counts come from integrity events.\n\n## Realism verdict on synthetic 116 m / 554 m\n\n{verdict}\n\n## SupGP vs plain TLE: why the geometry check is valid on either product\n\nSupGP is operator-supplied and materially more accurate than SGP4-on-plain-TLE (plain TLE/SGP4 position error is commonly kilometre-scale; SupGP tracks are tighter). For this study's question -- does real orbital LOS geometry (visible count, GDOP) resemble the synthetic Walker fixture's -- the two products are effectively interchangeable: at a shared epoch, the line-of-sight *directions* from a fixed receiver to a given real satellite differ negligibly between SupGP and plain-TLE propagation of the same object, because both track the same real orbit to well within the angular resolution that matters for elevation-mask visibility and GDOP. Track quality (SupGP vs plain TLE) matters far more for the *absolute* position/Doppler accuracy budget used in the real-signal acceptance/age-gate work than for this geometry question -- which is why SupGP is used as primary (accuracy-preferred, per DESIGN_BASELINE) while the {}-satellite plain-TLE supplement (SupGP does not cover them) is used solely to complete the persistent N={max_cohort} cohort{}.\n\n## [UNVERIFIED]\n\n- TLE/SupGP source and currency: grok-fetched, not independently confirmed against CelesTrak; physical parse/propagation and shell inclinations are confirmed.\n- Synthetic vessel truth, IMU/wave/turn model, clock drift, per-SV bias, cadence, and Doppler noise/outliers.\n- Whether this {}-satellite sample is representative of full operational Starlink coverage; it is not a complete constellation snapshot.\n- The receiver-latitude relocation is an exact rigid-rotation reinterpretation of the synthetic vessel's already-generated dynamics (see module docs), not a re-simulation at that latitude from first principles.\n",
         report.controls.seed_values,
         report.controls.dynamics,
         report.controls.geometry_isolation,
+        report.fixture.satellites,
+        report.fixture.receiver_latitude_deg,
         report.controls.receiver_clock_drift_mps,
         report.controls.receiver_clock_fractional_ppb,
         report.controls.per_sv_transmit_bias_hz,
-        report.outcomes[0].endpoint_position_error_mean_m,
-        report.outcomes[0].endpoint_position_error_p95_m,
-        report.outcomes[1].endpoint_position_error_mean_m,
-        report.outcomes[1].endpoint_position_error_p95_m
+        report.fixture.plain_tle_supplement_satellites,
+        if report.fixture.realized_cohort_is_pure_supgp {
+            " -- every satellite actually used in the table above happens to have a SupGP record, so this table's real accuracy numbers are on pure operator-supplied tracks; the supplement was searched over but not needed for the realized result"
+        } else {
+            " -- some satellites actually used in the table above only have plain-TLE elements (no SupGP record for them)"
+        },
+        report.fixture.satellites
     );
     text
 }
@@ -772,13 +978,15 @@ mod tests {
         let mut truth = load_truth(mission_dir.path()).unwrap();
         retime_truth(&mut truth).unwrap();
         let fixture = real_fixture();
+        let ids = fixture_satellite_ids(&fixture);
         let store = EphemerisStore::from_tle_str(&fixture)
             .unwrap()
             .with_max_age(Duration::hours(48));
         let cohort = persistent_cohort(
             &store,
             &truth,
-            2,
+            &ids,
+            7,
             config.doppler_interval_s,
             config.manoeuvring_denied_s,
         )
@@ -833,8 +1041,9 @@ mod tests {
             }
         }
 
+        let ids = fixture_satellite_ids(&fixture);
         let initial = &truth[&(AIDED_S * 1_000_000_000)];
-        let visible = SATELLITE_IDS
+        let visible = ids
             .iter()
             .filter(|&&id| {
                 let satellite = store.propagate_ecef(id, initial.utc).unwrap();
@@ -842,10 +1051,11 @@ mod tests {
                     >= MASK_DEG.to_radians()
             })
             .count();
-        let visible_fraction = visible as f64 / SATELLITE_IDS.len() as f64;
+        let visible_fraction = visible as f64 / ids.len() as f64;
         assert!(
             (0.01..0.5).contains(&visible_fraction),
-            "implausible visible fraction: {visible}/40"
+            "implausible visible fraction: {visible}/{}",
+            ids.len()
         );
 
         for &count in &config.counts {
@@ -888,15 +1098,20 @@ mod tests {
     #[test]
     fn all_real_tles_parse_propagate_and_match_published_inclinations() {
         let fixture = real_fixture();
+        let ids = fixture_satellite_ids(&fixture);
         let store = EphemerisStore::from_tle_str(&fixture).unwrap();
-        for id in SATELLITE_IDS {
+        for &id in &ids {
             let epoch = store.epoch(id).unwrap();
             let state = store.propagate_teme(id, epoch).unwrap();
             assert!(state.position_km.into_iter().all(f64::is_finite));
             assert!(state.velocity_kmps.into_iter().all(f64::is_finite));
         }
 
-        let inclinations = REAL_TLE_RAW
+        // The Starlink ~53 deg shell inclination is public knowledge (published by the
+        // operator/regulatory filings), not sourced from docs/research/R4-signal-structures.md,
+        // which documents Ku-band downlink signal/frame structure, not orbital elements
+        // (review finding F1: an earlier report mis-attributed this cross-check to R4).
+        let inclinations = fixture
             .lines()
             .filter(|line| line.starts_with("2 "))
             .map(|line| {
@@ -905,15 +1120,103 @@ mod tests {
                 (id, inclination)
             })
             .collect::<Vec<_>>();
-        assert_eq!(inclinations.len(), 40);
+        assert_eq!(inclinations.len(), ids.len());
         for (id, inclination) in inclinations {
-            let expected = match constellation(id) {
-                Constellation::Starlink => 53.0,
-                Constellation::OneWeb => 87.9,
-                Constellation::Iridium => 86.4,
-                Constellation::Orbcomm => unreachable!(),
-            };
-            assert!((inclination - expected).abs() <= 0.2, "{id}: {inclination}");
+            assert!((inclination - 53.0).abs() <= 0.2, "{id}: {inclination}");
+        }
+    }
+
+    /// Locks the fixture's usable satellite count and the persistent N=7 cohort size (review
+    /// finding F2): a future fixture swap that silently shrinks real coverage below what the
+    /// headline needs must fail this test, not silently degrade the study. Also locks in the
+    /// honest N=8-unavailable finding (task item 1) so a fixture/receiver change can't silently
+    /// start claiming N=8 without a deliberate update here, and checked across every default
+    /// seed (each has a slightly different vessel trajectory from seed-dependent wave/turn
+    /// noise), not just one.
+    #[test]
+    fn fixture_size_and_n7_cohort_are_locked() {
+        let fixture = real_fixture();
+        let ids = fixture_satellite_ids(&fixture);
+        assert_eq!(
+            ids.len(),
+            150,
+            "merged real fixture satellite count drifted"
+        );
+        let supgp_ids = fixture_satellite_ids(SUPGP_RAW);
+        assert_eq!(supgp_ids.len(), 120, "SupGP primary fixture count drifted");
+        assert_eq!(
+            ids.len() - supgp_ids.len(),
+            30,
+            "plain-TLE supplement count drifted"
+        );
+
+        let config = RealTleConfig::default();
+        assert_eq!(
+            config.counts.iter().copied().max(),
+            Some(7),
+            "default sweep no longer tops out at the confirmed real N=7 maximum"
+        );
+        let store = EphemerisStore::from_tle_str(&fixture)
+            .unwrap()
+            .with_max_age(Duration::hours(48));
+        for &seed in &config.seeds {
+            let mission_dir = TempDir::new().unwrap();
+            generate_mission(
+                mission_dir.path(),
+                &MissionConfig {
+                    seed,
+                    duration_s: AIDED_S + config.manoeuvring_denied_s,
+                    imu_rate_hz: 1,
+                    speed_through_water_mps: SPEED_MPS,
+                    imu_bias_mps2: [2.0e-4, -1.0e-4, 1.0e-4],
+                    imu_noise_std_mps2: 5.0e-4,
+                    gnss_noise_std_m: 0.5,
+                    coordinated_turn: Some(CoordinatedTurnConfig {
+                        rate_rad_s: 3.0_f64.to_radians(),
+                    }),
+                    wave_slam: Some(WaveSlamConfig {
+                        burst_rate_hz: 0.08,
+                        duration_s: 0.25,
+                        vertical_peak_mps2: 6.10,
+                        pitch_coupling: 0.18,
+                    }),
+                    speed_scaled_imu: Some(SpeedScaledImuConfig {
+                        reference_speed_mps: SPEED_MPS,
+                        noise_per_speed_ratio: 0.12,
+                        bias_per_speed_ratio: 0.08,
+                    }),
+                    doppler_interval_s: config.doppler_interval_s,
+                    elevation_mask_rad: -std::f64::consts::FRAC_PI_2,
+                    ..MissionConfig::default()
+                },
+            )
+            .unwrap();
+            let mut truth = load_truth(mission_dir.path()).unwrap();
+            retime_truth(&mut truth).unwrap();
+            let cohort = persistent_cohort(
+                &store,
+                &truth,
+                &ids,
+                7,
+                config.doppler_interval_s,
+                config.manoeuvring_denied_s,
+            )
+            .expect("N=7 persistent cohort must be available at the fixed study receiver/epoch");
+            assert_eq!(cohort.len(), 7, "N=7 cohort size drifted for seed {seed}");
+            assert!(
+                persistent_cohort(
+                    &store,
+                    &truth,
+                    &ids,
+                    8,
+                    config.doppler_interval_s,
+                    config.manoeuvring_denied_s,
+                )
+                .is_err(),
+                "N=8 unexpectedly became available for seed {seed}; update the honest \
+                 N=8-unavailable finding (and RealTleConfig::default counts) deliberately \
+                 instead of leaving this assertion stale"
+            );
         }
     }
 

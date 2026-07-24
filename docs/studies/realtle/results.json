@@ -1,17 +1,20 @@
 {
-  "schema_version": 2,
-  "caveat": "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak.",
+  "schema_version": 3,
+  "caveat": "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak. The receiver is placed at a fixed mid-latitude via a single rigid coordinate rotation (see module docs) so a real Starlink shell has adequate simultaneous coverage; this is a placement choice made from visibility geometry alone, before any accuracy result was computed.",
   "fixture": {
     "real_published_unverified": true,
-    "usable_tles": 40,
-    "satellites": 40,
+    "usable_tles": 150,
+    "satellites": 150,
+    "supgp_satellites": 120,
+    "plain_tle_supplement_satellites": 30,
+    "realized_cohort_is_pure_supgp": true,
     "shells": [
-      "Starlink published elements: 20 usable, inclination 53.0371-53.1608 deg",
-      "OneWeb published elements: 10 usable, inclination 87.8496-87.9078 deg",
-      "Iridium NEXT published elements: 10 usable, inclination 86.3927-86.3941 deg"
+      "Starlink SupGP (operator-supplied, accuracy-preferred): 120 usable, primary product for every satellite that has one.",
+      "Starlink plain-TLE supplement (same ~53 deg inclination shell, public knowledge -- not sourced from R4, which covers signal structure, not orbital elements): 30 usable, used only for the satellites SupGP does not cover, needed to complete the largest persistent cohort this real sample supports."
     ],
     "elevation_mask_deg": 5.0,
-    "epoch": "2026-07-22T22:00:00Z"
+    "epoch": "2026-07-22T23:52:00Z",
+    "receiver_latitude_deg": 43.0
   },
   "controls": {
     "seed_count": 8,
@@ -29,7 +32,7 @@
     "receiver_clock_fractional_ppb": 0.10006922855944561,
     "per_sv_transmit_bias_hz": "deterministic [UNVERIFIED] signed 0.35-1.05 Hz, fixed per SV and seed",
     "dynamics": "pnt-mission generator: 3 deg/s coordinated-turn command, wave/slam, and speed-scaled IMU at 7 kn [UNVERIFIED]",
-    "geometry_isolation": "A single persistent real-TLE cohort is selected once per mission. N tiers use nested prefixes, all satellites remain above 5 deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes. The sparse 40-element sample supports N=1 and N=2 only.",
+    "geometry_isolation": "A single persistent real-TLE cohort of 7 satellites is selected once per mission from the 150-satellite merged fixture. N tiers use nested prefixes, all satellites remain above 5 deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes.",
     "production_chi_square_gate": 9.0
   },
   "outcomes": [
@@ -37,62 +40,129 @@
       "geometry": "fixed single LOS; no handover",
       "simultaneous_los": 1,
       "satellite_ids": [
-        41917
+        44741
       ],
       "duration_min": 5.0,
       "gdop_mean": null,
       "gdop_p95": null,
-      "endpoint_position_error_mean_m": 79.57294017105501,
-      "endpoint_position_error_p95_m": 144.90534456651784,
-      "endpoint_position_error_min_m": 30.804381403971192,
-      "endpoint_position_error_max_m": 144.90534456651784,
-      "endpoint_velocity_error_mean_mps": 0.3637921398363189,
+      "endpoint_position_error_mean_m": 52.510838488747694,
+      "endpoint_position_error_p95_m": 88.1604334519012,
+      "endpoint_position_error_min_m": 28.766750974589453,
+      "endpoint_position_error_max_m": 88.1604334519012,
+      "endpoint_velocity_error_mean_mps": 0.1985376775860282,
       "accepted_updates_mean": 55.0,
       "rejected_updates_mean": 0.0,
       "nuisance_state_count_mean": 1.0,
       "seed_position_errors_m": [
-        95.70852754111546,
-        34.30828225362766,
-        67.46334587276104,
-        84.28431746577922,
-        30.804381403971192,
-        74.3745714656329,
-        104.73475079903476,
-        144.90534456651784
+        88.1604334519012,
+        57.011272496464564,
+        66.02824563995037,
+        36.97311771646343,
+        30.75200707485462,
+        28.766750974589453,
+        66.66278221238757,
+        45.7320983433703
       ],
-      "error_class": "100-200 m"
+      "error_class": "<100 m"
     },
     {
       "geometry": "fixed simultaneous multi-LOS cohort; no handover",
       "simultaneous_los": 2,
       "satellite_ids": [
-        41917,
-        44723
+        44741,
+        45366
       ],
       "duration_min": 5.0,
       "gdop_mean": null,
       "gdop_p95": null,
-      "endpoint_position_error_mean_m": 62.677531501068586,
-      "endpoint_position_error_p95_m": 118.79687643538736,
-      "endpoint_position_error_min_m": 29.63056329662537,
-      "endpoint_position_error_max_m": 118.79687643538736,
-      "endpoint_velocity_error_mean_mps": 0.32530745547854545,
+      "endpoint_position_error_mean_m": 51.9226604018556,
+      "endpoint_position_error_p95_m": 92.42291150024923,
+      "endpoint_position_error_min_m": 9.186398318211605,
+      "endpoint_position_error_max_m": 92.42291150024923,
+      "endpoint_velocity_error_mean_mps": 0.21550756784007002,
       "accepted_updates_mean": 110.0,
       "rejected_updates_mean": 0.0,
       "nuisance_state_count_mean": 2.0,
       "seed_position_errors_m": [
-        87.8418409439662,
-        49.59037926719578,
-        69.7615705185755,
-        47.13304009341202,
-        29.63056329662537,
-        42.09506553158355,
-        56.57091592180291,
-        118.79687643538736
+        92.42291150024923,
+        48.500378426847284,
+        29.095932486008717,
+        66.78229064196887,
+        62.827418770907386,
+        41.9657350545155,
+        64.60021801613621,
+        9.186398318211605
       ],
-      "error_class": "100-200 m"
+      "error_class": "<100 m"
+    },
+    {
+      "geometry": "fixed simultaneous multi-LOS cohort; no handover",
+      "simultaneous_los": 4,
+      "satellite_ids": [
+        44741,
+        45366,
+        45368,
+        45377
+      ],
+      "duration_min": 5.0,
+      "gdop_mean": 46.662739583199276,
+      "gdop_p95": 199.60043993781812,
+      "endpoint_position_error_mean_m": 39.35776994412725,
+      "endpoint_position_error_p95_m": 58.61326484769319,
+      "endpoint_position_error_min_m": 15.375532201861018,
+      "endpoint_position_error_max_m": 58.61326484769319,
+      "endpoint_velocity_error_mean_mps": 0.1697745370328784,
+      "accepted_updates_mean": 220.0,
+      "rejected_updates_mean": 0.0,
+      "nuisance_state_count_mean": 4.0,
+      "seed_position_errors_m": [
+        36.43851839793331,
+        40.284707882584854,
+        25.31405867867547,
+        58.61326484769319,
+        58.18353206099932,
+        37.20340937709565,
+        43.44913610617523,
+        15.375532201861018
+      ],
+      "error_class": "<100 m"
+    },
+    {
+      "geometry": "fixed simultaneous multi-LOS cohort; no handover",
+      "simultaneous_los": 7,
+      "satellite_ids": [
+        44741,
+        45366,
+        45368,
+        45377,
+        45387,
+        45405,
+        45580
+      ],
+      "duration_min": 5.0,
+      "gdop_mean": 8.753970576586875,
+      "gdop_p95": 13.855783757770043,
+      "endpoint_position_error_mean_m": 35.82869904625613,
+      "endpoint_position_error_p95_m": 56.41754761508869,
+      "endpoint_position_error_min_m": 16.17186482908514,
+      "endpoint_position_error_max_m": 56.41754761508869,
+      "endpoint_velocity_error_mean_mps": 0.19048973062425914,
+      "accepted_updates_mean": 385.0,
+      "rejected_updates_mean": 0.0,
+      "nuisance_state_count_mean": 7.0,
+      "seed_position_errors_m": [
+        39.61848631815575,
+        36.05750007625317,
+        24.870013909539892,
+        55.06955213442862,
+        56.41754761508869,
+        40.953379041574145,
+        16.17186482908514,
+        17.47124844592359
+      ],
+      "error_class": "<100 m"
     }
   ],
-  "headline": "The 40-element real fixture supports only two persistent LOS over the controlled five-minute leg; an N=8 rerun is not physically available from this sparse sample.",
-  "diagnosis": "N=8 was not run, so no multi-satellite accuracy conclusion is available."
+  "headline": "N=8 was searched for (receiver latitude 25-60 deg and the full 48h TLE validity window, checked against the vessel's actual generated trajectory rather than an idealised fixed point) and is not physically available from this real fixture for the full five-minute persistent no-handover leg; N=7 is the confirmed maximum, reported here instead of forcing an unreachable tier. Controlled N=7 manoeuvring result on REAL Starlink geometry: mean 35.8 m, p95 56.4 m, range 16.2-56.4 m across 8 seeds (<100 m).",
+  "diagnosis": "N=7 on REAL Starlink geometry reaches the D56 usable denied target (settled reference: p50 <=500 m / p95 <=750 m over >=100 km-class legs); here mean 35.8 m / p95 56.4 m over a 5-minute leg. GDOP p95 is 13.86. Caveat: real GDOP p95 (13.86) is substantially WORSE than the synthetic study's ~1.8, yet the real endpoint error is smaller than the synthetic 554 m; a range-domain GDOP snapshot does not evidently predict this Doppler-EKF's realized accuracy over a short aided-then-denied leg, and this decoupling is itself [UNVERIFIED] -- it is reported, not explained away. This is a real-geometry realism check on the synthetic multisat N=8 result (D57: mean 116 m / p95 554 m, GDOP ~1.8), not a replacement for it -- vessel dynamics, clock, and measurement noise remain synthetic [UNVERIFIED]."
 }

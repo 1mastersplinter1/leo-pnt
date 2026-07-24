@@ -14,6 +14,20 @@ are treated as **[UNVERIFIED-grok]** and every load-bearing figure below is eith
 flagged. Values this document introduces are scoped **evidence-supported** (a repo artifact, a standard
 identity, or a calculation shown inline) or **judgment** (`[UNVERIFIED]`).
 
+> **Amendment — 2026-07-24 (D56 / D68 / D72 / D74 / D78 reconciliation).** This analysis was written
+> 2026-07-23 against a **200 m denied position PL** and a **100–200 m** LEO denied class. Both bars have
+> since moved. **(D56)** the denied acceptance is now **≤ 500 m p50 and ≤ 750 m p95 over a ≥ 100 km
+> passage**, mapping (k=2 on the p50) to a **250 m denied position PL** — read every "200 m denied PL"
+> below as **250 m**, and the "100–200 m denied class" as that D56 acceptance. **(D68 / D72 / D74 / D78)**
+> the LEO-Doppler denied solution's *reported* horizontal uncertainty (~100 m) was subsequently found
+> **overconfident**: the true denied error runs **km-scale** over long constant-heading legs, traced to a
+> group-specific **estimation-consistency defect in the EKF covariance** (position/velocity NEES ~55×/47×
+> too tight) — a **software** fix (group-specific process-noise retuning; spec + quantified target in
+> [`CONSISTENCY_FIX_SPEC.md`](CONSISTENCY_FIX_SPEC.md)), **not** a geometry, clock, or hardware wall. This
+> *strengthens* the verdict below: the cheapest route to the denied-position gap is that hardware-free
+> software fix, ahead of both the DF array and any purchase. Inline "200 m" bars are updated to 250 m; the
+> argument is otherwise unchanged.
+
 ---
 
 ## 0. The question, and the honest headline
@@ -23,9 +37,11 @@ fixes the two failures the high-speed studies exposed:
 
 - **(a) Position** — D51/D52: on the single-satellite synthetic fixture the real EKF is bounded but
   only to **tens of km**, because single-satellite range-rate geometry is near-unobservable for
-  position; the 100–200 m denied class needs multi-satellite geometry over 10–20 min legs.
+  position; the denied class (D56 acceptance 500 m p50 / 750 m p95, ~250 m PL) needs multi-satellite
+  geometry over 10–20 min legs.
 - **(b) Heading at speed** — D50/U-H1: after each manoeuvre the heading solution drifts, and a **5°
-  error breaches the 200 m position PL in ~3.7 min at 20 kn** (heading-rotated speed-log cross-track).
+  error breaches the 250 m position PL in ~4.6 min at 20 kn** (heading-rotated speed-log cross-track;
+  at 10.29 m/s × sin 5° ≈ 0.897 m/s cross-track rate, 250 m ÷ 0.897 ≈ 279 s).
 
 **Headline verdict (expanded in §5).** The array's *unknown-emitter* framing — the thing D48 literally
 names — is the **weakest** version of the idea. It is *observable* — a fixed emitter's range **is**
@@ -207,8 +223,8 @@ Cross-range position error from one bearing at range `R` is `σ_x ≈ R · σ_θ
 | 10° (planing/multipath) | 873 m | 1745 m | 3491 m | 5236 m |
 
 A **single** bearing gives cross-range only (nothing down-range); a position **fix** intersects ≥2
-bearings and the along-baseline error inflates by `1/sin(Δaz)` (GDOP). Read against the **200 m denied
-position PL**: even the *optimistic* 1° at 10 km (175 m) barely clears it before GDOP inflation, and the
+bearings and the along-baseline error inflates by `1/sin(Δaz)` (GDOP). Read against the **250 m denied
+position PL** (D56): even the *optimistic* 1° at 10 km (175 m) only clears it before GDOP inflation, and the
 *realistic* 3–5° field accuracy at coastal ranges gives **500 m–1.7 km** — i.e. a bearing fix on this
 hull is a **coarse** position aid, not an operational-grade one. R6's cited community "tens of metres"
 geolocation is **multi-point mobile triangulation over a long track on strong land signals**, not a
@@ -336,7 +352,7 @@ four concrete, honest grounds:
 - **Implementation risk.** Multipath/SFN bias, data association, and the BO-SLAM state-initialisation
   hazard (§4.2) are genuinely hard, none with an in-tree precedent.
 - **Accuracy ceiling.** Even in the favourable known-beacon mode, coastal-range position is
-  **hundreds of metres to >1 km** — above the 200 m denied PL (§2.3).
+  **hundreds of metres to >1 km** — above the 250 m denied PL (§2.3).
 - **A cheaper alternative already exists.** The multi-satellite LEO fixture (§5.2) targets the
   *demonstrated* position gap with no new hardware.
 
@@ -352,7 +368,7 @@ should not gate hardware money before a synthetic study says it clears the gates
 | Targets | Problem (a) position — the *demonstrated* D51/D52 gap | (a) slowly + weakly; (b) only via known-beacon mode |
 | Hardware | **None** — uses Starlink/Iridium/Orbcomm already in baseline | **+~USD 950** + mast array + SBC + DSP stack |
 | Software | Add satellites to the existing EKF fixture | New states (BO-SLAM init risk), data association, bus messages, DF adapter |
-| Fast absolute fix? | Yes — multi-sat geometry is the literature basis for 100–200 m | No fast fix (unknown); fast only with beacon DB (known) |
+| Fast absolute fix? | Yes in principle — multi-sat geometry is the literature basis for the denied class; **caveat (D68/D72)** the *current* LEO filter is overconfident (km-scale true error) pending the D78 software consistency fix | No fast fix (unknown); fast only with beacon DB (known) |
 | Heading help | Indirect | Only in known-beacon mode, capped at DF accuracy (few °) |
 | High-speed behaviour | Neutral (geometry, not mechanics) | Worst exactly post-manoeuvre at planing |
 | Risk / cost | Low; engineering days | Higher; weeks + on-water DF calibration + unproven field DF |
@@ -376,9 +392,9 @@ U-MS1**):
   **body-frame attitude error** injection (to expose the §2.2.3 circularity).
 - **Two modes**: known-emitter (states fixed) and unknown-emitter (observability-gated augmentation +
   data association stub).
-- **Metrics**: heading error vs the **2°/5°** gates; cross-track position vs **200 m**; unknown-emitter
-  time-to-converge and its sensitivity to the manoeuvre schedule and to σ_θ; degradation under attitude
-  error. **Kill criterion**: if the *known-beacon* mode cannot clear the 2° heading / 200 m gates under
+- **Metrics**: heading error vs the **2°/5°** gates; cross-track position vs the **250 m** denied PL (D56);
+  unknown-emitter time-to-converge and its sensitivity to the manoeuvre schedule and to σ_θ; degradation
+  under attitude error. **Kill criterion**: if the *known-beacon* mode cannot clear the 2° heading / 250 m gates under
   realistic 3–5° DF + attitude error over representative geometry, the *unknown* mode certainly cannot,
   and hardware is not justified.
 
@@ -417,4 +433,4 @@ alternative — **not** an observability veto: against the already-required, har
 LEO fixture (U-MS1)**, which targets the demonstrated position gap directly, the array is a **research
 spur, not a near-term aid**. Pursue it only as a hardware-free synthetic proof-of-concept (**U-EA1**,
 sequenced after U-MS1) whose kill criterion is whether even the *known-beacon* mode can clear the 2°
-heading / 200 m position gates under realistic DF and attitude error, and buy no hardware until it does.
+heading / 250 m position gates under realistic DF and attitude error, and buy no hardware until it does.

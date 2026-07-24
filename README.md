@@ -65,25 +65,31 @@ flowchart LR
   limits, calibration validity, watchdog liveness) evaluated in a fail-closed supervisor
   whose output type cannot even represent an autonomous manoeuvre command.
 
-## Headline synthetic result (demonstration, not performance)
+## What the studies actually show (honest, and it moved)
 
-From the deterministic end-to-end rehearsal (`mission-study`, seed 1, 180 s, synthetic IQ
-through the real tracker → journals → EKF → replay; `.orchestration/DECISIONS.md` D39):
+A campaign of adversarially-reviewed synthetic studies drove the denied-navigation accuracy
+estimate **down** as each study stripped out a confound. Read top to bottom — the last row is
+where it currently stands.
 
-| denied-mode run (same journal) | horiz. position RMS | horiz. speed RMS |
-|---|---:|---:|
-| dead-reckoning only | 153.1 m | 1.31 m/s |
-| + disclosed receiver prior (Doppler suppressed) | 116.1 m | 0.28 m/s |
-| + prior + LEO Doppler assimilation | **91.8 m** | 2.19 m/s |
-| GNSS-aided reference | 0.83 m | 0.35 m/s |
+| finding | denied horizontal accuracy | what it really was |
+|---|---|---|
+| short-leg rehearsals (`mission-study`, 3–5 min legs) | ~90–120 m | **dead-reckoning coast** from a fresh GPS prior — a *zero-satellite* run also "passes" (`D66`). Not observability. |
+| multi-satellite geometry, 5-min fixed cohort | mean 116 m / p95 554 m | real, but a fixed 8-sat cohort is **physically unsustainable** on LEO (satellites set in ~15 min) (`D57`). |
+| **long denied legs, realistic handovers (`endurance`)** | **km-scale — 500 m goal not met** | the honest sustained-passage result once the GPS prior decays (`D68`/`D69`). |
 
-Two honesty notes baked into the pipeline itself: the receiver prior is disclosed and its
-contribution separately attributed (an earlier version of this table conflated it with the
-Doppler contribution — adversarial review caught it, and the four-way attribution is now a
-tested output); and Doppler assimilation currently *degrades* the velocity solution against
-the same-initialization baseline — a known open item under investigation, stated in the
-output rather than hidden by baseline choice. All numbers are synthetic-configuration
-demonstrations of the wiring, not accuracy claims about real signals.
+**But it is not a physics or hardware wall — it is a fixable filter problem.** Direct
+covariance instrumentation shows position *is* observable (the EKF's own uncertainty
+converges to ~100 m — the LEO-Doppler mechanism works), while the *true* error runs 7–70×
+larger. The filter is **overconfident / inconsistent**, and the inconsistency is localized to
+the **position and velocity** states (55× / 47× too confident; clock and heading are the
+opposite). So the gating problem is an **estimation-consistency defect in software** —
+group-specific covariance correction / process-noise retuning — not more antennas, a better
+clock, or longer legs (`D68`/`D72`). One tempting cheap fix (per-satellite bias retirement
+across handovers) was tested and **ruled out** — decisive negative, `D74`.
+
+Every number here is a synthetic-configuration result under adversarial review, not a claim
+about real signals. The value: this was all found *in software, before any hardware or sea
+trial.* Full audit trail in `.orchestration/DECISIONS.md` (D1–D75) and `docs/studies/`.
 
 ## Document hierarchy
 
@@ -228,12 +234,23 @@ synthetic-configuration-dependent demonstrations, not performance claims — see
 This is a review-hardened **research skeleton**, validated end to end only on **synthetic**
 data, not a sea-ready navigator (ship record: `.orchestration/DECISIONS.md` D27). The fusion
 executive, clock service, bus, journals, EKF, ephemeris/predictor, correlation-peak tracker,
-authority supervisor, replay/mission harness and MAVLink bridge are all real, connected, and
-exercised by an end-to-end synthetic demonstration (`pnt-mission`) and by ArduPilot SITL. The
-authority supervisor is fail-closed and safety-case-reviewed (D33); it has not been exercised
-against real solution failures at sea.
+authority supervisor, replay/mission harness, MAVLink bridge and a hardware-ready IQ capture
+front-end (`pnt-capture`, `D63`) are all real, connected, and exercised by an end-to-end
+synthetic demonstration (`pnt-mission`) and by ArduPilot SITL. The authority supervisor is
+fail-closed and safety-case-reviewed (D33); it has not been exercised against real solution
+failures at sea.
 
-What remains before a sea trial, per D27 and D39:
+**The gating open problem is now identified and characterised** (see "What the studies
+actually show" above): sustained denied navigation is km-scale because the EKF is
+overconfident on the position/velocity states — a software-fixable estimation-consistency
+defect (`D68`/`D72`/`D74`), not a hardware or physics limit. The next substantive work is a
+group-specific covariance-consistency / process-noise fix in the estimator; the diagnosis
+provides a targeted spec.
+
+What remains before a sea trial, per D27/D39/D68:
+
+- **The estimator-consistency fix** (`D72`): the overconfidence that keeps sustained denied
+  navigation at km-scale must be corrected before any denied accuracy claim.
 
 - A real-IQ signal path: `pnt-tracker` is synthetic-IQ validated only; real PSS/SSS/beacon
   sequences and real front-end capture are `[UNVERIFIED]`.
@@ -264,10 +281,11 @@ edge cases with their own harnesses, Monte-Carlo'd the DSP, fault-injected the t
 re-derived the math. Several review rounds caught real, subtle defects before they could
 ship: a steering-authority latch bypass, a covariance test that passed with process noise
 deleted, a MAVLink yaw sentinel that the pinned ArduPilot would have parsed as a phantom
-295° heading, an HDOP choice that silently made EKF aiding impossible, and the
-prior-confounded headline table above. The complete audit trail — every ruling, every
-review verdict, every fix disposition — lives in `.orchestration/DECISIONS.md` (D1–D41)
-and `.orchestration/reports/`.
+295° heading, an HDOP choice that silently made EKF aiding impossible, and — repeatedly —
+flattering accuracy numbers that turned out to be dead-reckoning coast rather than real
+observability (the "what the studies actually show" table above is the honest result of that
+process). The complete audit trail — every ruling, every review verdict, every fix
+disposition — lives in `.orchestration/DECISIONS.md` (D1–D75) and `.orchestration/reports/`.
 
 ## License
 

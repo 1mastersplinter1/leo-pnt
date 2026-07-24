@@ -1,0 +1,98 @@
+{
+  "schema_version": 2,
+  "caveat": "REAL-PUBLISHED-TLE GEOMETRY CHECK [UNVERIFIED currency/provenance]. Endpoints come from the production Executive + FilterStub against synthetic generator truth; no result is clamped or target-fitted. The elements were grok-fetched and were not independently confirmed against CelesTrak.",
+  "fixture": {
+    "real_published_unverified": true,
+    "usable_tles": 40,
+    "satellites": 40,
+    "shells": [
+      "Starlink published elements: 20 usable, inclination 53.0371-53.1608 deg",
+      "OneWeb published elements: 10 usable, inclination 87.8496-87.9078 deg",
+      "Iridium NEXT published elements: 10 usable, inclination 86.3927-86.3941 deg"
+    ],
+    "elevation_mask_deg": 5.0,
+    "epoch": "2026-07-22T22:00:00Z"
+  },
+  "controls": {
+    "seed_count": 8,
+    "seed_values": [
+      223617062,
+      223617063,
+      223617064,
+      223617065,
+      223617066,
+      223617067,
+      223617068,
+      223617069
+    ],
+    "receiver_clock_drift_mps": 0.03,
+    "receiver_clock_fractional_ppb": 0.10006922855944561,
+    "per_sv_transmit_bias_hz": "deterministic [UNVERIFIED] signed 0.35-1.05 Hz, fixed per SV and seed",
+    "dynamics": "pnt-mission generator: 3 deg/s coordinated-turn command, wave/slam, and speed-scaled IMU at 7 kn [UNVERIFIED]",
+    "geometry_isolation": "A single persistent real-TLE cohort is selected once per mission. N tiers use nested prefixes, all satellites remain above 5 deg for every denied Doppler epoch, and no tier hands over; only simultaneous distinct LOS count changes. The sparse 40-element sample supports N=1 and N=2 only.",
+    "production_chi_square_gate": 9.0
+  },
+  "outcomes": [
+    {
+      "geometry": "fixed single LOS; no handover",
+      "simultaneous_los": 1,
+      "satellite_ids": [
+        41917
+      ],
+      "duration_min": 5.0,
+      "gdop_mean": null,
+      "gdop_p95": null,
+      "endpoint_position_error_mean_m": 79.57294017105501,
+      "endpoint_position_error_p95_m": 144.90534456651784,
+      "endpoint_position_error_min_m": 30.804381403971192,
+      "endpoint_position_error_max_m": 144.90534456651784,
+      "endpoint_velocity_error_mean_mps": 0.3637921398363189,
+      "accepted_updates_mean": 55.0,
+      "rejected_updates_mean": 0.0,
+      "nuisance_state_count_mean": 1.0,
+      "seed_position_errors_m": [
+        95.70852754111546,
+        34.30828225362766,
+        67.46334587276104,
+        84.28431746577922,
+        30.804381403971192,
+        74.3745714656329,
+        104.73475079903476,
+        144.90534456651784
+      ],
+      "error_class": "100-200 m"
+    },
+    {
+      "geometry": "fixed simultaneous multi-LOS cohort; no handover",
+      "simultaneous_los": 2,
+      "satellite_ids": [
+        41917,
+        44723
+      ],
+      "duration_min": 5.0,
+      "gdop_mean": null,
+      "gdop_p95": null,
+      "endpoint_position_error_mean_m": 62.677531501068586,
+      "endpoint_position_error_p95_m": 118.79687643538736,
+      "endpoint_position_error_min_m": 29.63056329662537,
+      "endpoint_position_error_max_m": 118.79687643538736,
+      "endpoint_velocity_error_mean_mps": 0.32530745547854545,
+      "accepted_updates_mean": 110.0,
+      "rejected_updates_mean": 0.0,
+      "nuisance_state_count_mean": 2.0,
+      "seed_position_errors_m": [
+        87.8418409439662,
+        49.59037926719578,
+        69.7615705185755,
+        47.13304009341202,
+        29.63056329662537,
+        42.09506553158355,
+        56.57091592180291,
+        118.79687643538736
+      ],
+      "error_class": "100-200 m"
+    }
+  ],
+  "headline": "The 40-element real fixture supports only two persistent LOS over the controlled five-minute leg; an N=8 rerun is not physically available from this sparse sample.",
+  "diagnosis": "N=8 was not run, so no multi-satellite accuracy conclusion is available."
+}

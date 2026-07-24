@@ -11,6 +11,7 @@ pub mod consistency;
 pub mod endurance;
 pub mod estimator;
 pub mod highspeed;
+pub mod maneuver;
 pub mod multisat;
 
 use std::f64::consts::TAU;

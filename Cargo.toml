@@ -12,6 +12,7 @@ members = [
     "crates/pnt-replay",
     "crates/pnt-mission",
     "crates/pnt-tracker",
+    "crates/pnt-capture",
     "crates/pnt-studies",
 ]
 resolver = "2"

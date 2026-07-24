@@ -1,0 +1,21 @@
+[package]
+name = "pnt-capture"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[features]
+default = []
+hardware = []
+
+[dependencies]
+num-complex = "0.4.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+pnt-tracker = { path = "../pnt-tracker" }
+tempfile = "3"
+
+[lints]
+workspace = true

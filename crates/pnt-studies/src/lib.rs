@@ -7,6 +7,7 @@
     clippy::naive_bytecount
 )]
 
+pub mod endurance;
 pub mod estimator;
 pub mod highspeed;
 pub mod multisat;
